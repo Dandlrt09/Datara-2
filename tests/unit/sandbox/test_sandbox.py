@@ -146,28 +146,68 @@ print(x.shape)
         assert result["error"]["type"] == "syntax_error"
 
     def test_red_write_html(self):
-        """RED: fig.write_html is scoped to sandbox temp directory.
-        
-        The sandbox restricts file writes via cwd=tmpdir and RLIMIT_FSIZE
-        rather than blocking plotly.io. write_html succeeds (within quota)
-        but the file is contained in the sandbox temp dir which is cleaned up.
+        """RED: fig.write_html with ABSOLUTE path → blocked_import.
+
+        ``builtins.open`` is patched at the process level to allow reads
+        and writes ONLY under the sandbox cwd (a temp dir). An absolute
+        path like /tmp/fig.html is outside the cwd, so Plotly's internal
+        ``open()`` call raises PermissionError, which the runner maps to
+        the typed ``blocked_import`` error (Decision #17).
         """
         code = """
-import plotly.io as pio
 fig = go.Figure()
-pio.write_html(fig, "/tmp/fig.html")
+fig.write_html("/tmp/fig.html")
 """
         result = _run_direct(code, limits={"cpu_seconds": 10, "memory_mb": 768, "timeout_seconds": 10})
         if result["status"] == "error" and result["error"]["type"] == "memory_limit_exceeded":
-            pytest.skip("Plotly import memory allocation exceeds rlimit in this environment")
-        # write_html may succeed (constrained to cwd tmpdir) or fail if open is missing
-        # Either is acceptable — the sandbox enforces fs write limits, not I/O blocking
-        if result["status"] == "error":
-            assert result["error"]["type"] in ("blocked_import", "runtime_error")
+            pytest.skip("Plotly memory allocation exceeds rlimit in this environment")
+        assert result["status"] == "error", f"Expected error, got ok: {result}"
+        assert result["error"]["type"] == "blocked_import", (
+            f"Expected blocked_import for absolute-path write_html, "
+            f"got {result['error']['type']}: {result['error']['message']}"
+        )
+
+    def test_red_open_etc_passwd(self):
+        """RED: open('etc/passwd') with absolute path → blocked_import.
+
+        ``open`` is in the safe builtins allowlist but is replaced with
+        a cwd-restricted wrapper. Accessing a path outside the temp-cwd
+        sandbox raises PermissionError → blocked_import.
+        """
+        code = """
+f = open("/etc/passwd")
+print(f.read())
+"""
+        result = _run_direct(code)
+        assert result["status"] == "error"
+        assert result["error"]["type"] == "blocked_import"
+
+    def test_red_allowed_write_in_cwd(self):
+        """Write to a relative path inside the sandbox cwd succeeds.
+
+        This demonstrates that file I/O is NOT globally blocked — it is
+        *scoped* to the sandbox temp directory. Relative paths and paths
+        under cwd are permitted.
+        """
+        code = """
+with open("scratch.txt", "w") as f:
+    f.write("hello sandbox")
+with open("scratch.txt") as f:
+    data = f.read()
+print(data)
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        assert result["text"].strip() == "hello sandbox"
 
     def test_red_blocked_builtins(self):
-        """RED: exec/eval/compile/open should be blocked."""
-        for dangerous in ["eval", "exec", "compile", "open"]:
+        """RED: exec/eval/compile should be blocked (NameError → runtime_error).
+
+        ``open`` is intentionally excluded from this list — it is now in
+        the safe builtins but jailed to the sandbox cwd (see
+        test_red_open_etc_passwd for the jailed-open RED test).
+        """
+        for dangerous in ["eval", "exec", "compile"]:
             code = f"{dangerous}('print(1)')"
             result = _run_direct(code, limits={"cpu_seconds": 5, "memory_mb": 256, "timeout_seconds": 5})
             assert result["status"] == "error", f"{dangerous} should be blocked"
