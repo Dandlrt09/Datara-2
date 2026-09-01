@@ -231,3 +231,123 @@ class SqliteStore:
             (user_id,),
         )
         return dict(rows[0])
+
+    # ── Files (UploadedFile) ──────────────────────────────────────────────────
+
+    async def create_file(
+        self,
+        user_id: int,
+        chat_session: str,
+        filename: str,
+        storage_path: str,
+        size_bytes: int,
+        format_val: str,
+        *,
+        encoding: str | None = None,
+        sheet_name: str | None = None,
+        row_count: int | None = None,
+    ) -> dict[str, Any]:
+        cursor = await self.conn.execute(
+            "INSERT INTO files (user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, chat_session, filename, storage_path, size_bytes,
+             format_val, encoding, sheet_name, row_count),
+        )
+        await self.conn.commit()
+        file_id = cursor.lastrowid
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        )
+        return dict(rows[0])
+
+    async def list_files(
+        self,
+        user_id: int,
+        chat_session: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if chat_session:
+            rows = await self.conn.execute_fetchall(
+                "SELECT id, user_id, chat_session, filename, storage_path, "
+                "size_bytes, format, encoding, sheet_name, row_count, created_at "
+                "FROM files WHERE user_id = ? AND chat_session = ? "
+                "ORDER BY created_at DESC",
+                (user_id, chat_session),
+            )
+        else:
+            rows = await self.conn.execute_fetchall(
+                "SELECT id, user_id, chat_session, filename, storage_path, "
+                "size_bytes, format, encoding, sheet_name, row_count, created_at "
+                "FROM files WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            )
+        return [dict(r) for r in rows]
+
+    async def get_file(self, file_id: int, user_id: int) -> dict[str, Any] | None:
+        """Get a file by id, enforcing ownership via user_id filter."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE id = ? AND user_id = ?",
+            (file_id, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def delete_file(self, file_id: int, user_id: int) -> bool:
+        """Delete a file, enforcing ownership. Returns True if a row was deleted."""
+        cursor = await self.conn.execute(
+            "DELETE FROM files WHERE id = ? AND user_id = ?",
+            (file_id, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    # ── Profiles ──────────────────────────────────────────────────────────────
+
+    async def upsert_profile(
+        self,
+        file_id: int,
+        schema_json: str,
+        stats_json: str,
+        sample_json: str,
+    ) -> dict[str, Any]:
+        await self.conn.execute(
+            "INSERT INTO profiles (file_id, schema_json, stats_json, sample_json) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET "
+            "  schema_json = excluded.schema_json,"
+            "  stats_json = excluded.stats_json,"
+            "  sample_json = excluded.sample_json,"
+            "  generated_at = datetime('now')",
+            (file_id, schema_json, stats_json, sample_json),
+        )
+        await self.conn.commit()
+        rows = await self.conn.execute_fetchall(
+            "SELECT file_id, schema_json, stats_json, sample_json, generated_at "
+            "FROM profiles WHERE file_id = ?",
+            (file_id,),
+        )
+        return dict(rows[0]) if rows else {}
+
+    async def get_profile_with_ownership(
+        self,
+        file_id: int,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Get a profile by file_id, enforcing ownership via JOIN files.
+
+        Decision #14: file_id alone is never trusted for ownership.
+        Profile reads MUST JOIN files ON profiles.file_id = files.id
+        AND filter by files.user_id = current_user.id.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT p.file_id, p.schema_json, p.stats_json, p.sample_json, p.generated_at "
+            "FROM profiles p "
+            "JOIN files f ON f.id = p.file_id "
+            "WHERE p.file_id = ? AND f.user_id = ?",
+            (file_id, user_id),
+        )
+        return dict(rows[0]) if rows else None

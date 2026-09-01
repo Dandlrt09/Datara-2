@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from server.api import store as api_store
-from server.api.routers import auth, sessions, settings
+from server.api.routers import auth, files, sessions, settings
 from server.migrate import apply_migrations
 from server.services.session_cleanup import sweep_expired, start_background_sweep
 from server.services.sqlite_store import SqliteStore
@@ -110,6 +110,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(settings.router)
+app.include_router(files.router)
 
 # Mount static files (for production, serve built frontend here)
 static_dir = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
