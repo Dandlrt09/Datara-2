@@ -1,0 +1,41 @@
+[project]
+name = "datara"
+version = "0.1.0"
+description = "Open-core data analysis tool with AI-powered chat"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "aiosqlite>=0.20.0",
+    "bcrypt>=4.2.0",
+    "charset-normalizer>=3.4.0",
+    "httpx>=0.28.0",
+]
+hosted = [
+    "datara[server]",
+    "plotly>=5.24.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "numpy>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "server"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
