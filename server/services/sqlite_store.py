@@ -232,6 +232,152 @@ class SqliteStore:
         )
         return dict(rows[0])
 
+    # ── Messages ──────────────────────────────────────────────────────────────
+
+    async def create_message(
+        self,
+        user_id: int,
+        chat_session: str,
+        role: str,
+        content_text: str,
+        *,
+        code: str | None = None,
+        artifacts_json: str | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cost_usd: float | None = None,
+    ) -> dict[str, Any]:
+        """Insert a message and return the full row."""
+        cursor = await self.conn.execute(
+            "INSERT INTO messages (user_id, chat_session, role, content_text, "
+            "code, artifacts_json, model, provider, tokens_in, tokens_out, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, chat_session, role, content_text, code, artifacts_json,
+             model, provider, tokens_in, tokens_out, cost_usd),
+        )
+        await self.conn.commit()
+        row_id = cursor.lastrowid
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, role, content_text, code, "
+            "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
+            "FROM messages WHERE id = ?",
+            (row_id,),
+        )
+        return dict(rows[0])
+
+    async def list_messages(
+        self,
+        user_id: int,
+        chat_session: str,
+        *,
+        limit: int = 50,
+        before_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """List messages for a chat session with pagination.
+
+        ``before_id``: return messages with id < before_id (earlier).
+        Results are ordered by created_at DESC (newest first), so the
+        client reverses them for display.
+        """
+        if before_id is not None:
+            rows = await self.conn.execute_fetchall(
+                "SELECT id, user_id, chat_session, role, content_text, code, "
+                "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
+                "FROM messages "
+                "WHERE user_id = ? AND chat_session = ? AND id < ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, chat_session, before_id, limit),
+            )
+        else:
+            rows = await self.conn.execute_fetchall(
+                "SELECT id, user_id, chat_session, role, content_text, code, "
+                "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
+                "FROM messages "
+                "WHERE user_id = ? AND chat_session = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, chat_session, limit),
+            )
+        return [dict(r) for r in rows]
+
+    async def get_message(
+        self,
+        message_id: int,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Get a single message, enforcing ownership."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, role, content_text, code, "
+            "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
+            "FROM messages WHERE id = ? AND user_id = ?",
+            (message_id, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def update_chat_session_timestamp(
+        self,
+        session_id: str,
+        user_id: int,
+    ) -> None:
+        """Update the updated_at timestamp for a chat session."""
+        await self.conn.execute(
+            "UPDATE chat_sessions SET updated_at = datetime('now') "
+            "WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        await self.conn.commit()
+
+    # ── Archives ─────────────────────────────────────────────────────────────
+
+    async def create_archive(
+        self,
+        user_id: int,
+        name: str,
+        chat_session: str,
+        payload_json: str,
+    ) -> dict[str, Any]:
+        """Create a new archive and return the full row."""
+        cursor = await self.conn.execute(
+            "INSERT INTO archives (user_id, name, chat_session, payload_json) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, name, chat_session, payload_json),
+        )
+        await self.conn.commit()
+        row_id = cursor.lastrowid
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, name, chat_session, payload_json, created_at "
+            "FROM archives WHERE id = ?",
+            (row_id,),
+        )
+        return dict(rows[0])
+
+    async def list_archives(
+        self,
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        """List archives for a user, newest first."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, name, chat_session, created_at "
+            "FROM archives WHERE user_id = ? "
+            "ORDER BY created_at DESC",
+            (user_id,),
+        )
+        return [dict(r) for r in rows]
+
+    async def get_archive(
+        self,
+        archive_id: int,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Get a single archive, enforcing ownership."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, name, chat_session, payload_json, created_at "
+            "FROM archives WHERE id = ? AND user_id = ?",
+            (archive_id, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
     # ── Files (UploadedFile) ──────────────────────────────────────────────────
 
     async def create_file(
