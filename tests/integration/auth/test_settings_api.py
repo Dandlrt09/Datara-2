@@ -1,0 +1,120 @@
+"""Integration tests for the settings router (GET/PUT user preferences)."""
+
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from server.api import store as api_store
+from server.api.routers.auth import router as auth_router
+from server.api.routers.settings import router as settings_router
+from server.services.sqlite_store import SqliteStore
+
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
+INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+
+
+@pytest.fixture
+def app():
+    application = FastAPI()
+    application.include_router(auth_router)
+    application.include_router(settings_router)
+
+    import asyncio
+
+    s = SqliteStore(db_path=":memory:")
+
+    async def _setup():
+        await s.connect()
+        init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
+        await s.conn.executescript(init_sql)
+        await s.conn.commit()
+
+    asyncio.run(_setup())
+    api_store._store = s
+
+    yield application
+
+    asyncio.run(s.close())
+    api_store._store = None
+
+
+@pytest.fixture
+def client(app):
+    return TestClient(app)
+
+
+@pytest.fixture
+def auth_client(client):
+    resp = client.post("/api/auth/register", json={"email": "alice@example.com", "password": "password123"})
+    assert resp.status_code == 200
+    return resp.headers["set-cookie"]
+
+
+class TestGetSettings:
+    def test_get_defaults(self, client, auth_client):
+        cookie = auth_client
+        resp = client.get("/api/settings", headers={"Cookie": cookie})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["user_id"] is not None
+        assert data["api_key_enc"] is None
+        assert data["default_model"] is None
+
+    def test_get_requires_auth(self, client):
+        resp = client.get("/api/settings")
+        assert resp.status_code == 401
+
+
+class TestUpdateSettings:
+    def test_update_all_fields(self, client, auth_client):
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={"api_key": "sk-abc123", "default_model": "gpt-4o"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["api_key_enc"] == "sk-abc123"
+        assert data["default_model"] == "gpt-4o"
+
+    def test_update_partial(self, client, auth_client):
+        cookie = auth_client
+        # Set both fields
+        client.put(
+            "/api/settings",
+            json={"api_key": "sk-orig", "default_model": "gpt-4o"},
+            headers={"Cookie": cookie},
+        )
+        # Update only default_model
+        resp = client.put(
+            "/api/settings",
+            json={"default_model": "gpt-4o-mini"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["default_model"] == "gpt-4o-mini"
+        # api_key_enc should be unchanged
+        assert data["api_key_enc"] == "sk-orig"
+
+    def test_update_requires_auth(self, client):
+        resp = client.put("/api/settings", json={"default_model": "gpt-4o"})
+        assert resp.status_code == 401
+
+    def test_multiple_users_isolated(self, client):
+        """Settings for user A should not affect user B."""
+        resp_a = client.post("/api/auth/register", json={"email": "a@example.com", "password": "password123"})
+        cookie_a = resp_a.headers["set-cookie"]
+        resp_b = client.post("/api/auth/register", json={"email": "b@example.com", "password": "password123"})
+        cookie_b = resp_b.headers["set-cookie"]
+
+        client.put("/api/settings", json={"default_model": "model_a"}, headers={"Cookie": cookie_a})
+        client.put("/api/settings", json={"default_model": "model_b"}, headers={"Cookie": cookie_b})
+
+        settings_a = client.get("/api/settings", headers={"Cookie": cookie_a}).json()
+        settings_b = client.get("/api/settings", headers={"Cookie": cookie_b}).json()
+        assert settings_a["default_model"] == "model_a"
+        assert settings_b["default_model"] == "model_b"
