@@ -1,0 +1,117 @@
+/** SSE stream parser for chat endpoint.
+ *
+ * Uses fetch + ReadableStream chunk parser for SSE frames
+ * (event/data pairs on \n\n). Native EventSource doesn't support
+ * POST method or custom headers with credentials reliably.
+ */
+
+export type SSEEvent =
+  | { event: "status"; data: { stage: string; state: string } }
+  | { event: "token"; data: string }
+  | { event: "artifact"; data: { figures: unknown[]; tables: unknown[] } }
+  | { event: "done"; data: { message_id: number } }
+  | { event: "error"; data: { type: string; message: string } };
+
+export interface SSEHandlers {
+  onStatus?: (stage: string, state: string) => void;
+  onToken?: (delta: string) => void;
+  onArtifact?: (figures: unknown[], tables: unknown[]) => void;
+  onDone?: (messageId: number) => void;
+  onError?: (type: string, message: string) => void;
+}
+
+export async function streamChat(
+  sessionId: string,
+  question: string,
+  handlers: SSEHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`/api/sessions/${sessionId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    credentials: "include",
+    signal,
+  });
+
+  if (!response.ok) {
+    handlers.onError?.("connection_error", `HTTP ${response.status}`);
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    handlers.onError?.("connection_error", "No response body");
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      // Keep the incomplete last chunk in the buffer
+      buffer = frames.pop() ?? "";
+
+      for (const frame of frames) {
+        if (!frame.trim()) continue;
+        parseFrame(frame, handlers);
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name !== "AbortError") {
+      handlers.onError?.("parse_error", String(err));
+    }
+  }
+}
+
+function parseFrame(frame: string, handlers: SSEHandlers): void {
+  let event = "message";
+  let dataRaw = "";
+
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event: ")) {
+      event = line.slice(7);
+    } else if (line.startsWith("data: ")) {
+      dataRaw = line.slice(6);
+    }
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(dataRaw);
+  } catch {
+    data = dataRaw;
+  }
+
+  switch (event) {
+    case "status": {
+      const d = data as { stage: string; state: string };
+      handlers.onStatus?.(d.stage, d.state);
+      break;
+    }
+    case "token":
+      handlers.onToken?.(data as string);
+      break;
+    case "artifact": {
+      const d = data as { figures: unknown[]; tables: unknown[] };
+      handlers.onArtifact?.(d.figures, d.tables);
+      break;
+    }
+    case "done": {
+      const d = data as { message_id: number };
+      handlers.onDone?.(d.message_id);
+      break;
+    }
+    case "error": {
+      const d = data as { type: string; message: string };
+      handlers.onError?.(d.type, d.message);
+      break;
+    }
+  }
+}
