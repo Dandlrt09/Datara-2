@@ -2,17 +2,20 @@
 
 Spawns ``sandbox_runner.py`` as a subprocess with JSON stdin/stdout protocol.
 Handles timeout, memory limit normalization, and hard-OOM fallback.
+Also provides an orphan temp-dir sweep for the lifespan background task.
 """
 
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import logging
 import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -140,3 +143,37 @@ async def run_code(
         return result
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def sweep_orphan_sandbox_dirs(*, max_age_seconds: int = 3600) -> int:
+    """Remove orphan ``datara-sandbox-*`` temp dirs older than *max_age_seconds*.
+
+    Designed to run as a lifespan background task (alongside the existing
+    session sweep) to catch temp dirs that were left behind by a crashed
+    or killed process (the ``try/finally rmtree`` in ``run_code`` covers
+    the normal path).
+
+    Returns the number of orphan directories removed.
+    """
+    now = time.time()
+    cut_off = now - max_age_seconds
+
+    pattern = os.path.join(tempfile.gettempdir(), "datara-sandbox-*")
+    candidates = glob.glob(pattern)
+    removed = 0
+
+    for path in candidates:
+        try:
+            # stat the dir's mtime to check age
+            mtime = os.path.getmtime(path)
+            age = now - mtime
+            if age > max_age_seconds:
+                shutil.rmtree(path, ignore_errors=True)
+                removed += 1
+                logger.info("Removed orphan sandbox dir: %s (age: %.0fs)", path, age)
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            logger.warning("Could not sweep sandbox dir %s: %s", path, exc)
+
+    if removed:
+        logger.info("Swept %d orphan sandbox temp dir(s)", removed)
+    return removed

@@ -18,12 +18,30 @@ from fastapi.staticfiles import StaticFiles
 from server.api import store as api_store
 from server.api.routers import auth, chat, files, sessions, settings, archive
 from server.migrate import apply_migrations
+from server.services.sandbox_local import sweep_orphan_sandbox_dirs
 from server.services.session_cleanup import sweep_expired, start_background_sweep
 from server.services.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
 _cleanup_task: asyncio.Task | None = None
+_sandbox_sweep_task: asyncio.Task | None = None
+
+
+def _start_background_orphan_sweep() -> asyncio.Task:
+    """Start a background task that sweeps orphan sandbox dirs every hour."""
+
+    async def _loop():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                removed = sweep_orphan_sandbox_dirs()
+                if removed:
+                    logger.info("Background sandbox sweep removed %d dir(s)", removed)
+            except Exception:
+                logger.exception("Background sandbox orphan sweep failed")
+
+    return asyncio.create_task(_loop(), name="sandbox-orphan-sweep")
 
 
 @asynccontextmanager
@@ -33,13 +51,14 @@ async def lifespan(app: FastAPI):
     Startup:
     1. Connect to SQLite and apply pending migrations
     2. Sweep expired auth sessions
-    3. Start hourly background session sweep
+    3. Sweep orphan sandbox temp dirs
+    4. Start hourly background session sweep and sandbox orphan sweep
 
     Shutdown:
-    1. Cancel background sweep task
+    1. Cancel background tasks
     2. Close database connection
     """
-    global _cleanup_task
+    global _cleanup_task, _sandbox_sweep_task
 
     # Step 1: database setup
     db_path = str(
@@ -66,12 +85,26 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup session sweep failed")
 
-    # Step 3: start background hourly sweep
+    # Step 3: sweep orphan sandbox temp dirs
+    try:
+        removed = sweep_orphan_sandbox_dirs()
+        if removed:
+            logger.info("Swept %d orphan sandbox dir(s) on startup", removed)
+    except Exception:
+        logger.exception("Startup sandbox orphan sweep failed")
+
+    # Step 4: start background hourly tasks
     try:
         _cleanup_task = await start_background_sweep(store)
         logger.info("Background session sweep started (interval: 3600s)")
     except Exception:
-        logger.exception("Failed to start background sweep")
+        logger.exception("Failed to start background session sweep")
+
+    try:
+        _sandbox_sweep_task = _start_background_orphan_sweep()
+        logger.info("Background sandbox orphan sweep started (interval: 3600s)")
+    except Exception:
+        logger.exception("Failed to start background sandbox orphan sweep")
 
     yield
 
@@ -80,6 +113,12 @@ async def lifespan(app: FastAPI):
         _cleanup_task.cancel()
         try:
             await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+    if _sandbox_sweep_task is not None:
+        _sandbox_sweep_task.cancel()
+        try:
+            await _sandbox_sweep_task
         except asyncio.CancelledError:
             pass
     await store.close()
