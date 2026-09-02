@@ -49,7 +49,7 @@ export default function ChatView() {
       sessionId,
       q,
       {
-        onStatus: (stage, state) => {
+        onStatus: (_stage, state) => {
           if (state === "done" || state === "error") {
             store.setStreaming(false);
           }

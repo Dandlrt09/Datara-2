@@ -1,4 +1,3 @@
-import { lazy } from "react";
 import PlotlyChart from "./PlotlyChart";
 import DataFrameTable from "./DataFrameTable";
 

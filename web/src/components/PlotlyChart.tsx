@@ -1,14 +1,14 @@
 import { useEffect, useRef } from "react";
-import type PlotlyType from "plotly.js-dist-min";
+import type { Config, Data, Layout, PlotlyStatic } from "plotly.js-dist-min";
 
 /**
  * Lazy import of plotly.js-dist-min. Only loaded when a chart renders.
  */
-let Plotly: typeof PlotlyType | null = null;
+let Plotly: PlotlyStatic | null = null;
 
-async function getPlotly(): Promise<typeof PlotlyType> {
+async function getPlotly(): Promise<PlotlyStatic> {
   if (!Plotly) {
-    Plotly = (await import("plotly.js-dist-min")) as unknown as typeof PlotlyType;
+    Plotly = (await import("plotly.js-dist-min")) as unknown as PlotlyStatic;
   }
   return Plotly;
 }
@@ -28,15 +28,22 @@ export default function PlotlyChart({ plotlyJson }: PlotlyChartProps) {
       if (cancelled || !containerRef.current) return;
       if (rendered.current) {
         // Already rendered: use Plotly.react for updates
-        p.react(containerRef.current, plotlyJson as unknown as PlotlyType.Data[], { responsive: true } as unknown as Partial<PlotlyType.Layout>);
+        p.react(containerRef.current, plotlyJson as unknown as Data[], {
+          responsive: true,
+        } as unknown as Partial<Layout>);
       } else {
         // First render
-        const data = (plotlyJson.data as PlotlyType.Data[]) ?? [];
-        const layout = (plotlyJson.layout as Partial<PlotlyType.Layout>) ?? {};
-        p.newPlot(containerRef.current, data, { ...layout, responsive: true } as Partial<PlotlyType.Layout>, {
-          displayModeBar: true,
-          responsive: true,
-        } as unknown as Partial<PlotlyType.Config>);
+        const data = (plotlyJson.data as Data[]) ?? [];
+        const layout = (plotlyJson.layout as Partial<Layout>) ?? {};
+        p.newPlot(
+          containerRef.current,
+          data,
+          { ...layout, responsive: true } as Partial<Layout>,
+          {
+            displayModeBar: true,
+            responsive: true,
+          } as unknown as Partial<Config>,
+        );
         rendered.current = true;
       }
     })();

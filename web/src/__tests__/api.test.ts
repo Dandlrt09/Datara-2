@@ -14,7 +14,7 @@ describe("ApiError", () => {
 
 describe("api.get", () => {
   it("sends credentials and parses JSON", async () => {
-    globalThis.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
       expect((init as RequestInit)?.credentials).toBe("include");
       return new Response(JSON.stringify({ id: 1, email: "test@test.com" }), {
         status: 200,
