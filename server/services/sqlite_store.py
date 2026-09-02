@@ -432,6 +432,27 @@ class SqliteStore:
             )
         return [dict(r) for r in rows]
 
+    async def list_files_with_session(
+        self, user_id: int
+    ) -> list[dict[str, Any]]:
+        """List files with session title via LEFT JOIN.
+
+        Returns all files for the user across sessions, with the session
+        title from chat_sessions (NULL when the session was deleted).
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT f.id, f.filename, f.format, f.row_count, "
+            "       f.size_bytes, f.created_at, f.chat_session, "
+            "       cs.title AS session_title "
+            "FROM files f "
+            "LEFT JOIN chat_sessions cs "
+            "  ON cs.id = f.chat_session AND cs.user_id = ? "
+            "WHERE f.user_id = ? "
+            "ORDER BY f.created_at DESC",
+            (user_id, user_id),
+        )
+        return [dict(r) for r in rows]
+
     async def get_file(self, file_id: int, user_id: int) -> dict[str, Any] | None:
         """Get a file by id, enforcing ownership via user_id filter."""
         rows = await self.conn.execute_fetchall(

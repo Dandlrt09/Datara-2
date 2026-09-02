@@ -67,6 +67,17 @@ class FileCreateResponse(BaseModel):
     created_at: str | None = None
 
 
+class FileListItem(BaseModel):
+    id: int
+    filename: str
+    format: str
+    row_count: int | None = None
+    size_bytes: int
+    created_at: str | None = None
+    chat_session_id: str
+    session_title: str | None
+
+
 # ── Routes ──────────────────────────────────────────────────────────────────
 
 
@@ -189,6 +200,28 @@ async def list_files(
             created_at=f.get("created_at"),
         )
         for f in files
+    ]
+
+
+@router.get("/files", response_model=list[FileListItem])
+async def list_all_files(
+    user: dict = Depends(current_user),
+    store: SqliteStore = Depends(get_store),
+):
+    """List ALL files for the current user across all chat sessions."""
+    rows = await store.list_files_with_session(user["id"])
+    return [
+        FileListItem(
+            id=r["id"],
+            filename=r["filename"],
+            format=r["format"],
+            row_count=r.get("row_count"),
+            size_bytes=r["size_bytes"],
+            created_at=r.get("created_at"),
+            chat_session_id=r["chat_session"],
+            session_title=r.get("session_title"),
+        )
+        for r in rows
     ]
 
 
