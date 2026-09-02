@@ -3,9 +3,10 @@ import { api } from "../lib/api";
 
 export interface UserSettings {
   user_id: number;
-  api_key_enc?: string | null;
+  /** True when an API key is stored server-side. The key itself never
+   * leaves the server. */
+  has_api_key: boolean;
   default_model?: string | null;
-  updated_at: string;
 }
 
 export function useSettings() {

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useSettings, useUpdateSettings } from "../queries/useSettings";
 
@@ -11,18 +12,22 @@ export default function SettingsView() {
   const updateSettings = useUpdateSettings();
   const { register, handleSubmit, reset } = useForm<SettingsForm>();
 
-  // Set form values when settings load
-  if (settings && !isLoading) {
-    reset({
-      api_key: settings.api_key_enc ?? "",
-      default_model: settings.default_model ?? "",
-    });
-  }
+  // Sync form defaults once settings load. reset() MUST run inside an
+  // effect: calling it during render updates form state while rendering,
+  // which re-renders the form forever (blank screen).
+  useEffect(() => {
+    if (settings) {
+      reset({
+        api_key: "",
+        default_model: settings.default_model ?? "",
+      });
+    }
+  }, [settings, reset]);
 
   const onSubmit = (data: SettingsForm) => {
     updateSettings.mutate({
-      api_key: data.api_key || undefined,
-      default_model: data.default_model || undefined,
+      api_key: data.api_key?.trim() || undefined,
+      default_model: data.default_model?.trim() || undefined,
     });
   };
 
@@ -33,7 +38,14 @@ export default function SettingsView() {
       <h1>Settings</h1>
       <form onSubmit={handleSubmit(onSubmit)}>
         <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", marginBottom: 4 }}>API Key (optional)</label>
+          <label style={{ display: "block", marginBottom: 4 }}>
+            OpenAI API Key{" "}
+            {settings?.has_api_key && (
+              <span style={{ color: "green", fontSize: "0.85em" }}>
+                (saved — leave blank to keep)
+              </span>
+            )}
+          </label>
           <input
             {...register("api_key")}
             type="password"
@@ -41,7 +53,8 @@ export default function SettingsView() {
             style={{ width: "100%", padding: 8 }}
           />
           <p style={{ fontSize: "0.85em", color: "#666", margin: "4px 0" }}>
-            Your key is stored encrypted. Falls back to OPENAI_API_KEY env var.
+            Stored server-side and never sent back to the browser. Falls back
+            to the OPENAI_API_KEY env var when empty.
           </p>
         </div>
         <div style={{ marginBottom: 16 }}>

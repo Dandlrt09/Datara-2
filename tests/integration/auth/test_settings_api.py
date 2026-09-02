@@ -59,12 +59,26 @@ class TestGetSettings:
         assert resp.status_code == 200
         data = resp.json()
         assert data["user_id"] is not None
-        assert data["api_key_enc"] is None
+        assert data["has_api_key"] is False
         assert data["default_model"] is None
 
     def test_get_requires_auth(self, client):
         resp = client.get("/api/settings")
         assert resp.status_code == 401
+
+    def test_get_never_returns_key_material(self, client, auth_client):
+        """Regression: GET must expose only has_api_key, never the key."""
+        cookie = auth_client
+        client.put(
+            "/api/settings",
+            json={"api_key": "sk-secret-value", "default_model": "gpt-4o"},
+            headers={"Cookie": cookie},
+        )
+        resp = client.get("/api/settings", headers={"Cookie": cookie})
+        assert resp.status_code == 200
+        assert resp.json()["has_api_key"] is True
+        assert "api_key_enc" not in resp.json()
+        assert "sk-secret-value" not in resp.text
 
 
 class TestUpdateSettings:
@@ -77,7 +91,8 @@ class TestUpdateSettings:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["api_key_enc"] == "sk-abc123"
+        assert data["has_api_key"] is True
+        assert "sk-abc123" not in resp.text
         assert data["default_model"] == "gpt-4o"
 
     def test_update_partial(self, client, auth_client):
@@ -97,8 +112,9 @@ class TestUpdateSettings:
         assert resp.status_code == 200
         data = resp.json()
         assert data["default_model"] == "gpt-4o-mini"
-        # api_key_enc should be unchanged
-        assert data["api_key_enc"] == "sk-orig"
+        # api_key should be unchanged (kept server-side, still not leaked)
+        assert data["has_api_key"] is True
+        assert "sk-orig" not in resp.text
 
     def test_update_requires_auth(self, client):
         resp = client.put("/api/settings", json={"default_model": "gpt-4o"})
