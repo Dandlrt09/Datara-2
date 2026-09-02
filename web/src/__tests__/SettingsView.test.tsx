@@ -27,24 +27,38 @@ describe("SettingsView", () => {
     // Regression: reset() used to run during render, looping forever
     // (blank screen). If the loop returns, this test times out.
     useSettingsMock.mockReturnValue({
-      data: { user_id: 1, has_api_key: false, default_model: null },
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+      },
       isLoading: false,
     });
     render(<SettingsView />);
     expect(screen.getByText("Settings")).toBeTruthy();
     expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
-    expect(screen.getByPlaceholderText("gpt-4o-2024-08-06")).toBeTruthy();
+    // Model picker is a dropdown fed by the server whitelist
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(select.options.length).toBe(6); // "" + 5 allowed models
   });
 
-  it("keeps the key input empty and shows the saved badge", () => {
+  it("shows the selected model in the dropdown", () => {
     useSettingsMock.mockReturnValue({
-      data: { user_id: 1, has_api_key: true, default_model: "gpt-4o" },
+      data: {
+        user_id: 1,
+        has_api_key: true,
+        default_model: "gpt-4o",
+        allowed_models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"],
+      },
       isLoading: false,
     });
     render(<SettingsView />);
     expect(screen.getByText(/saved — leave blank to keep/i)).toBeTruthy();
     const keyInput = screen.getByPlaceholderText("sk-...") as HTMLInputElement;
     expect(keyInput.value).toBe("");
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(select.value).toBe("gpt-4o");
   });
 
   it("shows the loading state", () => {

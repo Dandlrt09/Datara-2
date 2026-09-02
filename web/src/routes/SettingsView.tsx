@@ -46,6 +46,13 @@ export default function SettingsView() {
 
   if (isLoading) return <p>Loading settings...</p>;
 
+  // Dropdown options: server whitelist, plus any legacy stored value that
+  // predates the whitelist so the current selection is never lost.
+  const modelOptions =
+    settings?.default_model && !settings.allowed_models?.includes(settings.default_model)
+      ? [settings.default_model, ...(settings.allowed_models ?? [])]
+      : settings?.allowed_models ?? [];
+
   return (
     <div style={{ maxWidth: 500 }}>
       <h1>Settings</h1>
@@ -73,11 +80,14 @@ export default function SettingsView() {
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", marginBottom: 4 }}>Default Model</label>
-            <input
-              {...register("default_model")}
-              placeholder="gpt-4o-2024-08-06"
-              style={{ width: "100%", padding: 8 }}
-            />
+            <select {...register("default_model")} style={{ width: "100%", padding: 8 }}>
+              <option value="">Server default (OPENAI_MODEL env)</option>
+              {modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
           </div>
           {updateSettings.isSuccess && (
             <p style={{ color: "green" }}>Settings saved</p>

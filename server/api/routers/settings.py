@@ -34,6 +34,7 @@ class SettingsResponse(BaseModel):
     user_id: int
     has_api_key: bool = False
     default_model: str | None = None
+    allowed_models: list[str] = []
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -63,11 +64,14 @@ async def get_settings(
     """Return the current user's settings (no key material)."""
     settings = await store.get_user_settings(user["id"])
     if settings is None:
-        return SettingsResponse(user_id=user["id"])
+        return SettingsResponse(
+            user_id=user["id"], allowed_models=sorted(ALLOWED_MODELS)
+        )
     return SettingsResponse(
         user_id=settings["user_id"],
         has_api_key=bool(settings.get("api_key_enc")),
         default_model=settings["default_model"],
+        allowed_models=sorted(ALLOWED_MODELS),
     )
 
 
@@ -91,4 +95,5 @@ async def update_settings(
         user_id=result["user_id"],
         has_api_key=bool(result.get("api_key_enc")),
         default_model=result["default_model"],
+        allowed_models=sorted(ALLOWED_MODELS),
     )

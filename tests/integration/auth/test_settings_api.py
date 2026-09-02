@@ -61,6 +61,8 @@ class TestGetSettings:
         assert data["user_id"] is not None
         assert data["has_api_key"] is False
         assert data["default_model"] is None
+        assert "gpt-4o" in data["allowed_models"]
+        assert len(data["allowed_models"]) >= 5
 
     def test_get_requires_auth(self, client):
         resp = client.get("/api/settings")

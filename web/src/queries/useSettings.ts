@@ -7,6 +7,8 @@ export interface UserSettings {
    * leaves the server. */
   has_api_key: boolean;
   default_model?: string | null;
+  /** Models the server accepts for default_model (drives the UI dropdown). */
+  allowed_models?: string[];
 }
 
 export function useSettings() {
