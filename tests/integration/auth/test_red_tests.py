@@ -159,7 +159,7 @@ class TestCrossUserAccess:
         cookie_b = resp_b.headers["set-cookie"]
 
         # User A updates settings
-        client.put("/api/settings", json={"default_model": "model_a"}, headers={"Cookie": cookie_a})
+        client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie_a})
 
         # User B gets settings — should NOT see A's settings
         b_settings = client.get("/api/settings", headers={"Cookie": cookie_b}).json()

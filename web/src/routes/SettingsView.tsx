@@ -8,6 +8,18 @@ interface SettingsForm {
   default_model?: string;
 }
 
+/** Extract a human-readable reason from an ApiError (FastAPI 422 detail). */
+function saveErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "body" in error) {
+    const detail = (error as { body?: { detail?: unknown } }).body?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail[0] && typeof detail[0] === "object") {
+      return String((detail[0] as { msg?: unknown }).msg ?? "invalid value");
+    }
+  }
+  return error instanceof Error ? error.message : "unknown error";
+}
+
 export default function SettingsView() {
   const { data: settings, isLoading, error, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
@@ -70,9 +82,11 @@ export default function SettingsView() {
           {updateSettings.isSuccess && (
             <p style={{ color: "green" }}>Settings saved</p>
           )}
-          {updateSettings.isError && (
-            <p style={{ color: "red" }}>Failed to save settings</p>
-          )}
+        {updateSettings.isError && (
+          <p style={{ color: "red" }} role="alert">
+            Failed to save settings: {saveErrorMessage(updateSettings.error)}
+          </p>
+        )}
           <button type="submit" disabled={updateSettings.isPending} style={{ padding: "8px 16px" }}>
             {updateSettings.isPending ? "Saving..." : "Save"}
           </button>

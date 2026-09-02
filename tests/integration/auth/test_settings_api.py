@@ -127,10 +127,37 @@ class TestUpdateSettings:
         resp_b = client.post("/api/auth/register", json={"email": "b@example.com", "password": "password123"})
         cookie_b = resp_b.headers["set-cookie"]
 
-        client.put("/api/settings", json={"default_model": "model_a"}, headers={"Cookie": cookie_a})
-        client.put("/api/settings", json={"default_model": "model_b"}, headers={"Cookie": cookie_b})
+        client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie_a})
+        client.put("/api/settings", json={"default_model": "gpt-4o-mini"}, headers={"Cookie": cookie_b})
 
         settings_a = client.get("/api/settings", headers={"Cookie": cookie_a}).json()
         settings_b = client.get("/api/settings", headers={"Cookie": cookie_b}).json()
-        assert settings_a["default_model"] == "model_a"
-        assert settings_b["default_model"] == "model_b"
+        assert settings_a["default_model"] == "gpt-4o"
+        assert settings_b["default_model"] == "gpt-4o-mini"
+
+    def test_update_rejects_unknown_model(self, client, auth_client):
+        """Unknown default_model must 422 and leave the stored value intact."""
+        cookie = auth_client
+        client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie})
+
+        resp = client.put(
+            "/api/settings",
+            json={"default_model": "gpt-inventado-9000"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+        assert "unknown model" in resp.text
+        assert "gpt-4o" in resp.text  # allowed models listed in the error
+
+        # Stored value unchanged after the rejected update.
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "gpt-4o"
+
+    def test_update_empty_model_treated_as_unset(self, client, auth_client):
+        cookie = auth_client
+        client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie})
+
+        resp = client.put("/api/settings", json={"default_model": "  "}, headers={"Cookie": cookie})
+        assert resp.status_code == 200
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "gpt-4o"
