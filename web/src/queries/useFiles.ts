@@ -10,6 +10,11 @@ export interface UploadedFile {
   created_at: string;
 }
 
+export interface FileListItem extends UploadedFile {
+  chat_session_id: string;
+  session_title: string | null;
+}
+
 interface ProfileSummary {
   schema: { columns: string[] };
   stats: Record<string, unknown>;
@@ -22,6 +27,13 @@ export function useFiles(sessionId: string | null) {
     queryFn: () =>
       api.get<UploadedFile[]>(`/api/sessions/${sessionId}/files`),
     enabled: !!sessionId,
+  });
+}
+
+export function useFilesGlobal() {
+  return useQuery({
+    queryKey: ["files", "global"],
+    queryFn: () => api.get<FileListItem[]>("/api/files"),
   });
 }
 
