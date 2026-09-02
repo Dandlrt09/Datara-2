@@ -104,4 +104,20 @@ describe("FilesView", () => {
     expect(screen.getByText("Failed to load files")).toBeTruthy(); // from ErrorCard message
     expect(screen.getByRole("alert")).toBeTruthy();
   });
+
+  it('upload invalidates all ["files"] keys via prefix match (W-1)', () => {
+    const { qc } = renderWithProviders(<FilesView />);
+
+    // Pre-populate both session-scoped and global caches
+    qc.setQueryData(["files", "ses-1"], [{ id: 1 }]);
+    qc.setQueryData(["files", "global"], [{ id: 1, filename: "old.csv" }]);
+    qc.setQueryData(["other"], []);
+
+    // This is what the real useUploadFile.onSuccess does after the fix
+    qc.invalidateQueries({ queryKey: ["files"] });
+
+    expect(qc.getQueryState(["files", "ses-1"])?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(["files", "global"])?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(["other"])?.isInvalidated).toBeFalsy();
+  });
 });

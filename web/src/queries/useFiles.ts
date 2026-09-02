@@ -57,8 +57,8 @@ export function useUploadFile() {
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
       return res.json() as Promise<UploadedFile & { profile_summary: ProfileSummary }>;
     },
-    onSuccess: (_data, vars) =>
-      qc.invalidateQueries({ queryKey: ["files", vars.sessionId] }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["files"] }),
   });
 }
 
