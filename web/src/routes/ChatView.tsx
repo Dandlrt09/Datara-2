@@ -22,6 +22,7 @@ export default function ChatView() {
 
   const store = useChatStore();
   const [question, setQuestion] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -48,32 +49,43 @@ export default function ChatView() {
     store.clearStreamingText();
     store.setPendingArtifacts(null);
     store.setStreaming(true);
+    setChatError(null);
 
     abortRef.current = new AbortController();
 
-    await streamChat(
-      sessionId,
-      q,
-      {
-        onStatus: (_stage, state) => {
-          if (state === "done" || state === "error") {
+    try {
+      await streamChat(
+        sessionId,
+        q,
+        {
+          onStatus: (_stage, state) => {
+            if (state === "done" || state === "error") {
+              store.setStreaming(false);
+            }
+          },
+          onToken: (delta) => store.appendStreamingText(delta),
+          onArtifact: (figures, tables) => store.setPendingArtifacts({ figures, tables }),
+          onDone: () => {
             store.setStreaming(false);
-          }
+            refetchMessages();
+          },
+          onError: (type, message) => {
+            // Surface WHY the turn failed (bad API key, unknown model,
+            // sandbox error...) instead of silently stopping.
+            store.setStreaming(false);
+            setChatError(message ? `${type}: ${message}` : type);
+          },
         },
-        onToken: (delta) => store.appendStreamingText(delta),
-        onArtifact: (figures, tables) => store.setPendingArtifacts({ figures, tables }),
-        onDone: () => {
-          store.setStreaming(false);
-          refetchMessages();
-        },
-        onError: () => {
-          store.setStreaming(false);
-        },
-      },
-      abortRef.current.signal
-    );
-
-    abortRef.current = null;
+        abortRef.current.signal
+      );
+    } catch (e) {
+      // streamChat throws on network failures / non-SSE responses. Without
+      // this catch, isStreaming stays true forever and the composer bricks.
+      setChatError(e instanceof Error ? e.message : "unexpected error sending message");
+    } finally {
+      store.setStreaming(false);
+      abortRef.current = null;
+    }
   }, [sessionId, question, store.isStreaming, refetchMessages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -198,6 +210,11 @@ export default function ChatView() {
         </div>
 
         {/* Composer */}
+        {chatError && (
+          <p role="alert" style={{ color: "#c62828", margin: "0 0 8px" }}>
+            {chatError}
+          </p>
+        )}
         <div
           style={{
             borderTop: "1px solid #ddd",
@@ -210,7 +227,11 @@ export default function ChatView() {
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your data..."
+            placeholder={
+              sessionId
+                ? "Ask a question about your data..."
+                : "Create or select a chat session first"
+            }
             disabled={!sessionId || store.isStreaming}
             style={{ flex: 1, padding: 8, resize: "none", minHeight: 40 }}
             rows={2}
