@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -61,11 +62,13 @@ async def lifespan(app: FastAPI):
     global _cleanup_task, _sandbox_sweep_task
 
     # Step 1: database setup
-    db_path = str(
-        Path(__file__).resolve().parent.parent.parent
-        / "data"
-        / "datara.db"
+    # Design: local DB lives at ~/.datara/datara.db (outside the repo),
+    # configurable via DATARA_DB_PATH. The parent directory may not exist
+    # on a fresh machine — create it before connecting.
+    db_path = os.environ.get("DATARA_DB_PATH") or os.path.expanduser(
+        "~/.datara/datara.db"
     )
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db_path=db_path)
     await store.connect()
     api_store._store = store

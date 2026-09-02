@@ -18,8 +18,12 @@ datara/
 # Install with server extras
 uv sync --extra server
 
-# Run the server
-uv run -m server.api.main
+# Run the server (API + built frontend, if web/dist exists)
+# Local DB: ~/.datara/datara.db (override with DATARA_DB_PATH)
+uv run uvicorn server.api.main:app
+
+# For frontend development with hot reload
+cd web && npm install && npm run dev   # proxies /api to localhost:8000
 ```
 
 ## Development
