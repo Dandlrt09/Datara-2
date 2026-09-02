@@ -147,6 +147,40 @@ class TestChatSessions:
         assert found is not None
 
 
+class TestWALMode:
+    """Task 5.4: Verify WAL journal mode is active.
+
+    WAL mode requires a file-based database; :memory: databases always
+    return 'memory' for PRAGMA journal_mode. This test uses a temp file.
+    """
+
+    async def test_wal_mode(self):
+        """PRAGMA journal_mode should return 'wal' for a file-based store."""
+        import tempfile
+        import os
+
+        # Use a temp file so WAL mode can be activated
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            s = SqliteStore(db_path=db_path)
+            await s.connect()
+            cursor = await s.conn.execute("PRAGMA journal_mode")
+            row = await cursor.fetchone()
+            journal_mode = row[0] if row else ""
+            await s.close()
+            assert "wal" in journal_mode.lower(), (
+                f"Expected WAL mode, got {journal_mode}"
+            )
+        finally:
+            # Clean up the temp file and any WAL/SHM files
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(db_path + suffix)
+                except FileNotFoundError:
+                    pass
+
+
 class TestUserSettings:
     async def test_get_empty(self, store):
         user = await store.create_user("alice@example.com", "hash")
