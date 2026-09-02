@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, useNavigate, Link } from "react-router-dom";
 import { useMe, useLogout } from "../queries/useAuth";
+import { RouteErrorBoundary } from "../components/ErrorCard";
 
 const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
@@ -9,6 +10,14 @@ const ArchiveList = lazy(() => import("./ArchiveList"));
 
 function Loading() {
   return <div>Loading...</div>;
+}
+
+function withErrorBoundary(viewName: string, Element: React.ComponentType) {
+  return (
+    <RouteErrorBoundary viewName={viewName}>
+      <Element />
+    </RouteErrorBoundary>
+  );
 }
 
 export default function AppShell() {
@@ -67,11 +76,26 @@ export default function AppShell() {
       <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
         <Suspense fallback={<Loading />}>
           <Routes>
-            <Route path="/chat/:sessionId?" element={<ChatView />} />
-            <Route path="/files" element={<FilesView />} />
-            <Route path="/settings" element={<SettingsView />} />
-            <Route path="/archives" element={<ArchiveList />} />
-            <Route path="*" element={<ChatView />} />
+            <Route
+              path="/chat/:sessionId?"
+              element={withErrorBoundary("Chat", ChatView)}
+            />
+            <Route
+              path="/files"
+              element={withErrorBoundary("Files", FilesView)}
+            />
+            <Route
+              path="/settings"
+              element={withErrorBoundary("Settings", SettingsView)}
+            />
+            <Route
+              path="/archives"
+              element={withErrorBoundary("Archives", ArchiveList)}
+            />
+            <Route
+              path="*"
+              element={withErrorBoundary("Chat", ChatView)}
+            />
           </Routes>
         </Suspense>
       </main>

@@ -5,12 +5,18 @@ import { useMessages } from "../queries/useMessages";
 import { useChatStore } from "../stores/useChatStore";
 import { streamChat } from "../lib/sse";
 import ChatMessage from "../components/ChatMessage";
+import { QueryError } from "../components/ErrorCard";
 
 export default function ChatView() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-  const { data: sessions } = useSessions();
-  const { data: messages, refetch: refetchMessages } = useMessages(sessionId ?? null);
+  const {
+    data: sessions,
+    error: sessionsError,
+    refetch: refetchSessions,
+  } = useSessions();
+  const { data: messages, refetch: refetchMessages, error: messagesError } =
+    useMessages(sessionId ?? null);
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
 
@@ -80,40 +86,60 @@ export default function ChatView() {
   return (
     <div style={{ display: "flex", height: "100%" }}>
       {/* Sessions sidebar */}
-      <div style={{ width: 260, borderRight: "1px solid #ddd", padding: 12, overflowY: "auto" }}>
+      <div
+        style={{
+          width: 260,
+          borderRight: "1px solid #ddd",
+          padding: 12,
+          overflowY: "auto",
+        }}
+      >
         <button onClick={handleNewSession} style={{ width: "100%", marginBottom: 12 }}>
           + New Chat
         </button>
-        {sessions?.map((s) => (
-          <div
-            key={s.id}
-            style={{
-              padding: "8px 12px",
-              cursor: "pointer",
-              background: s.id === sessionId ? "#e3f2fd" : "transparent",
-              borderRadius: 6,
-              marginBottom: 4,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Link to={`/app/chat/${s.id}`} style={{ textDecoration: "none", color: "inherit", flex: 1 }}>
-              {s.title}
-            </Link>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteSession.mutate(s.id);
-                if (s.id === sessionId) navigate("/app/chat");
+        <QueryError
+          error={sessionsError as Error | null}
+          onRetry={refetchSessions}
+        >
+          {sessions?.map((s) => (
+            <div
+              key={s.id}
+              style={{
+                padding: "8px 12px",
+                cursor: "pointer",
+                background: s.id === sessionId ? "#e3f2fd" : "transparent",
+                borderRadius: 6,
+                marginBottom: 4,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
               }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#999" }}
-              title="Delete"
             >
-              ×
-            </button>
-          </div>
-        ))}
+              <Link
+                to={`/app/chat/${s.id}`}
+                style={{ textDecoration: "none", color: "inherit", flex: 1 }}
+              >
+                {s.title}
+              </Link>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteSession.mutate(s.id);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#999",
+                  fontSize: "1.1em",
+                }}
+                title="Delete"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </QueryError>
       </div>
 
       {/* Chat area */}
@@ -124,46 +150,62 @@ export default function ChatView() {
               Select a chat or create a new one
             </div>
           )}
-          {messages?.map((m) => (
-            <ChatMessage
-              key={m.id}
-              role={m.role}
-              content={m.content_text}
-              artifacts={
-                m.artifacts
-                  ? (m.artifacts as { kind: string; name: string; payload: unknown }[])
-                  : null
-              }
-            />
-          ))}
-          {/* Streaming message */}
-          {(store.streamingText || store.pendingArtifacts) && (
-            <ChatMessage
-              role="assistant"
-              content={store.streamingText || "..."}
-              artifacts={
-                store.pendingArtifacts
-                  ? [
-                      ...(store.pendingArtifacts.figures.map((f) => ({
-                        kind: "figure" as const,
-                        name: (f as Record<string, unknown>).name as string,
-                        payload: (f as Record<string, unknown>).plotly ?? f,
-                      }))),
-                      ...(store.pendingArtifacts.tables.map((t) => ({
-                        kind: "table" as const,
-                        name: (t as Record<string, unknown>).name as string,
-                        payload: t,
-                      }))),
-                    ]
-                  : null
-              }
-            />
-          )}
+          <QueryError
+            error={messagesError as Error | null}
+            onRetry={refetchMessages}
+          >
+            {messages?.map((m) => (
+              <ChatMessage
+                key={m.id}
+                role={m.role}
+                content={m.content_text}
+                artifacts={
+                  m.artifacts
+                    ? (m.artifacts as {
+                        kind: string;
+                        name: string;
+                        payload: unknown;
+                      }[])
+                    : null
+                }
+              />
+            ))}
+            {/* Streaming message */}
+            {(store.streamingText || store.pendingArtifacts) && (
+              <ChatMessage
+                role="assistant"
+                content={store.streamingText || "..."}
+                artifacts={
+                  store.pendingArtifacts
+                    ? [
+                        ...(store.pendingArtifacts.figures.map((f) => ({
+                          kind: "figure" as const,
+                          name: (f as Record<string, unknown>).name as string,
+                          payload: (f as Record<string, unknown>).plotly ?? f,
+                        }))),
+                        ...(store.pendingArtifacts.tables.map((t) => ({
+                          kind: "table" as const,
+                          name: (t as Record<string, unknown>).name as string,
+                          payload: t,
+                        }))),
+                      ]
+                    : null
+                }
+              />
+            )}
+          </QueryError>
           <div ref={messagesEndRef} />
         </div>
 
         {/* Composer */}
-        <div style={{ borderTop: "1px solid #ddd", padding: 16, display: "flex", gap: 8 }}>
+        <div
+          style={{
+            borderTop: "1px solid #ddd",
+            padding: 16,
+            display: "flex",
+            gap: 8,
+          }}
+        >
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
