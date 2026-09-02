@@ -52,4 +52,16 @@ describe("SettingsView", () => {
     render(<SettingsView />);
     expect(screen.getByText(/loading settings/i)).toBeTruthy();
   });
+
+  it("shows error card when useSettings fails (R-ErrorUI-4)", () => {
+    useSettingsMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("Failed to load settings"),
+      refetch: vi.fn(),
+    });
+    render(<SettingsView />);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Retry")).toBeTruthy();
+  });
 });
