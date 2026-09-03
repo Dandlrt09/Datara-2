@@ -63,6 +63,9 @@ async def build_chat_context(
                     "file_id": f["id"],
                     "filename": f["filename"],
                     "format": f["format"],
+                    # Absolute server-side path: the sandbox reads uploads
+                    # by exact path (its cwd is a fresh temp dir).
+                    "path": f["storage_path"],
                     "profile": _serialize_profile(profile),
                 }
             )

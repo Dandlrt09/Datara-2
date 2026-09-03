@@ -178,6 +178,12 @@ async def chat_stream(
             )
             if context["profiles"]:
                 system_prompt += f"\n\nAvailable datasets:\n{json.dumps(context['profiles'], indent=2)}"
+                system_prompt += (
+                    "\n\nIMPORTANT — file access: the code runs in a FRESH temporary "
+                    "working directory, so relative filenames do not exist. Read each "
+                    "dataset with EXACTLY its 'path' value above (absolute path), e.g. "
+                    "df = pd.read_csv('<path>'). Never invent paths."
+                )
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             llm_messages.extend(context["messages"])
