@@ -31,6 +31,7 @@ async def run_code(
     *,
     dataframes: dict | None = None,
     limits: dict | None = None,
+    files: dict[str, str] | None = None,
 ) -> dict:
     """Execute code in the sandbox subprocess.
 
@@ -38,6 +39,9 @@ async def run_code(
         code: Python source code to execute.
         dataframes: Dict of dataframe name -> file path or inlined data.
         limits: Dict with keys ``cpu_seconds``, ``memory_mb``, ``timeout_seconds``.
+        files: Optional mapping of basename -> absolute source path. Each file
+            is staged into the sandbox working directory under its basename
+            before execution, so generated code can read it by filename.
 
     Returns:
         Dict matching the sandbox stdout protocol::
@@ -74,6 +78,13 @@ async def run_code(
 
     tmpdir = tempfile.mkdtemp(prefix="datara-sandbox-")
     try:
+        # Stage session files into the sandbox cwd under their original
+        # basename so generated code can read them by plain filename.
+        for name, src in (files or {}).items():
+            safe_name = os.path.basename(name)
+            if safe_name and os.path.isfile(src):
+                shutil.copy2(src, os.path.join(tmpdir, safe_name))
+
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-I",

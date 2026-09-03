@@ -217,7 +217,11 @@ async def chat_stream(
                 yield token_event
             yield _sse_event("status", {"stage": "sandbox", "state": "running"})
 
-            # Step 6: Run sandbox (single-shot)
+            # Step 6: Run sandbox (single-shot). Stage the session's uploads
+            # into the sandbox cwd so generated code can read them by filename.
+            session_files = {
+                p["filename"]: p["path"] for p in context["profiles"] if p.get("path")
+            }
             sandbox_result: dict[str, Any] = {}
             if code.strip():
                 try:
@@ -225,7 +229,7 @@ async def chat_stream(
                         "cpu_seconds": 30,
                         "memory_mb": 512,
                         "timeout_seconds": 30,
-                    })
+                    }, files=session_files or None)
                 except Exception as e:
                     sandbox_result = {
                         "status": "error",
