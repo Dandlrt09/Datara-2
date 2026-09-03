@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, AsyncIterator
 
 import openai
@@ -25,8 +26,10 @@ from core.protocols.llm_provider import LLMProvider, LLMResponse, LLMUsage
 
 logger = logging.getLogger(__name__)
 
-# Default timeout for the LLM call (seconds)
-_DEFAULT_TIMEOUT = 60.0
+# Default timeout for the LLM call (seconds). Non-streamed json_schema
+# responses on routed backends (e.g. OpenRouter) can be slow; configurable
+# via OPENAI_TIMEOUT in the environment / .env.
+_DEFAULT_TIMEOUT = float(os.environ.get("OPENAI_TIMEOUT", "120.0"))
 
 # Rate-limit backoff schedule (seconds)
 _RETRY_BACKOFFS = [2.0, 4.0, 8.0]
