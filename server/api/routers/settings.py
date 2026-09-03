@@ -8,6 +8,8 @@ current one, via the store's COALESCE upsert).
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # Known OpenAI chat models accepted for default_model. The chat provider
 # resolves this string per request, so an invalid value would only fail
 # later (at chat time) — reject it here instead, at save time.
-ALLOWED_MODELS = frozenset(
+_BASE_MODELS = frozenset(
     {
         "gpt-4o",
         "gpt-4o-mini",
@@ -28,6 +30,20 @@ ALLOWED_MODELS = frozenset(
         "gpt-4.1-nano",
     }
 )
+
+
+def _load_allowed_models() -> frozenset[str]:
+    """Base whitelist + DATARA_ALLOWED_MODELS (comma-separated).
+
+    The extension supports alternative OpenAI-compatible backends (e.g.
+    OpenRouter model slugs like ``z-ai/glm-4.7-flash``) pointed at via
+    OPENAI_BASE_URL. Read once at import; restart the server to apply.
+    """
+    extra = os.environ.get("DATARA_ALLOWED_MODELS", "")
+    return _BASE_MODELS | {m.strip() for m in extra.split(",") if m.strip()}
+
+
+ALLOWED_MODELS = _load_allowed_models()
 
 
 class SettingsResponse(BaseModel):

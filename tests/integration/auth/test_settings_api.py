@@ -163,3 +163,34 @@ class TestUpdateSettings:
         assert resp.status_code == 200
         data = client.get("/api/settings", headers={"Cookie": cookie}).json()
         assert data["default_model"] == "gpt-4o"
+
+
+class TestEnvExtendedWhitelist:
+    def test_env_extension_accepts_custom_backend_model(self, client, auth_client, monkeypatch):
+        """DATARA_ALLOWED_MODELS extends the whitelist (OpenRouter slugs etc.)."""
+        from server.api.routers import settings as settings_module
+
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "z-ai/glm-4.7-flash"}),
+        )
+        cookie = auth_client
+
+        resp = client.put(
+            "/api/settings",
+            json={"default_model": "z-ai/glm-4.7-flash"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "z-ai/glm-4.7-flash"
+        assert set(data["allowed_models"]) == {"gpt-4o", "z-ai/glm-4.7-flash"}
+
+        # Whitelist still enforced for anything outside the extension.
+        resp = client.put(
+            "/api/settings",
+            json={"default_model": "gpt-inventado-9000"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
