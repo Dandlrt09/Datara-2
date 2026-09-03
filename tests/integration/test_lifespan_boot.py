@@ -37,3 +37,30 @@ def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
 
     # The DB was created at the env-configured path, parent dir included.
     assert db_path.exists()
+
+
+def test_spa_fallback_serves_app_shell_for_client_routes(tmp_path, monkeypatch):
+    """Full reload on a client-side route (/login, /app/...) must return the
+    SPA shell, not a 404 — the server has no such files on disk."""
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from server.api.main import app
+
+    if not (os.path.exists("web/dist/index.html")):
+        return  # frontend not built in this environment; nothing to assert
+
+    db_path = tmp_path / "fresh2" / "datara.db"
+    monkeypatch.setenv("DATARA_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        for route in ("/login", "/app/files", "/app/chat"):
+            resp = client.get(route)
+            assert resp.status_code == 200, route
+            assert 'id="root"' in resp.text, route
+            assert "application/json" not in resp.headers.get("content-type", "")
+
+        # Unknown API paths keep their JSON 404 (no SPA fallback there).
+        resp = client.get("/api/does-not-exist")
+        assert resp.status_code == 404

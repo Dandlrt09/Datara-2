@@ -158,7 +158,25 @@ app.include_router(archive.router)
 
 # Mount static files (for production, serve built frontend here)
 static_dir = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles with an SPA fallback.
+
+    Client-side routes (/login, /app/files, ...) don't exist on disk, so a
+    full reload or deep link would 404. Any unknown NON-API path is answered
+    with index.html so the SPA boots and the router takes over. Unknown API
+    paths still return their normal 404.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 404 and not path.startswith("api/"):
+            response = await super().get_response("index.html", scope)
+        return response
+
+
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    app.mount("/", SPAStaticFiles(directory=str(static_dir), html=True), name="static")
 else:
     logger.info("Static directory not found at %s — frontend not mounted", static_dir)
