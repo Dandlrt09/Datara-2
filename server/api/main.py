@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 
 from server.api import store as api_store
 from server.api.routers import auth, chat, files, sessions, settings, archive
@@ -170,7 +171,13 @@ class SPAStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as exc:
+            # StaticFiles RAISES HTTPException(404) when the file is missing.
+            if exc.status_code == 404 and not path.startswith("api/"):
+                return await super().get_response("index.html", scope)
+            raise
         if response.status_code == 404 and not path.startswith("api/"):
             response = await super().get_response("index.html", scope)
         return response
