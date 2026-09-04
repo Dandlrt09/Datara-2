@@ -27,10 +27,9 @@ from typing import Any, Callable
 
 import pandas as pd
 
+# Server modules are imported lazily inside main() and helper functions
+# to keep the module importable for unit testing without FastAPI deps.
 from core.errors import LLMError, LLMInvalidJSONError, LLMRateLimitError, LLMTimeoutError
-from server.api.routers.chat import _CHAT_JSON_SCHEMA
-from server.services.llm_openai import OpenAIProvider, _estimate_cost
-from server.services.sandbox_local import run_code
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -72,12 +71,24 @@ def _normalize_number(s: str) -> float | None:
     text = s.strip()
     if not text:
         return None
-    # Strip leading currency/percent symbols
-    for ch in ("$", "€", "£", "%", "USD", "EUR"):
-        if text.startswith(ch):
-            text = text[len(ch) :].strip()
     # Handle Unicode minus
     text = text.replace("−", "-").replace("–", "-")
+    # Strip leading currency/percent symbols (after minus handling)
+    for ch in ("$", "€", "£", "USD", "EUR"):
+        if text.startswith(ch):
+            text = text[len(ch) :].strip()
+    # Handle leading minus before a currency symbol (e.g. "-$1,234")
+    if text.startswith("-"):
+        text = "-" + text[1:].strip()  # preserve minus, strip any space after it
+        for ch in ("$", "€", "£", "USD", "EUR"):
+            if text.startswith("-" + ch):
+                text = "-" + text[len("-" + ch) :].strip()
+                break
+    # Strip trailing percent — return the number as-is (e.g. "99.5%" -> 99.5)
+    if text.endswith("%"):
+        text = text[:-1].strip()
+        if not text:
+            return None
     # Remove thousands separators (commas between digits)
     text = text.replace(",", "")
     try:
@@ -328,8 +339,9 @@ def _cache_put(key: str, response: dict) -> None:
 # ── Seed experiment ────────────────────────────────────────────────────────────
 
 
-async def _run_seed_experiment(provider: OpenAIProvider, questions: list[BenchQuestion]) -> int:
+async def _run_seed_experiment(provider, questions: list[BenchQuestion]) -> int:
     """Run determinism experiment: N=5 runs of Q1 at temperature=0, seed=0."""
+    from server.api.routers.chat import _CHAT_JSON_SCHEMA
     q = questions[0]
     csv_path = _EXAMPLES_DIR / q.csv_basename
     if not csv_path.exists():
@@ -425,12 +437,14 @@ class QuestionResult:
 
 
 async def _run_question(
-    provider: OpenAIProvider,
+    provider,
     q: BenchQuestion,
     *,
     cache_enabled: bool = False,
 ) -> QuestionResult:
     """Run a single canonical question through the LLM + sandbox pipeline."""
+    from server.api.routers.chat import _CHAT_JSON_SCHEMA
+    from server.services.sandbox_local import run_code
     start = time.time()
 
     # Locate CSV
@@ -720,6 +734,8 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
 
     # Create provider
+    from server.services.llm_openai import OpenAIProvider, _estimate_cost
+
     provider = OpenAIProvider(api_key=api_key, model=_DEFAULT_MODEL)
 
     # Seed experiment mode
