@@ -13,3 +13,4 @@ server/uploads/
 web/node_modules/
 node_modules/
 *.tsbuildinfo
+.bench/
