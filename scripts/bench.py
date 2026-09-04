@@ -171,35 +171,37 @@ def _q1_expected(_df: pd.DataFrame) -> dict[str, float]:
 
 
 def _q2_expected(df: pd.DataFrame) -> dict[str, float]:
-    """Total sales across all periods."""
-    return {"total_sales": float(df["monto"].sum())}
+    """Total sales across all periods (pequeno dataset: revenue column is 'total')."""
+    return {"total_sales": float(df["total"].sum())}
 
 
 def _q3_expected(df: pd.DataFrame) -> dict[str, float]:
     """Top product by revenue + units sold."""
-    top = df.groupby("producto")["monto"].sum().idxmax()
+    top = df.groupby("producto")["total"].sum().idxmax()
     units = int(df[df["producto"] == top]["cantidad"].sum())
-    return {"top_product_revenue": float(df.groupby("producto")["monto"].sum().max()), "top_product_units": units}
+    return {"top_product_revenue": float(df.groupby("producto")["total"].sum().max()), "top_product_units": float(units)}
 
 
 def _q4_expected(df: pd.DataFrame) -> dict[str, float]:
     """Average satisfaction by channel."""
-    means = df.groupby("canal")["satisfaccion"].mean()
+    means = df.groupby("canal")["satisfaccion_cliente"].mean()
     return {f"satisfaccion_{k}": float(v) for k, v in means.items()}
 
 
 def _q5_expected(df: pd.DataFrame) -> dict[str, float]:
     """Sales count and avg ticket in Barranquilla."""
     barranquilla = df[df["ciudad"].str.lower() == "barranquilla"]
-    return {"count": float(len(barranquilla)), "avg_ticket": float(barranquilla["monto"].mean()) if len(barranquilla) > 0 else 0.0}
+    return {"count": float(len(barranquilla)), "avg_ticket": float(barranquilla["total"].mean()) if len(barranquilla) > 0 else 0.0}
 
 
 def _q6_expected(df: pd.DataFrame) -> dict[str, float]:
-    """Month with highest sales."""
+    """Month with highest sales. Only the sales value is asserted: a month
+    label never appears as a bare number in model output, so asserting the
+    Period ordinal would false-fail every correct answer."""
     monthly = df.copy()
     monthly["mes"] = pd.to_datetime(monthly["fecha"]).dt.to_period("M")
-    totals = monthly.groupby("mes")["monto"].sum()
-    return {"max_month_sales": float(totals.max()), "max_month": float(totals.idxmax().ordinal)}
+    totals = monthly.groupby("mes")["total"].sum()
+    return {"max_month_sales": float(totals.max())}
 
 
 def _q7_expected(df: pd.DataFrame) -> dict[str, float]:
@@ -208,20 +210,22 @@ def _q7_expected(df: pd.DataFrame) -> dict[str, float]:
 
 
 def _q8_expected(df: pd.DataFrame) -> dict[str, float]:
-    """Count per product."""
-    counts = df["producto"].value_counts()
-    return {f"count_{k}": float(v) for k, v in counts.items()}
+    """Units per product — the question asks for 'cantidad' (units), not
+    sale counts, so the ground truth is the per-product cantidad sum."""
+    sums = df.groupby("producto")["cantidad"].sum()
+    return {f"cant_{k}": float(v) for k, v in sums.items()}
 
 
 def _q9_expected(df: pd.DataFrame) -> dict[str, float]:
-    """Best-selling product: price, satisfaction comparisons."""
+    """Best-selling product: global avg price + Online satisfaction.
+    City-level avg price is intentionally NOT asserted: the honest answer
+    for Base Notebook is 'no sales in Bogotá/Medellín', whose shape varies
+    (empty table vs prose), so a fixed expected value would false-fail."""
     best = df.groupby("producto")["cantidad"].sum().idxmax()
     best_df = df[df["producto"] == best]
     avg_price = float(best_df["precio_unitario"].mean())
-    cities = best_df[best_df["ciudad"].str.lower().isin(["bogotá", "medellín"])]
-    city_avg = float(cities.groupby("ciudad")["precio_unitario"].mean().mean()) if len(cities) > 0 else 0.0
-    online_sat = float(best_df[best_df["canal"].str.lower() == "online"]["satisfaccion"].mean())
-    return {"avg_price": avg_price, "city_avg_price": city_avg, "online_satisfaccion": online_sat}
+    online_sat = float(best_df[best_df["canal"].str.lower() == "online"]["satisfaccion_cliente"].mean())
+    return {"avg_price": avg_price, "online_satisfaccion": online_sat}
 
 
 def _q10_expected(_df: pd.DataFrame) -> dict[str, float]:
