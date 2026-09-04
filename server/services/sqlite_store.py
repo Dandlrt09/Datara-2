@@ -278,7 +278,8 @@ class SqliteStore:
         """List messages for a chat session with pagination.
 
         ``before_id``: return messages with id < before_id (earlier).
-        Results are ordered by created_at DESC (newest first), so the
+        Results are ordered by created_at DESC, id DESC (newest first; the
+        id tiebreaker keeps same-second messages deterministic), so the
         client reverses them for display.
         """
         if before_id is not None:
@@ -287,7 +288,7 @@ class SqliteStore:
                 "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
                 "FROM messages "
                 "WHERE user_id = ? AND chat_session = ? AND id < ? "
-                "ORDER BY created_at DESC LIMIT ?",
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
                 (user_id, chat_session, before_id, limit),
             )
         else:
@@ -296,7 +297,7 @@ class SqliteStore:
                 "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
                 "FROM messages "
                 "WHERE user_id = ? AND chat_session = ? "
-                "ORDER BY created_at DESC LIMIT ?",
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
                 (user_id, chat_session, limit),
             )
         return [dict(r) for r in rows]

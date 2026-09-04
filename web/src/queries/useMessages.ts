@@ -14,8 +14,17 @@ export interface Message {
 export function useMessages(sessionId: string | null, limit = 50) {
   return useQuery({
     queryKey: ["messages", sessionId],
-    queryFn: () =>
-      api.get<Message[]>(`/api/sessions/${sessionId}/messages?limit=${limit}`),
+    queryFn: async () => {
+      // The API returns messages newest-first (created_at DESC, id DESC —
+      // the keyset-pagination contract); the chat renders oldest→newest,
+      // so honor the documented "client reverses" contract here. Without
+      // this reversal the assistant answer rendered ABOVE the user's
+      // question after every refetch.
+      const msgs = await api.get<Message[]>(
+        `/api/sessions/${sessionId}/messages?limit=${limit}`,
+      );
+      return [...msgs].reverse();
+    },
     enabled: !!sessionId,
   });
 }
