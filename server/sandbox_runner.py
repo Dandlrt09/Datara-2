@@ -127,15 +127,24 @@ def _restore_builtins_open() -> None:
 # The process-level jail (write-only) covers library-internal open() calls.
 _SAFE_BUILTINS_NAMES: frozenset[str] = frozenset({
     "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float",
-    "int", "len", "list", "map", "max", "min", "open",
+    "int", "len", "list", "map", "max", "min", "object", "open",
     "print", "range", "repr", "round", "set", "sorted", "str", "sum",
     "tuple", "zip", "isinstance", "type", "hasattr", "getattr", "setattr",
     "delattr", "callable", "iter", "next", "slice", "reversed",
+    # Class definitions: `class X:` requires __build_class__ (implicit) and
+    # `object` (default base). Both are inert in this jail — dunder attribute
+    # access is blocked by _DunderGuard, open() is cwd-jailed, no subprocess.
+    # LLM-generated analysis code occasionally defines helper classes and
+    # blocking them killed legitimate runs (NameError, found by bench 4.2).
+    "__build_class__",
 })
 
+# Names never exposed to sandbox code. NOTE: this set is vestigial — the
+# real enforcement is the _SAFE_BUILTINS_NAMES allowlist above; a name absent
+# there simply doesn't exist in the sandbox. Kept as documentation.
 _BLOCKED_DUNDERS: frozenset[str] = frozenset({
     "__import__", "exec", "eval", "compile", "input", "globals",
-    "locals", "vars", "__build_class__", "breakpoint",
+    "locals", "vars", "breakpoint",
 })
 
 
@@ -249,6 +258,10 @@ def _build_restricted_globals() -> dict[str, object]:
         "px": _px,
         "go": _go,
         "_GUARD": _DunderGuard(),
+        # Class machinery reads __name__ from globals to set __module__
+        # (exec with a plain dict does not inject it). "sandbox" mirrors
+        # the <sandbox> compile filename.
+        "__name__": "sandbox",
     }
     return restricted
 

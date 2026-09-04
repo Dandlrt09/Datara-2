@@ -232,6 +232,31 @@ df_result = pd.DataFrame({"resumen": ["total"], "valor": [3]})
         assert result["status"] == "ok"
         assert [t["name"] for t in result["tables"]] == ["df_result"]
 
+    def test_class_definitions_execute(self):
+        """`class` statements must work in the sandbox.
+
+        Regression: `object` and `__build_class__` were absent from the
+        safe-builtins allowlist, so ANY LLM-generated code defining a
+        helper class died with NameError (found by bench smoke test 4.2
+        on Q1). Classes are inert in this jail: dunder attribute access
+        is blocked, open() is cwd-jailed, no subprocess.
+        """
+        code = """
+class Resumen:
+    def __init__(self, nombre, valor):
+        self.nombre = nombre
+        self.valor = valor
+
+    def linea(self):
+        return f"{self.nombre}: {self.valor}"
+
+r = Resumen("total", 123.5)
+print(r.linea())
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok", result.get("error")
+        assert "total: 123.5" in result["text"]
+
     def test_red_write_html(self):
         """RED: fig.write_html with ABSOLUTE path → blocked_import.
 
