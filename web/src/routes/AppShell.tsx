@@ -12,6 +12,16 @@ function Loading() {
   return <div>Loading...</div>;
 }
 
+function NotFound() {
+  return (
+    <div style={{ textAlign: "center", marginTop: 80 }}>
+      <h2>404</h2>
+      <p>This page does not exist.</p>
+      <Link to="/app/chat">Back to Chat</Link>
+    </div>
+  );
+}
+
 function withErrorBoundary(viewName: string, Element: React.ComponentType) {
   return (
     <RouteErrorBoundary viewName={viewName}>
@@ -92,10 +102,7 @@ export default function AppShell() {
               path="/archives"
               element={withErrorBoundary("Archives", ArchiveList)}
             />
-            <Route
-              path="*"
-              element={withErrorBoundary("Chat", ChatView)}
-            />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </main>

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
 from server.api.deps import current_user, get_store
@@ -59,17 +59,16 @@ class SettingsUpdateRequest(BaseModel):
 
     @field_validator("default_model")
     @classmethod
-    def validate_default_model(cls, v: str | None) -> str | None:
+    def _normalize_default_model(cls, v: str | None) -> str | None:
+        # Normalize only: empty/whitespace means "keep current value".
+        # The whitelist check lives in update_settings (handler), where the
+        # stored value is visible — re-saving an unchanged model that is no
+        # longer whitelisted (e.g. server rebooted without
+        # DATARA_ALLOWED_MODELS) must not block unrelated updates.
         if v is None:
             return None
         v = v.strip()
-        if not v:
-            return None  # treat empty as unset (keep current value)
-        if v not in ALLOWED_MODELS:
-            raise ValueError(
-                f"unknown model '{v}'. Allowed: {', '.join(sorted(ALLOWED_MODELS))}"
-            )
-        return v
+        return v or None
 
 
 @router.get("", response_model=SettingsResponse)
@@ -101,7 +100,23 @@ async def update_settings(
 
     Only provided fields are updated; omitted/empty fields keep their
     current value (the store upsert uses COALESCE).
+
+    An unknown ``default_model`` is rejected with 422 — unless it equals
+    the value already stored for this user, which is treated as "keep"
+    (a stale whitelist must not brick unrelated updates such as saving
+    a new API key).
     """
+    if body.default_model is not None:
+        current = await store.get_user_settings(user["id"])
+        stored_model = current["default_model"] if current else None
+        if body.default_model != stored_model and body.default_model not in ALLOWED_MODELS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"unknown model '{body.default_model}'. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_MODELS))}"
+                ),
+            )
     result = await store.upsert_user_settings(
         user["id"],
         api_key_enc=body.api_key or None,

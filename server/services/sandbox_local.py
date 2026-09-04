@@ -117,12 +117,19 @@ async def run_code(
 
         raw = stdout.decode("utf-8") or ""
         if not raw:
-            # Hard OOM / empty stdout fallback
+            # Hard crash (no stdout). Surface stderr so the real cause is
+            # visible — it is NOT always OOM (e.g. unserializable result
+            # objects crash the runner after successful execution).
+            stderr_tail = (stderr.decode("utf-8", errors="replace") or "")[-400:]
+            hint = " — " + stderr_tail.strip() if stderr_tail.strip() else ""
             return {
                 "status": "error",
                 "error": {
                     "type": "runtime_error",
-                    "message": "Sandbox process produced no output (possible hard OOM)",
+                    "message": (
+                        "Sandbox process produced no output "
+                        "(crashed or hard OOM)" + hint
+                    ),
                 },
                 "figures": [],
                 "tables": [],

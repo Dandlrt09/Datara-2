@@ -145,6 +145,93 @@ print(x.shape)
         assert result["status"] == "error"
         assert result["error"]["type"] == "syntax_error"
 
+    def test_dataframe_table_rows_are_json_safe_arrays(self):
+        """Tables must serialize as arrays of arrays with strict-JSON cells.
+
+        Regression: rows were dicts (to_dict(orient="records")) and NaN cells
+        serialized as bare `NaN` — browsers' JSON.parse rejects both, which
+        poisoned the SSE artifact event and crashed the chat view.
+        """
+        code = """
+import pandas as pd
+df_result = pd.DataFrame({
+    "a": [1.5, float("nan")],
+    "b": ["x", None],
+    "c": [float("inf"), -float("inf")],
+})
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        assert len(result["tables"]) == 1
+        tbl = result["tables"][0]
+        assert tbl["columns"] == ["a", "b", "c"]
+        assert all(isinstance(r, list) for r in tbl["rows"])
+        # NaN/±Inf → None; the payload must survive strict JSON round-trip.
+        assert tbl["rows"][0] == [1.5, "x", None]
+        assert tbl["rows"][1] == [None, None, None]
+        json.dumps(result, allow_nan=False)  # must not raise
+
+    def test_datetime_columns_serialize(self):
+        """Timestamp/datetime cells must become ISO strings.
+
+        Regression: mutating df with pd.to_datetime made the table
+        collector emit Timestamp objects; json.dumps in main() then died
+        with empty stdout, which the parent misreported as hard OOM.
+        """
+        code = """
+import pandas as pd
+df_result = pd.DataFrame({
+    "fecha": pd.to_datetime(["2026-01-05", "2026-01-06"]),
+    "monto": [10.5, 20.0],
+})
+df_result["anio_mes"] = df_result["fecha"].dt.to_period("M")
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        tbl = result["tables"][0]
+        assert tbl["rows"][0][0] == "2026-01-05T00:00:00"  # Timestamp → ISO
+        json.dumps(result, allow_nan=False)  # whole payload must be strict
+
+    def test_import_usable_inside_function(self):
+        """Top-level imports/assignments must resolve inside function bodies.
+
+        Regression: exec(code, globals, locals) with two separate dicts
+        bound imports and top-level names into locals while function
+        bodies resolved against globals — so `import unicodedata` plus a
+        helper function crashed with NameError ('unicodedata' is not
+        defined). This was the flaky unicodedata chat failure.
+        """
+        code = """
+import unicodedata
+
+def sin_tildes(texto):
+    normalizada = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in normalizada if not unicodedata.combining(c))
+
+resultado = sin_tildes("Bogotá")
+print(resultado)
+fig_aux = None
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok", result.get("error")
+        assert "Bogota" in result["text"]
+
+    def test_raw_df_variable_is_not_captured_as_table(self):
+        """The raw load variable 'df' must NOT render as a table.
+
+        The system prompt tells the model to load datasets into 'df';
+        auto-capturing it echoed the untouched dataset as a table on every
+        answer. Result tables use df_<name> (df_result, ...) — those render.
+        """
+        code = """
+import pandas as pd
+df = pd.DataFrame({"a": [1, 2]})
+df_result = pd.DataFrame({"resumen": ["total"], "valor": [3]})
+"""
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        assert [t["name"] for t in result["tables"]] == ["df_result"]
+
     def test_red_write_html(self):
         """RED: fig.write_html with ABSOLUTE path → blocked_import.
 

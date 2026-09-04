@@ -6,8 +6,10 @@ interface ChatState {
   streamingText: string;
   appendStreamingText: (delta: string) => void;
   clearStreamingText: () => void;
-  pendingArtifacts: { figures: unknown[]; tables: unknown[] } | null;
-  setPendingArtifacts: (artifacts: { figures: unknown[]; tables: unknown[] } | null) => void;
+  pendingArtifacts: { figures: unknown[]; tables: unknown[]; texts: unknown[] } | null;
+  setPendingArtifacts: (
+    artifacts: { figures: unknown[]; tables: unknown[]; texts: unknown[] } | null,
+  ) => void;
   isStreaming: boolean;
   setStreaming: (v: boolean) => void;
 }

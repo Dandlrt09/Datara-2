@@ -328,6 +328,19 @@ class SqliteStore:
         )
         await self.conn.commit()
 
+    async def update_chat_session_title(
+        self,
+        session_id: str,
+        user_id: int,
+        title: str,
+    ) -> None:
+        """Set a chat session's display title (auto-name from first question)."""
+        await self.conn.execute(
+            "UPDATE chat_sessions SET title = ? WHERE id = ? AND user_id = ?",
+            (title, session_id, user_id),
+        )
+        await self.conn.commit()
+
     # ── Archives ─────────────────────────────────────────────────────────────
 
     async def create_archive(

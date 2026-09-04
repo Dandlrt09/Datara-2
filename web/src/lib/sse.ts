@@ -8,14 +8,14 @@
 export type SSEEvent =
   | { event: "status"; data: { stage: string; state: string } }
   | { event: "token"; data: string }
-  | { event: "artifact"; data: { figures: unknown[]; tables: unknown[] } }
+  | { event: "artifact"; data: { figures: unknown[]; tables: unknown[]; texts?: unknown[] } }
   | { event: "done"; data: { message_id: number } }
   | { event: "error"; data: { type: string; message: string } };
 
 export interface SSEHandlers {
   onStatus?: (stage: string, state: string) => void;
   onToken?: (delta: string) => void;
-  onArtifact?: (figures: unknown[], tables: unknown[]) => void;
+  onArtifact?: (figures: unknown[], tables: unknown[], texts: unknown[]) => void;
   onDone?: (messageId: number) => void;
   onError?: (type: string, message: string) => void;
 }
@@ -99,8 +99,15 @@ function parseFrame(frame: string, handlers: SSEHandlers): void {
       handlers.onToken?.(data as string);
       break;
     case "artifact": {
-      const d = data as { figures: unknown[]; tables: unknown[] };
-      handlers.onArtifact?.(d.figures, d.tables);
+      const d = data as { figures?: unknown[]; tables?: unknown[]; texts?: unknown[] };
+      // Degrade malformed payloads to empty lists instead of letting
+      // undefined reach .map() and crash the whole view into the
+      // ErrorBoundary.
+      handlers.onArtifact?.(
+        Array.isArray(d.figures) ? d.figures : [],
+        Array.isArray(d.tables) ? d.tables : [],
+        Array.isArray(d.texts) ? d.texts : [],
+      );
       break;
     }
     case "done": {

@@ -138,7 +138,25 @@ class OpenAIProvider:
                 ) from None
 
             # Parse the response
-            choice = response.choices[0]
+            choices = getattr(response, "choices", None) or []
+            if not choices:
+                # OpenRouter backends can return an empty choices list on
+                # transient upstream failures — retry, then fail with a
+                # clear message instead of a cryptic TypeError.
+                if attempts <= max_attempts and attempts <= len(_RETRY_BACKOFFS):
+                    backoff = _RETRY_BACKOFFS[attempts - 1]
+                    logger.warning(
+                        "Empty choices from provider (attempt %d), retrying in %.1fs",
+                        attempts,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise LLMError(
+                    "Provider returned an empty response (no choices). "
+                    "Please try again."
+                ) from None
+            choice = choices[0]
             content = choice.message.content or ""
             finish_reason = choice.finish_reason
 

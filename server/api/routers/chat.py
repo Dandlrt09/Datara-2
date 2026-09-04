@@ -164,6 +164,13 @@ async def chat_stream(
         role="user",
         content_text=body.question,
     )
+    # Auto-title: name the session after its first real question so the
+    # sidebar is navigable (all sessions used to read "New chat").
+    current_title = (session.get("title") or "").strip()
+    if current_title in ("", "New chat"):
+        await store.update_chat_session_title(
+            session_id, user_id, body.question.strip()[:48] or "New chat"
+        )
     await store.update_chat_session_timestamp(session_id, user_id)
 
     async def _event_stream():
@@ -185,6 +192,47 @@ async def chat_stream(
                     "dataset with EXACTLY its 'path' value above (absolute path), e.g. "
                     "df = pd.read_csv('<path>'). Never invent paths."
                 )
+            system_prompt += (
+                "\n\nIMPORTANT — execution model: every turn runs in a completely "
+                "fresh sandbox. NOTHING persists between turns: no variables, no "
+                "imports, no previous DataFrames. Your code must load the data "
+                "itself and define every variable it uses, starting from scratch. "
+                "Never reference df or any variable defined in a previous turn."
+                "\n\nIMPORTANT — output size: keep 'explanation' under 120 words "
+                "and never echo the question back. The JSON must always be "
+                "complete and properly closed; prefer shorter code over an "
+                "incomplete answer."
+                "\n\nIMPORTANT — surfacing results: the chat UI only displays "
+                "figures (variables named fig, fig1, fig2...), tables "
+                "(DataFrames named df_result, df_<name>...) and printed output. "
+                "The user NEVER sees console output unless it is printed or "
+                "assigned to such variables. So: (1) assign every requested "
+                "result table to a DataFrame variable named df_result (or "
+                "df_<name>); (2) print() the key metrics; (3) state the main "
+                "numbers directly in 'explanation' — never just describe what "
+                "the code computes. Load the raw dataset into 'df' and do NOT "
+                "reassign 'df' with a filtered/aggregated result: use a new "
+                "df_<name> variable instead, so the raw dataset preview is not "
+                "the table the user sees."
+                "\n\nIMPORTANT — monthly aggregation: when grouping or "
+                "resampling by month, anchor each label to the FIRST day of "
+                "the month (resample('MS') or .dt.to_period('M').dt.start_time), "
+                "never month-end ('M'), so chart bars align under the correct "
+                "month label. On monthly charts force one tick per month: "
+                "fig.update_xaxes(dtick='M1', tickformat='%b %Y')."
+                "\n\nIMPORTANT — empty results: if a filter or groupby returns "
+                "zero rows, SAY that plainly in 'explanation' (e.g. 'no hay "
+                "ventas de ese producto en esas ciudades') and do NOT plot the "
+                "empty frame. NEVER invent, estimate or use placeholder values "
+                "(no X, Y, Z, W): every number in 'explanation' must be one you "
+                "actually computed. Write plain text: no Markdown, no **."
+                "\n\nIMPORTANT — numeric precision: never round results to 2 "
+                "decimals when tiny values are possible (e.g. a minimum of "
+                "0.001): a non-zero value must never display as 0. Keep full "
+                "precision or format with up to 6 decimals. Name ONLY final "
+                "result tables df_<name>; intermediate/filtered frames get "
+                "other names (aux, filtrado) so they don't render as tables."
+            )
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             llm_messages.extend(context["messages"])
@@ -197,7 +245,7 @@ async def chat_stream(
                 llm_response = await provider.complete(
                     messages=llm_messages,
                     response_format=_CHAT_JSON_SCHEMA,
-                    max_tokens=4096,
+                    max_tokens=8192,
                     temperature=0.1,
                 )
             except LLMError as e:
@@ -227,7 +275,11 @@ async def chat_stream(
             }
             sandbox_limits = {
                 "cpu_seconds": 30,
-                "memory_mb": int(os.environ.get("DATARA_SANDBOX_MEMORY_MB", "1024")),
+                # 2048MB: RLIMIT_AS counts VIRTUAL memory; plotly.express +
+                # pandas + numpy resident footprint pushes past 1024MB on
+                # some systems and hard-kills the subprocess (empty stdout,
+                # "possible hard OOM"). Empirically reproduced twice.
+                "memory_mb": int(os.environ.get("DATARA_SANDBOX_MEMORY_MB", "2048")),
                 "timeout_seconds": int(os.environ.get("DATARA_SANDBOX_TIMEOUT", "30")),
             }
             sandbox_result: dict[str, Any] = {}
@@ -254,9 +306,30 @@ async def chat_stream(
             # Build artifacts JSON
             artifacts: list[dict] = []
             for fig in sandbox_result.get("figures", []):
-                artifacts.append({"kind": "figure", "name": fig.get("name", ""), "payload": fig.get("plotly", {})})
+                plotly_payload = fig.get("plotly", {})
+                if isinstance(plotly_payload, str):
+                    # plotly's figure.to_json() returns a JSON string; the
+                    # browser's PlotlyChart expects the parsed object.
+                    try:
+                        plotly_payload = json.loads(plotly_payload)
+                    except ValueError:
+                        plotly_payload = {}
+                artifacts.append({"kind": "figure", "name": fig.get("name", ""), "payload": plotly_payload})
             for tbl in sandbox_result.get("tables", []):
                 artifacts.append({"kind": "table", "name": tbl.get("name", ""), "payload": {"columns": tbl.get("columns", []), "rows": tbl.get("rows", [])}})
+            # Printed results reach the chat: the sandbox captures print()
+            # stdout, but figures/tables alone left numeric answers invisible
+            # ("los resultados se imprimen en consola"). Cap to keep the SSE
+            # and persisted payloads bounded.
+            stdout_text = ""
+            if sandbox_result.get("status") == "ok":
+                stdout_text = str(sandbox_result.get("text") or "").strip()
+            if stdout_text:
+                artifacts.append({
+                    "kind": "text",
+                    "name": "stdout",
+                    "payload": {"text": stdout_text[:4000]},
+                })
 
             # Step 7: Persist assistant message BEFORE emitting artifacts (persist-then-emit)
             message = await store.create_message(
@@ -265,7 +338,7 @@ async def chat_stream(
                 role="assistant",
                 content_text=explanation,
                 code=code,
-                artifacts_json=json.dumps(artifacts) if artifacts else None,
+                artifacts_json=json.dumps(artifacts, allow_nan=False) if artifacts else None,
                 model=llm_response.model,
                 provider=llm_response.provider,
                 tokens_in=llm_response.usage.tokens_in,
@@ -275,7 +348,15 @@ async def chat_stream(
 
             # Step 8: Emit — artifact → status(done) → done {message_id}
             if artifacts:
-                yield _sse_event("artifact", {"figures": sandbox_result.get("figures", []), "tables": sandbox_result.get("tables", [])})
+                yield _sse_event("artifact", {
+                    "figures": sandbox_result.get("figures", []),
+                    "tables": sandbox_result.get("tables", []),
+                    "texts": [
+                        a["payload"]["text"]
+                        for a in artifacts
+                        if a["kind"] == "text"
+                    ],
+                })
             yield _sse_event("status", {"stage": "done", "state": "done"})
             yield _sse_event("done", {"message_id": message["id"]})
 

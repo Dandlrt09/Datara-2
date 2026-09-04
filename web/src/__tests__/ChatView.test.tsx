@@ -44,7 +44,7 @@ describe("useChatStore", () => {
 
   it("sets pending artifacts", () => {
     const { result } = renderHook(() => useChatStore());
-    const artifacts = { figures: [{ name: "fig1" }], tables: [] };
+    const artifacts = { figures: [{ name: "fig1" }], tables: [], texts: [] };
 
     act(() => {
       result.current.setPendingArtifacts(artifacts);

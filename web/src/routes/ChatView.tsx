@@ -24,17 +24,32 @@ export default function ChatView() {
   const [question, setQuestion] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isPinnedRef = useRef(true);
 
   // Set active session
   useEffect(() => {
     store.setActiveSessionId(sessionId ?? null);
   }, [sessionId]);
 
-  // Scroll to bottom on new messages or streaming
+  // Bottom-pinned scrolling: charts and tables finish rendering AFTER the
+  // message list updates (plotly mutates the DOM from its own effect), so a
+  // one-shot scrollIntoView on message change lands mid-content. A
+  // ResizeObserver re-pins on every content height change; when the user
+  // scrolls up to read, the pin releases and we stop yanking the viewport.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, store.streamingText]);
+    const scroller = scrollRef.current;
+    const content = contentRef.current;
+    if (!scroller || !content || typeof ResizeObserver === "undefined") return;
+    const repin = () => {
+      if (isPinnedRef.current) scroller.scrollTop = scroller.scrollHeight;
+    };
+    repin();
+    const observer = new ResizeObserver(repin);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   const handleNewSession = async () => {
     const session = await createSession.mutateAsync();
@@ -64,15 +79,27 @@ export default function ChatView() {
             }
           },
           onToken: (delta) => store.appendStreamingText(delta),
-          onArtifact: (figures, tables) => store.setPendingArtifacts({ figures, tables }),
+          onArtifact: (figures, tables, texts) =>
+            store.setPendingArtifacts({ figures, tables, texts }),
           onDone: () => {
             store.setStreaming(false);
+            // The turn's message is persisted server-side; drop the live
+            // streaming state so the refetched list is the single source of
+            // truth (otherwise the same answer renders twice: once from the
+            // list and once from this block).
+            store.clearStreamingText();
+            store.setPendingArtifacts(null);
             refetchMessages();
           },
           onError: (type, message) => {
             // Surface WHY the turn failed (bad API key, unknown model,
-            // sandbox error...) instead of silently stopping.
+            // sandbox error...) instead of silently stopping. Error turns
+            // also persist the assistant message, so refetch and clear the
+            // streaming state for the same no-duplicate reason as onDone.
             store.setStreaming(false);
+            store.clearStreamingText();
+            store.setPendingArtifacts(null);
+            refetchMessages();
             setChatError(message ? `${type}: ${message}` : type);
           },
         },
@@ -136,7 +163,13 @@ export default function ChatView() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteSession.mutate(s.id);
+                  deleteSession.mutate(s.id, {
+                    onSuccess: () => {
+                      // If we just deleted the open session, leave cleanly
+                      // instead of staying on a ghost chat.
+                      if (s.id === sessionId) navigate("/app/chat");
+                    },
+                  });
                 }}
                 style={{
                   background: "none",
@@ -156,7 +189,17 @@ export default function ChatView() {
 
       {/* Chat area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        <div
+          ref={scrollRef}
+          onScroll={() => {
+            const el = scrollRef.current;
+            if (!el) return;
+            isPinnedRef.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+          style={{ flex: 1, overflowY: "auto", padding: 16 }}
+        >
+          <div ref={contentRef}>
           {!sessionId && (
             <div style={{ textAlign: "center", marginTop: 80, color: "#999" }}>
               Select a chat or create a new one
@@ -182,8 +225,8 @@ export default function ChatView() {
                 }
               />
             ))}
-            {/* Streaming message */}
-            {(store.streamingText || store.pendingArtifacts) && (
+            {/* Streaming message — only while a turn is actually streaming */}
+            {store.isStreaming && (store.streamingText || store.pendingArtifacts) && (
               <ChatMessage
                 role="assistant"
                 content={store.streamingText || "..."}
@@ -200,13 +243,18 @@ export default function ChatView() {
                           name: (t as Record<string, unknown>).name as string,
                           payload: t,
                         }))),
+                        ...((store.pendingArtifacts.texts ?? []).map((t) => ({
+                          kind: "text" as const,
+                          name: "stdout",
+                          payload: { text: String(t) },
+                        }))),
                       ]
                     : null
                 }
               />
             )}
           </QueryError>
-          <div ref={messagesEndRef} />
+          </div>
         </div>
 
         {/* Composer */}

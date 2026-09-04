@@ -164,6 +164,50 @@ class TestUpdateSettings:
         data = client.get("/api/settings", headers={"Cookie": cookie}).json()
         assert data["default_model"] == "gpt-4o"
 
+    def test_update_keeps_stored_model_even_if_not_whitelisted(self, client, auth_client, monkeypatch):
+        """Re-saving an unchanged default_model must not 422 when the
+        whitelist shrank (e.g. reboot without DATARA_ALLOWED_MODELS) —
+        otherwise saving a new API key becomes impossible."""
+        from server.api.routers import settings as settings_module
+
+        cookie = auth_client
+        # Stored yesterday under an extended whitelist.
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "z-ai/glm-5.3-flash"}),
+        )
+        client.put(
+            "/api/settings",
+            json={"default_model": "z-ai/glm-5.3-flash"},
+            headers={"Cookie": cookie},
+        )
+        # Today's boot: whitelist shrank, stored model no longer allowed.
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "gpt-4o-mini"}),
+        )
+
+        # User only saves a new API key; the unchanged model must pass.
+        resp = client.put(
+            "/api/settings",
+            json={"api_key": "sk-new-key", "default_model": "z-ai/glm-5.3-flash"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "z-ai/glm-5.3-flash"
+        assert data["has_api_key"] is True
+
+        # A genuinely different unknown model is still rejected.
+        resp = client.put(
+            "/api/settings",
+            json={"default_model": "gpt-inventado-9000"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+
 
 class TestEnvExtendedWhitelist:
     def test_env_extension_accepts_custom_backend_model(self, client, auth_client, monkeypatch):

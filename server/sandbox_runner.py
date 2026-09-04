@@ -27,6 +27,7 @@ from __future__ import annotations
 import builtins as _BUILTINS
 import io as _IO_MODULE
 import json
+import math
 import os
 import resource
 import sys
@@ -175,6 +176,8 @@ def _make_blocked_import() -> callable:
         "copy",
         "random",
         "time",
+        "unicodedata",
+        "string",
     }
 
     def _blocked_import(name: str, *args: object, **kwargs: object) -> object:
@@ -253,6 +256,44 @@ def _build_restricted_globals() -> dict[str, object]:
 # ── Execution ───────────────────────────────────────────────────────────────
 
 
+def _json_safe_cell(value: object) -> object:
+    """Return a strict-JSON-safe version of a DataFrame cell.
+
+    - NaN and ±Infinity serialize as bare ``NaN``/``Infinity`` with Python's
+      json.dumps, which browsers' JSON.parse rejects → None.
+    - datetime/date/time (pandas Timestamp IS a datetime subclass) serialize
+      as ISO strings — json.dumps cannot serialize them and an uncaught
+      TypeError here kills the whole runner with empty stdout, which the
+      parent misreports as "possible hard OOM".
+    - numpy scalars (np.int64, np.float64, np.bool_) → Python natives.
+    - Anything else exotic → str() fallback.
+    """
+    import datetime as _dt
+
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return value.isoformat()
+    if isinstance(value, (str, int, bool, float, type(None))):
+        return value
+    if hasattr(value, "item"):  # numpy scalars and similar wrappers
+        try:
+            converted = value.item()
+            if isinstance(converted, float) and (
+                math.isnan(converted) or math.isinf(converted)
+            ):
+                return None
+            return converted
+        except Exception:
+            pass
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    try:
+        return str(value)
+    except Exception:
+        return None
+
+
 def _execute_code(code: str, limits: dict) -> dict:
     """Execute user code in the sandbox and return the result.
 
@@ -266,7 +307,6 @@ def _execute_code(code: str, limits: dict) -> dict:
     _jail_builtins_open(sandbox_cwd)
 
     restricted_globals = _build_restricted_globals()
-    restricted_locals: dict = {}
 
     # Set resource limits
     _set_rlimits(limits)
@@ -282,26 +322,47 @@ def _execute_code(code: str, limits: dict) -> dict:
         # Compile the code
         compiled = compile(code, "<sandbox>", "exec", flags=0, dont_inherit=True)
 
-        # Execute
-        exec(compiled, restricted_globals, restricted_locals)  # noqa: S102
+        # Execute — SINGLE-dict exec. Calling exec(code, globals, locals)
+        # with two dicts binds imports and top-level assignments into
+        # locals while function bodies resolve names against globals, so
+        # any import or variable used inside a `def` crashed with
+        # NameError (the flaky "unicodedata is not defined" chat bug).
+        # One dict: top-level bindings and function __globals__ coincide.
+        exec(compiled, restricted_globals)  # noqa: S102
 
-        # Collect any variables named fig, fig1, fig2, etc.
-        for name, val in restricted_locals.items():
+        # Collect any variables named fig, fig1, fig2, etc. Skip names we
+        # seeded or that exec added (__builtins__, _GUARD, pd, np, px, go).
+        for name, val in restricted_globals.items():
+            if name.startswith("_") or name in ("pd", "np", "px", "go"):
+                continue
             if name.startswith("fig"):
                 try:
                     figures.append({"name": name, "plotly": val.to_json()})
                 except Exception:
                     pass
 
-            if name.startswith("df") or name.endswith("_df"):
+            # 'df' is the conventional RAW load variable (the system prompt
+            # instructs the model to read into 'df'); auto-rendering it made
+            # every answer echo the untouched dataset as a table. Result
+            # tables use df_<name> (df_result, ...) — those still render.
+            if (name.startswith("df") or name.endswith("_df")) and name != "df":
                 try:
                     import pandas as _pd2  # noqa: PLC0415
 
                     if isinstance(val, _pd2.DataFrame):
+                        head = val.head(20)
+                        # Rows must be arrays (frontend DataFrameTable maps
+                        # each row), and cells must be strict-JSON safe:
+                        # NaN/±Inf would serialize as bare `NaN`/`Infinity`,
+                        # which browsers' JSON.parse rejects — poisoning the
+                        # whole SSE artifact event and the persisted message.
                         tables.append({
                             "name": name,
-                            "columns": list(val.columns),
-                            "rows": val.head(20).to_dict(orient="records"),
+                            "columns": [str(c) for c in head.columns],
+                            "rows": [
+                                [_json_safe_cell(v) for v in row]
+                                for row in head.itertuples(index=False, name=None)
+                            ],
                         })
                 except Exception:
                     pass
@@ -395,7 +456,27 @@ def main() -> None:
     limits = request.get("limits", {})
 
     result = _execute_code(code, limits)
-    sys.stdout.write(json.dumps(result))
+    try:
+        sys.stdout.write(json.dumps(result))
+    except (TypeError, ValueError) as e:
+        # Never die with empty stdout — the parent misreports that as a
+        # hard OOM. Emit a structured error the parent can surface.
+        fallback = {
+            "status": "error",
+            "error": {
+                "type": "runtime_error",
+                "message": (
+                    "Code ran but its result could not be serialized to JSON "
+                    f"({e.__class__.__name__}). Tip: convert dates to strings "
+                    "with .astype(str) or .isoformat() before printing."
+                ),
+                "traceback": "",
+            },
+            "figures": [],
+            "tables": [],
+            "text": "",
+        }
+        sys.stdout.write(json.dumps(fallback))
 
 
 if __name__ == "__main__":
