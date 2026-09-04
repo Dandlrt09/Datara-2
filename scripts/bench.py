@@ -707,6 +707,13 @@ async def main(argv: list[str] | None = None) -> int:
     limit = min(args.limit, len(questions))
     questions = questions[:limit]
 
+    # Lazy server imports: kept inside main() so the module stays importable
+    # for unit tests without FastAPI deps — but placed BEFORE first use:
+    # a function-level import anywhere in the body makes the name local to
+    # the whole function, so an import below the cost-estimate loop would
+    # raise UnboundLocalError at _estimate_cost (found by smoke test 4.2).
+    from server.services.llm_openai import OpenAIProvider, _estimate_cost
+
     # Pre-flight cost estimate
     total_estimate = 0.0
     for q in questions:
@@ -734,8 +741,6 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
 
     # Create provider
-    from server.services.llm_openai import OpenAIProvider, _estimate_cost
-
     provider = OpenAIProvider(api_key=api_key, model=_DEFAULT_MODEL)
 
     # Seed experiment mode
