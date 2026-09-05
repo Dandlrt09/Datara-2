@@ -61,8 +61,44 @@ export async function streamChat(
       for (const frame of frames) {
         if (!frame.trim()) continue;
         parseFrame(frame, handlers);
-      }
+}
+}
+
+/** Parse a raw SSE frame string into its constituent fields.
+ *
+ * Returns the event type, event id, and parsed JSON data for each
+ * complete frame. Intended for reuse by ``useSessionEvents`` which
+ * consumes the session-level event stream (different wire format
+ * from the chat stream).
+ *
+ * @param frame A complete SSE frame (up to but not including ``\n\n``).
+ * @returns An object with ``event`` (string), ``id`` (string | null),
+ *          and ``data`` (unknown — the JSON-parsed data field).
+ */
+export function parseSSEFrames(frame: string): { event: string; id: string | null; data: unknown } {
+  let event = "message";
+  let id: string | null = null;
+  let dataRaw = "";
+
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event: ")) {
+      event = line.slice(7);
+    } else if (line.startsWith("id: ")) {
+      id = line.slice(4);
+    } else if (line.startsWith("data: ")) {
+      dataRaw = line.slice(6);
     }
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(dataRaw);
+  } catch {
+    data = dataRaw;
+  }
+
+  return { event, id, data };
+}
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
       handlers.onError?.("parse_error", String(err));
