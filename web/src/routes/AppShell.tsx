@@ -45,25 +45,28 @@ export default function AppShell() {
       queryClient.cancelQueries({ queryKey: ["sessions"] });
       queryClient.setQueryData<ChatSession[]>(["sessions"], (old) => {
         if (!old) return old;
+        // SSE wire vocabulary per spec R1: event name ∈ {CREATED, UPDATED,
+        // TITLED, DELETED, STREAMING_STARTED, STREAMING_ENDED} — these are
+        // the raw uppercase enum NAMES, not dotted lowercase.
         switch (event.type) {
-          case "session.created":
-          case "session.updated":
+          case "CREATED":
+          case "UPDATED":
             return old.map((s) =>
               s.id === event.session_id ? { ...s, ...event.payload } : s,
             );
-          case "session.titled":
+          case "TITLED":
             return old.map((s) =>
               s.id === event.session_id
                 ? { ...s, title: (event.payload.title as string) ?? s.title }
                 : s,
             );
-          case "session.deleted":
+          case "DELETED":
             return old.filter((s) => s.id !== event.session_id);
-          case "session.streaming_started":
+          case "STREAMING_STARTED":
             return old.map((s) =>
               s.id === event.session_id ? { ...s, is_streaming: true } : s,
             );
-          case "session.streaming_ended":
+          case "STREAMING_ENDED":
             return old.map((s) =>
               s.id === event.session_id ? { ...s, is_streaming: false } : s,
             );
