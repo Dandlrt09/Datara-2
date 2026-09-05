@@ -1,17 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useSseStore } from "../stores/useSseStore";
 
 export interface ChatSession {
   id: string;
   title: string;
   created_at: string;
   updated_at: string;
+  is_streaming?: boolean;
 }
 
 export function useSessions() {
+  const sseConnected = useSseStore((s) => s.sseConnected);
   return useQuery({
     queryKey: ["sessions"],
     queryFn: () => api.get<ChatSession[]>("/api/sessions"),
+    refetchInterval: sseConnected ? false : 10_000,
   });
 }
 

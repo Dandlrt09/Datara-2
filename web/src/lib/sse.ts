@@ -61,7 +61,13 @@ export async function streamChat(
       for (const frame of frames) {
         if (!frame.trim()) continue;
         parseFrame(frame, handlers);
-}
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name !== "AbortError") {
+      handlers.onError?.("parse_error", String(err));
+    }
+  }
 }
 
 /** Parse a raw SSE frame string into its constituent fields.
@@ -98,12 +104,6 @@ export function parseSSEFrames(frame: string): { event: string; id: string | nul
   }
 
   return { event, id, data };
-}
-  } catch (err) {
-    if ((err as Error).name !== "AbortError") {
-      handlers.onError?.("parse_error", String(err));
-    }
-  }
 }
 
 function parseFrame(frame: string, handlers: SSEHandlers): void {
