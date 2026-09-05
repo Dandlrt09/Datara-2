@@ -1,7 +1,10 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useCallback } from "react";
 import { Routes, Route, useNavigate, Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMe, useLogout } from "../queries/useAuth";
 import { RouteErrorBoundary } from "../components/ErrorCard";
+import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
+import type { ChatSession } from "../queries/useSessions";
 
 const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
@@ -34,6 +37,49 @@ export default function AppShell() {
   const navigate = useNavigate();
   const { data: user, isLoading, error } = useMe();
   const logout = useLogout();
+  const queryClient = useQueryClient();
+
+  const onEvent = useCallback(
+    (event: SessionEvent) => {
+      // Cancel in-flight refetches before patching to avoid race conditions
+      queryClient.cancelQueries({ queryKey: ["sessions"] });
+      queryClient.setQueryData<ChatSession[]>(["sessions"], (old) => {
+        if (!old) return old;
+        switch (event.type) {
+          case "session.created":
+          case "session.updated":
+            return old.map((s) =>
+              s.id === event.session_id ? { ...s, ...event.payload } : s,
+            );
+          case "session.titled":
+            return old.map((s) =>
+              s.id === event.session_id
+                ? { ...s, title: (event.payload.title as string) ?? s.title }
+                : s,
+            );
+          case "session.deleted":
+            return old.filter((s) => s.id !== event.session_id);
+          case "session.streaming_started":
+            return old.map((s) =>
+              s.id === event.session_id ? { ...s, is_streaming: true } : s,
+            );
+          case "session.streaming_ended":
+            return old.map((s) =>
+              s.id === event.session_id ? { ...s, is_streaming: false } : s,
+            );
+          default:
+            return old;
+        }
+      });
+    },
+    [queryClient],
+  );
+
+  const onReconnected = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["sessions"] });
+  }, [queryClient]);
+
+  useSessionEvents({ onEvent, onReconnected });
 
   useEffect(() => {
     if (!isLoading && (error || !user)) {

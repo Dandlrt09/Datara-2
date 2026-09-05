@@ -156,9 +156,23 @@ export default function ChatView() {
             >
               <Link
                 to={`/app/chat/${s.id}`}
-                style={{ textDecoration: "none", color: "inherit", flex: 1 }}
+                style={{ textDecoration: "none", color: "inherit", flex: 1, display: "flex", alignItems: "center", gap: 6 }}
               >
-                {s.title}
+                <span style={{ flex: 1 }}>{s.title}</span>
+                {s.is_streaming && (
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: "#4caf50",
+                      display: "inline-block",
+                      animation: "pulse 1.5s ease-in-out infinite",
+                      flexShrink: 0,
+                    }}
+                    title="Streaming in progress"
+                  />
+                )}
               </Link>
               <button
                 onClick={(e) => {
