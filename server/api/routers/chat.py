@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -36,8 +37,10 @@ from core.errors import (
     SandboxSyntaxError,
     SandboxTimeoutError,
 )
+from server.api import event_bus as _event_bus_module
 from server.api.deps import current_user, get_store
 from server.services.chat_context import build_chat_context
+from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
 from server.services.sqlite_store import SqliteStore
@@ -168,12 +171,37 @@ async def chat_stream(
     # sidebar is navigable (all sessions used to read "New chat").
     current_title = (session.get("title") or "").strip()
     if current_title in ("", "New chat"):
+        new_title = body.question.strip()[:48] or "New chat"
         await store.update_chat_session_title(
-            session_id, user_id, body.question.strip()[:48] or "New chat"
+            session_id, user_id, new_title
         )
+        # Emit TITLED event after title write completes [R7]
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.TITLED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={"title": new_title},
+                ),
+            )
     await store.update_chat_session_timestamp(session_id, user_id)
 
     async def _event_stream():
+        # Emit STREAMING_STARTED at stream entry [R7]
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.STREAMING_STARTED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={"is_streaming": True},
+                ),
+            )
         try:
             # Step 3: Load context
             context = await build_chat_context(store, user_id=user_id, chat_session=session_id)
@@ -360,12 +388,37 @@ async def chat_stream(
             yield _sse_event("status", {"stage": "done", "state": "done"})
             yield _sse_event("done", {"message_id": message["id"]})
 
+        except asyncio.CancelledError:
+            # Emit STREAMING_ENDED before re-raise on client abort [R7]
+            if bus is not None:
+                bus.publish(
+                    user_id,
+                    SessionEvent(
+                        type=SessionEventType.STREAMING_ENDED,
+                        session_id=session_id,
+                        timestamp=time.time(),
+                        payload={"is_streaming": False},
+                    ),
+                )
+            raise
         except Exception as e:
             logger.exception("Unhandled error in chat stream")
             yield _sse_event("error", {
                 "type": "runtime_error",
                 "message": f"Internal server error: {e}",
             })
+        else:
+            # Emit STREAMING_ENDED on normal completion [R7]
+            if bus is not None:
+                bus.publish(
+                    user_id,
+                    SessionEvent(
+                        type=SessionEventType.STREAMING_ENDED,
+                        session_id=session_id,
+                        timestamp=time.time(),
+                        payload={"is_streaming": False},
+                    ),
+                )
 
     return StreamingResponse(
         _event_stream(),
