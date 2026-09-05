@@ -403,6 +403,18 @@ async def chat_stream(
             raise
         except Exception as e:
             logger.exception("Unhandled error in chat stream")
+            # Emit STREAMING_ENDED on the error path too: other tabs rely on
+            # the events stream to clear their streaming indicators [R7].
+            if bus is not None:
+                bus.publish(
+                    user_id,
+                    SessionEvent(
+                        type=SessionEventType.STREAMING_ENDED,
+                        session_id=session_id,
+                        timestamp=time.time(),
+                        payload={"is_streaming": False},
+                    ),
+                )
             yield _sse_event("error", {
                 "type": "runtime_error",
                 "message": f"Internal server error: {e}",

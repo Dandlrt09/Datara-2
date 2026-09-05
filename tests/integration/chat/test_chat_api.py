@@ -290,6 +290,37 @@ class TestChatSSE:
         assert ordered_names.index("STREAMING_STARTED") < ordered_names.index("STREAMING_ENDED"), \
             f"STREAMING_STARTED should come before STREAMING_ENDED: {ordered_names}"
 
+    def test_chat_emits_streaming_ended_on_llm_error(self, app, client, auth_cookie, session_id, mock_llm):
+        """LLM failure must still emit STREAMING_ENDED: other tabs clear their
+        streaming indicator from the events stream, not the chat transport."""
+        from server.api import event_bus as _bus_module
+        from server.services.events import EventBus, SessionEventType
+
+        mock_llm.side_effect = Exception("LLM connection failed")
+
+        bus: EventBus = _bus_module.bus
+        assert bus is not None
+        q = asyncio.run(bus.subscribe(1))
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "this will fail"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        assert "error" in [e["event"] for e in events], "Expected error frame on chat stream"
+
+        bus_events: list[SessionEvent] = []
+        while not q.empty():
+            bus_events.append(asyncio.run(q.get()))
+
+        event_types = [e.type for e in bus_events]
+        assert SessionEventType.STREAMING_STARTED in event_types, \
+            f"Missing STREAMING_STARTED: {event_types}"
+        assert SessionEventType.STREAMING_ENDED in event_types, \
+            f"STREAMING_ENDED must be emitted on the error path: {event_types}"
+
     def test_chat_emits_titled_on_auto_title(self, client, auth_cookie, mock_llm):
         """Chat emits TITLED on bus when auto-title is generated for a 'New chat' session."""
         from server.api import event_bus as _bus_module
