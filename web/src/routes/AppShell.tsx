@@ -41,6 +41,13 @@ export default function AppShell() {
 
   const onEvent = useCallback(
     (event: SessionEvent) => {
+      // Empty/failed cache (e.g. the initial sessions fetch failed while the
+      // backend was restarting): patching would no-op on `old === undefined`,
+      // so recover the list with a refetch instead of dropping the event.
+      if (!queryClient.getQueryData<ChatSession[]>(["sessions"])) {
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        return;
+      }
       // Cancel in-flight refetches before patching to avoid race conditions
       queryClient.cancelQueries({ queryKey: ["sessions"] });
       queryClient.setQueryData<ChatSession[]>(["sessions"], (old) => {

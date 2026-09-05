@@ -16,6 +16,10 @@ export function useSessions() {
     queryKey: ["sessions"],
     queryFn: () => api.get<ChatSession[]>("/api/sessions"),
     refetchInterval: sseConnected ? false : 10_000,
+    // Heal a dead/failed sessions query the moment the user focuses the tab
+    // (global default is false; without this a failed initial fetch leaves an
+    // empty sidebar until the next invalidation).
+    refetchOnWindowFocus: true,
   });
 }
 

@@ -248,4 +248,21 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
     >(["sessions"]);
     expect(cached?.[0]?.is_streaming).toBe(false);
   });
+
+  it("event with empty/failed cache invalidates instead of no-op", () => {
+    // Regression: if the initial sessions fetch failed (e.g. backend restart
+    // during page load), the cache is empty and patching would no-op — the
+    // sidebar stayed dead until F5. The event must trigger a refetch instead.
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    // NO setQueryData — cache is empty (query never succeeded)
+    captured()({
+      type: "STREAMING_STARTED",
+      session_id: "s1",
+      timestamp: 100,
+      payload: { is_streaming: true },
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
+    // ...and nothing was fabricated into the cache
+    expect(qc.getQueryData(["sessions"])).toBeUndefined();
+  });
 });
