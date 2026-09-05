@@ -210,6 +210,9 @@ async def chat_stream(
             system_prompt = (
                 "You are a data analysis assistant. The user's datasets are described below. "
                 "Generate Python code (pandas, numpy, plotly) to answer their question. "
+                "For any chart or plot, use plotly (px or go) and assign the figure to a "
+                "variable named fig — matplotlib does not exist in the sandbox and any "
+                "matplotlib import fails. "
                 "Return valid JSON with 'code' and 'explanation' fields only."
             )
             if context["profiles"]:

@@ -525,3 +525,62 @@ class TestChatBusEvents:
         # Order: STARTED before ENDED
         ordered_names = [e.type.name for e in events]
         assert ordered_names.index("STREAMING_STARTED") < ordered_names.index("STREAMING_ENDED")
+
+    def test_streaming_ended_on_real_task_cancellation(self, app, auth_cookie, session_id, mock_llm):
+        """W-001: real client-task cancellation mid-stream.
+
+        httpx cannot simulate a TCP disconnect, but cancelling the request
+        task drives the SAME CancelledError branch the production path uses
+        (uvicorn cancels the response task on client disconnect). The
+        generator must publish STREAMING_ENDED before dying.
+        """
+        import httpx
+        from server.api import event_bus as _bus_module
+        from server.services.events import EventBus, SessionEventType
+
+        async def slow_llm(*args, **kwargs):
+            await asyncio.sleep(5)
+            return _make_openai_fake(
+                json.dumps({"code": "print('x')", "explanation": "slow"})
+            )
+
+        mock_llm.side_effect = slow_llm
+
+        bus: EventBus = _bus_module.bus
+        assert bus is not None
+
+        async def scenario():
+            bus_q = await bus.subscribe(1)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as ac:
+                req_task = asyncio.create_task(
+                    ac.post(
+                        f"/api/sessions/{session_id}/chat",
+                        json={"question": "analyze the data"},
+                        headers={"Cookie": auth_cookie},
+                    )
+                )
+                # Wait for STREAMING_STARTED — the stream is mid-flight
+                started = await asyncio.wait_for(bus_q.get(), timeout=10)
+                assert started.type == SessionEventType.STREAMING_STARTED
+
+                # Cancel the in-flight request (production disconnect sim)
+                req_task.cancel()
+                try:
+                    await req_task
+                except asyncio.CancelledError:
+                    pass
+
+                # Give the generator a beat to publish ENDED
+                await asyncio.sleep(0.3)
+                drained: list[SessionEvent] = []
+                while not bus_q.empty():
+                    drained.append(bus_q.get_nowait())
+                types = [e.type for e in drained]
+                assert SessionEventType.STREAMING_ENDED in types, (
+                    f"STREAMING_ENDED missing after task cancellation: {types}"
+                )
+
+        asyncio.run(scenario())
