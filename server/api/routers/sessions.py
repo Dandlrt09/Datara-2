@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import secrets
+from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.api.deps import current_user, get_store
+from server.api import event_bus as _event_bus_module
+from server.services.events import EventBus, SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -73,3 +79,88 @@ async def delete_session(
     """
     await store.delete_chat_session(session_id, user["id"])
     return None
+
+
+def _serialize_sse(event: SessionEvent) -> str:
+    """Serialize a ``SessionEvent`` into one SSE frame (text/event-stream).
+
+    Format per design (hand-rolled, no external SSE library)::
+
+        event: <type>
+        id: <session_id>:<timestamp>
+        data: {\\"type\\":\\"...\\",\\"session_id\\":\\"...\\",\\"timestamp\\":...,\\"payload\\":{...}}
+
+    The blank line separator ``\\n\\n`` is added by the caller.
+    """
+    data = json.dumps(
+        {
+            "type": event.type.value,
+            "session_id": event.session_id,
+            "timestamp": event.timestamp,
+            "payload": event.payload,
+        },
+        default=str,
+    )
+    return (
+        f"event: {event.type.name}\n"
+        f"id: {event.session_id}:{event.timestamp}\n"
+        f"data: {data}"
+    )
+
+
+@router.get("/events")
+async def session_events(
+    user: dict = Depends(current_user),
+):
+    """Server-Sent Events endpoint for real-time session updates.
+
+    Subscribes this caller to the per-user event bus and streams each
+    event as a ``text/event-stream`` frame. On ``CancelledError`` (client
+    disconnect) the subscriber is removed from the bus before re-raising.
+
+    Returns:
+        ``StreamingResponse`` with ``text/event-stream`` media type.
+    """
+    bus = _event_bus_module.bus
+    if bus is None:
+        return StreamingResponse(
+            content=iter(["data: {\"error\":\"event bus not ready\"}\n\n"]),
+            media_type="text/event-stream",
+            status_code=503,
+        )
+
+    user_id: int = user["id"]
+    q = await bus.subscribe(user_id)
+
+    return StreamingResponse(
+        _sse_event_stream(bus, user_id, q),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _sse_event_stream(
+    bus: EventBus,
+    user_id: int,
+    q: asyncio.Queue[SessionEvent],
+) -> AsyncIterator[str]:
+    """Asynchronous generator that reads from a subscriber queue and yields
+    SSE frames. Extracted for independent testability.
+
+    On ``CancelledError`` (client disconnect via Starlette) the subscriber
+    is removed from the bus registry before re-raising.
+
+    Yields:
+        One ``text/event-stream`` frame per event, including the blank
+        line separator (``\\n\\n``).
+    """
+    try:
+        while True:
+            event = await q.get()
+            yield _serialize_sse(event) + "\n\n"
+    except asyncio.CancelledError:
+        bus.unsubscribe(user_id, q)
+        raise
