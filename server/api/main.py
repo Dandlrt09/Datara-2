@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 
 from server.api import store as api_store
+from server.api import event_bus as api_event_bus
 from server.api.routers import auth, chat, files, sessions, settings, archive
 from server.migrate import apply_migrations
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
@@ -73,6 +74,12 @@ async def lifespan(app: FastAPI):
     store = SqliteStore(db_path=db_path)
     await store.connect()
     api_store._store = store
+
+    # Initialize the in-memory event bus for real-time session updates
+    from server.services.events import EventBus
+
+    api_event_bus.bus = EventBus()
+    logger.info("Event bus initialized")
 
     # Apply pending migrations (sync — uses sqlite3 directly)
     try:
