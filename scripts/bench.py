@@ -218,8 +218,13 @@ def _q9_expected(df: pd.DataFrame) -> dict[str, float]:
 
 
 def _q10_expected(_df: pd.DataFrame) -> dict[str, float]:
-    """Two charts question — just verify artifacts present."""
-    return {"has_figures": 1.0}
+    """Two charts question — verified via expected_artifact_types={"figure"}.
+
+    No numeric assertions: a has_figures=1.0 sentinel here was treated as
+    a number to find in the explanation text and hard-failed correct
+    answers that mentioned any other number.
+    """
+    return {}
 
 
 _QUESTIONS: list[BenchQuestion] = [
