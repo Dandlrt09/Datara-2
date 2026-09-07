@@ -127,10 +127,22 @@ export default function ChatView() {
     void runTurn(q, false);
   }, [question, runTurn]);
 
+  // A trailing user message (no assistant reply after it) is a persisted
+  // failed/aborted turn — keep the Retry affordance available across
+  // navigation and reloads instead of tying it to ephemeral error state.
+  const lastMessage = messages?.[messages.length - 1];
+  const retryAvailable =
+    !!sessionId && !store.isStreaming && lastMessage?.role === "user";
+
   const handleRetryTurn = useCallback(() => {
-    const q = lastQuestionRef.current;
+    // Prefer the persisted history: the failed turn's question survives
+    // navigation and reloads, unlike component state (chatError /
+    // lastQuestionRef die on remount — that's how B4 red happened).
+    const q =
+      lastQuestionRef.current ||
+      (lastMessage?.role === "user" ? lastMessage.content_text : "");
     if (q) void runTurn(q, true);
-  }, [runTurn]);
+  }, [runTurn, lastMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -301,6 +313,19 @@ export default function ChatView() {
               </button>
             )}
           </p>
+        )}
+        {!chatError && retryAvailable && (
+          <div style={{ marginBottom: 8 }}>
+            <span style={{ color: "#555", marginRight: 8 }}>
+              El último turno quedó sin respuesta.
+            </span>
+            <button
+              onClick={handleRetryTurn}
+              title="Re-run the failed turn (does not duplicate the question)"
+            >
+              Retry
+            </button>
+          </div>
         )}
         <div
           style={{

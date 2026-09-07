@@ -175,6 +175,25 @@ describe("ChatView component", () => {
     expect(retryButtons.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("offers Retry from persisted history when last message is an unanswered user turn", () => {
+    // Simulates returning to the chat after a failed turn: no in-memory
+    // error state, just the orphaned question in the reloaded history.
+    useMessagesMock.mockReturnValue({
+      data: [{ id: 1, role: "user", content_text: "pregunta huérfana" }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(
+      screen.getByText("El último turno quedó sin respuesta."),
+    ).toBeTruthy();
+    expect(screen.getByText("Retry")).toBeTruthy();
+  });
+
   it("clicking Retry re-runs the failed turn with retry=true (no question duplication)", async () => {
     vi.mocked(streamChat)
       .mockImplementationOnce(async (_sid, _q, handlers) => {
