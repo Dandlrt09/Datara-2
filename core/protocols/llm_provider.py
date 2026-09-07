@@ -46,6 +46,7 @@ class LLMProvider(Protocol):
         response_format: dict | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.1,
+        seed: int | None = None,
     ) -> LLMResponse:
         """Send a complete (non-streaming) request to the LLM.
 
@@ -54,6 +55,8 @@ class LLMProvider(Protocol):
             response_format: Optional JSON schema format specification.
             max_tokens: Maximum output tokens.
             temperature: Sampling temperature.
+            seed: Optional sampling seed for deterministic experiments;
+                forwarded to the backend when set, omitted otherwise.
 
         Returns:
             An LLMResponse with the full model output.
@@ -67,6 +70,7 @@ class LLMProvider(Protocol):
         response_format: dict | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.1,
+        seed: int | None = None,
     ) -> AsyncIterator[str]:
         """Send a streaming request to the LLM.
 
@@ -78,6 +82,8 @@ class LLMProvider(Protocol):
             response_format: Optional JSON schema format specification.
             max_tokens: Maximum output tokens.
             temperature: Sampling temperature.
+            seed: Optional sampling seed for deterministic experiments;
+                forwarded to the backend when set, omitted otherwise.
 
         Yields:
             String deltas of response text.

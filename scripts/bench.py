@@ -366,6 +366,7 @@ async def _run_seed_experiment(provider, questions: list[BenchQuestion]) -> int:
                 response_format=_CHAT_JSON_SCHEMA,
                 temperature=0.0,
                 max_tokens=8192,
+                seed=0,
             )
         except LLMError as e:
             print(f"Run {i+1}: LLM error — {e}", file=sys.stderr)

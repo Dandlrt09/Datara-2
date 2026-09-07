@@ -227,6 +227,46 @@ class TestCostEstimate:
         assert cost == 0.0
 
 
+# ── Seed kwarg passthrough ──────────────────────────────────────────────────
+
+
+class TestSeedKwarg:
+    async def test_complete_forwards_seed(self, provider):
+        """When seed is provided, it is forwarded to the API call."""
+        fake = _make_fake_response("ok")
+        mock = AsyncMock(return_value=fake)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            await provider.complete(
+                messages=[{"role": "user", "content": "hi"}],
+                seed=42,
+            )
+        assert mock.call_args.kwargs["seed"] == 42
+
+    async def test_complete_omits_seed_by_default(self, provider):
+        """Without seed, the API call carries no seed key (backwards compat)."""
+        fake = _make_fake_response("ok")
+        mock = AsyncMock(return_value=fake)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            await provider.complete(
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        assert "seed" not in mock.call_args.kwargs
+
+    async def test_stream_forwards_seed(self, provider):
+        """When seed is provided to stream(), it is forwarded to the API call."""
+
+        async def _fake_stream(**kwargs):
+            choice = MagicMock()
+            choice.delta = MagicMock()
+            choice.delta.content = "x"
+            yield MagicMock(choices=[choice])
+
+        mock = AsyncMock(side_effect=_fake_stream)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            _ = [chunk async for chunk in provider.stream(messages=[{"role": "user", "content": "hi"}], seed=7)]
+        assert mock.call_args.kwargs["seed"] == 7
+
+
 # ── Stream method ────────────────────────────────────────────────────────────
 
 

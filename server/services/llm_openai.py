@@ -66,6 +66,7 @@ class OpenAIProvider:
         response_format: dict | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.1,
+        seed: int | None = None,
     ) -> LLMResponse:
         """Send a non-streaming request to OpenAI with optional JSON schema.
 
@@ -84,6 +85,9 @@ class OpenAIProvider:
                 ``{"type": "json_schema", "json_schema": {...}}``).
             max_tokens: Maximum output tokens.
             temperature: Sampling temperature.
+            seed: Optional sampling seed, forwarded to the API for
+                deterministic experiments; omitted from the request
+                when ``None``.
 
         Returns:
             An ``LLMResponse`` with the parsed result.
@@ -101,6 +105,8 @@ class OpenAIProvider:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if seed is not None:
+            kwargs["seed"] = seed
 
         attempts = 0
         max_attempts = 3  # for rate-limit retries
@@ -206,6 +212,7 @@ class OpenAIProvider:
         response_format: dict | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.1,
+        seed: int | None = None,
     ) -> AsyncIterator[str]:
         """Send a streaming request to OpenAI.
 
@@ -218,6 +225,9 @@ class OpenAIProvider:
                 support streaming JSON schema).
             max_tokens: Maximum output tokens.
             temperature: Sampling temperature.
+            seed: Optional sampling seed, forwarded to the API for
+                deterministic experiments; omitted from the request
+                when ``None``.
 
         Yields:
             String deltas of response text.
@@ -231,6 +241,8 @@ class OpenAIProvider:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if seed is not None:
+            kwargs["seed"] = seed
 
         try:
             stream = await asyncio.wait_for(
