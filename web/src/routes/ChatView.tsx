@@ -24,6 +24,8 @@ export default function ChatView() {
   const [question, setQuestion] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Last question sent in this session — the Retry button re-runs it.
+  const lastQuestionRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
@@ -56,64 +58,79 @@ export default function ChatView() {
     navigate(`/app/chat/${session.id}`);
   };
 
-  const handleSend = useCallback(async () => {
-    if (!sessionId || !question.trim() || store.isStreaming) return;
+  const runTurn = useCallback(
+    async (q: string, retry: boolean) => {
+      if (!sessionId || !q.trim() || store.isStreaming) return;
 
-    const q = question.trim();
-    setQuestion("");
-    store.clearStreamingText();
-    store.setPendingArtifacts(null);
-    store.setStreaming(true);
-    setChatError(null);
+      if (!retry) setQuestion("");
+      store.clearStreamingText();
+      store.setPendingArtifacts(null);
+      store.setStreaming(true);
+      setChatError(null);
+      lastQuestionRef.current = q;
 
-    abortRef.current = new AbortController();
+      abortRef.current = new AbortController();
 
-    try {
-      await streamChat(
-        sessionId,
-        q,
-        {
-          onStatus: (_stage, state) => {
-            if (state === "done" || state === "error") {
+      try {
+        await streamChat(
+          sessionId,
+          q,
+          {
+            onStatus: (_stage, state) => {
+              if (state === "done" || state === "error") {
+                store.setStreaming(false);
+              }
+            },
+            onToken: (delta) => store.appendStreamingText(delta),
+            onArtifact: (figures, tables, texts) =>
+              store.setPendingArtifacts({ figures, tables, texts }),
+            onDone: () => {
               store.setStreaming(false);
-            }
+              // The turn's message is persisted server-side; drop the live
+              // streaming state so the refetched list is the single source of
+              // truth (otherwise the same answer renders twice: once from the
+              // list and once from this block).
+              store.clearStreamingText();
+              store.setPendingArtifacts(null);
+              refetchMessages();
+            },
+            onError: (type, message) => {
+              // Surface WHY the turn failed (bad API key, unknown model,
+              // sandbox error...) instead of silently stopping. Failed turns
+              // persist nothing server-side, so the history keeps just the
+              // question and the Retry button re-runs it.
+              store.setStreaming(false);
+              store.clearStreamingText();
+              store.setPendingArtifacts(null);
+              refetchMessages();
+              setChatError(message ? `${type}: ${message}` : type);
+            },
           },
-          onToken: (delta) => store.appendStreamingText(delta),
-          onArtifact: (figures, tables, texts) =>
-            store.setPendingArtifacts({ figures, tables, texts }),
-          onDone: () => {
-            store.setStreaming(false);
-            // The turn's message is persisted server-side; drop the live
-            // streaming state so the refetched list is the single source of
-            // truth (otherwise the same answer renders twice: once from the
-            // list and once from this block).
-            store.clearStreamingText();
-            store.setPendingArtifacts(null);
-            refetchMessages();
-          },
-          onError: (type, message) => {
-            // Surface WHY the turn failed (bad API key, unknown model,
-            // sandbox error...) instead of silently stopping. Error turns
-            // also persist the assistant message, so refetch and clear the
-            // streaming state for the same no-duplicate reason as onDone.
-            store.setStreaming(false);
-            store.clearStreamingText();
-            store.setPendingArtifacts(null);
-            refetchMessages();
-            setChatError(message ? `${type}: ${message}` : type);
-          },
-        },
-        abortRef.current.signal
-      );
-    } catch (e) {
-      // streamChat throws on network failures / non-SSE responses. Without
-      // this catch, isStreaming stays true forever and the composer bricks.
-      setChatError(e instanceof Error ? e.message : "unexpected error sending message");
-    } finally {
-      store.setStreaming(false);
-      abortRef.current = null;
-    }
-  }, [sessionId, question, store.isStreaming, refetchMessages]);
+          abortRef.current.signal,
+          retry
+        );
+      } catch (e) {
+        // streamChat throws on network failures / non-SSE responses. Without
+        // this catch, isStreaming stays true forever and the composer bricks.
+        setChatError(e instanceof Error ? e.message : "unexpected error sending message");
+      } finally {
+        store.setStreaming(false);
+        abortRef.current = null;
+      }
+    },
+    [sessionId, store.isStreaming, refetchMessages]
+  );
+
+  const handleSend = useCallback(() => {
+    const q = question.trim();
+    if (!q) return;
+    void runTurn(q, false);
+  }, [question, runTurn]);
+
+  const handleRetryTurn = useCallback(() => {
+    const q = lastQuestionRef.current;
+    if (q) void runTurn(q, true);
+  }, [runTurn]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -274,7 +291,15 @@ export default function ChatView() {
         {/* Composer */}
         {chatError && (
           <p role="alert" style={{ color: "#c62828", margin: "0 0 8px" }}>
-            {chatError}
+            {chatError}{" "}
+            {!store.isStreaming && sessionId && (
+              <button
+                onClick={handleRetryTurn}
+                title="Re-run the failed turn (does not duplicate the question)"
+              >
+                Retry
+              </button>
+            )}
           </p>
         )}
         <div

@@ -234,9 +234,12 @@ class TestChatSSE:
         assert resp.status_code == 404
 
     def test_chat_sandbox_error(self, client, auth_cookie, session_id, mock_llm):
-        """Sandbox error should yield error event.
+        """Sandbox error should yield error event and persist nothing.
 
         We use code that will produce a sandbox error (blocked import).
+        Failed turns persist NO assistant message: the model's explanation
+        was never computed, so rendering it would present unverified text
+        as an answer. No done event either — the stream ends at the error.
         """
         sandbox_error = {"code": "import os\nos.system('echo boom')", "explanation": "This will fail."}
         mock_llm.return_value = _make_openai_fake(json.dumps(sandbox_error))
@@ -251,8 +254,8 @@ class TestChatSSE:
         event_types = [e["event"] for e in events]
 
         assert "error" in event_types, f"Expected error event, got: {event_types}"
-        # Should still have done event
-        assert "done" in event_types
+        # Stream ends at the error — no done event, no persisted answer
+        assert "done" not in event_types
 
     # ── Streaming event emission tests [R7] ──────────────────────────────
 

@@ -24,12 +24,13 @@ export async function streamChat(
   sessionId: string,
   question: string,
   handlers: SSEHandlers,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  retry = false
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, retry }),
     credentials: "include",
     signal,
   });

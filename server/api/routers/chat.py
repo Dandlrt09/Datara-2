@@ -76,6 +76,9 @@ _DEFAULT_MODEL = "gpt-4o-2024-08-06"
 
 class ChatRequest(BaseModel):
     question: str
+    # Retry re-runs the last failed turn: the question is NOT re-persisted
+    # (it is already in history) and failed turns persist nothing.
+    retry: bool = False
 
 
 class MessageResponse(BaseModel):
@@ -160,13 +163,15 @@ async def chat_stream(
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    # Step 2: Persist user message
-    await store.create_message(
-        user_id=user_id,
-        chat_session=session_id,
-        role="user",
-        content_text=body.question,
-    )
+    # Step 2: Persist user message (skipped on retry — the failed turn's
+    # question is already in history; re-persisting would duplicate it)
+    if not body.retry:
+        await store.create_message(
+            user_id=user_id,
+            chat_session=session_id,
+            role="user",
+            content_text=body.question,
+        )
     # Auto-title: name the session after its first real question so the
     # sidebar is navigable (all sessions used to read "New chat").
     current_title = (session.get("title") or "").strip()
@@ -188,6 +193,23 @@ async def chat_stream(
                 ),
             )
     await store.update_chat_session_timestamp(session_id, user_id)
+
+    def _publish_streaming_ended() -> None:
+        # [R7] Every stream exit path must publish STREAMING_ENDED so other
+        # tabs clear their streaming indicators. This includes the error
+        # paths below, whose early `return` would otherwise skip the
+        # generator's else-clause.
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.STREAMING_ENDED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={"is_streaming": False},
+                ),
+            )
 
     async def _event_stream():
         # Emit STREAMING_STARTED at stream entry [R7]
@@ -267,6 +289,10 @@ async def chat_stream(
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             llm_messages.extend(context["messages"])
+            # On retry the failed turn's question is already in history —
+            # drop that trailing copy so the LLM receives it exactly once.
+            if body.retry and llm_messages and llm_messages[-1]["role"] == "user":
+                llm_messages.pop()
             llm_messages.append({"role": "user", "content": body.question})
 
             # Step 4: Resolve provider and call LLM
@@ -285,6 +311,7 @@ async def chat_stream(
                     "message": str(e),
                 })
                 yield _sse_event("status", {"stage": "error", "state": "error"})
+                _publish_streaming_ended()
                 return
 
             structured = llm_response.structured_data or {}
@@ -333,6 +360,12 @@ async def chat_stream(
                     "message": sandbox_error.get("message", "Sandbox execution failed"),
                 })
                 yield _sse_event("status", {"stage": "done", "state": "error"})
+                # Failed turns persist NOTHING: persisting here would render
+                # the model's unverified explanation as if it were an answer
+                # (the sandbox never computed it). History keeps the question;
+                # the client offers Retry to re-run the turn.
+                _publish_streaming_ended()
+                return
 
             # Build artifacts JSON
             artifacts: list[dict] = []
@@ -393,47 +426,20 @@ async def chat_stream(
 
         except asyncio.CancelledError:
             # Emit STREAMING_ENDED before re-raise on client abort [R7]
-            if bus is not None:
-                bus.publish(
-                    user_id,
-                    SessionEvent(
-                        type=SessionEventType.STREAMING_ENDED,
-                        session_id=session_id,
-                        timestamp=time.time(),
-                        payload={"is_streaming": False},
-                    ),
-                )
+            _publish_streaming_ended()
             raise
         except Exception as e:
             logger.exception("Unhandled error in chat stream")
             # Emit STREAMING_ENDED on the error path too: other tabs rely on
             # the events stream to clear their streaming indicators [R7].
-            if bus is not None:
-                bus.publish(
-                    user_id,
-                    SessionEvent(
-                        type=SessionEventType.STREAMING_ENDED,
-                        session_id=session_id,
-                        timestamp=time.time(),
-                        payload={"is_streaming": False},
-                    ),
-                )
+            _publish_streaming_ended()
             yield _sse_event("error", {
                 "type": "runtime_error",
                 "message": f"Internal server error: {e}",
             })
         else:
             # Emit STREAMING_ENDED on normal completion [R7]
-            if bus is not None:
-                bus.publish(
-                    user_id,
-                    SessionEvent(
-                        type=SessionEventType.STREAMING_ENDED,
-                        session_id=session_id,
-                        timestamp=time.time(),
-                        payload={"is_streaming": False},
-                    ),
-                )
+            _publish_streaming_ended()
 
     return StreamingResponse(
         _event_stream(),
