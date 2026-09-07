@@ -1,0 +1,181 @@
+id_transaccion,fecha,producto,ciudad,tipo_transaccion,cantidad,precio_unitario,monto_neto,margen_pct
+1,2024-04-02,Monitor 27,Medellín,Venta,5,1012.792,5063.96,35.57
+2,2024-03-31,Audífonos BT,Bucaramanga,Ajuste Contable,8,656.358,-112.22,-1.89
+3,2025-03-15,Laptop Pro 14,Cartagena,Ajuste Contable,5,64.135,-269.69,4.12
+4,2025-04-20,Monitor 27,Bucaramanga,Venta,7,290.215,2031.5,25.7
+5,2025-03-14,Monitor 27,Barranquilla,Venta,4,502.029,2008.12,17.8
+6,2024-04-19,Webcam HD,Cali,Venta,6,444.998,2669.99,13.67
+7,2024-06-28,Teclado Mecánico,Medellín,Venta,5,672.295,3361.47,23.22
+8,2025-10-13,Teclado Mecánico,Cali,Ajuste Contable,7,994.361,85.95,4.82
+9,2025-11-04,Mouse Inalámbrico,Medellín,Venta,1,982.915,982.91,33.63
+10,2024-11-17,Silla Ergonómica,Cali,Venta,2,726.497,1452.99,37.31
+11,2025-05-13,Mouse Inalámbrico,Bogotá,Venta,5,665.938,3329.69,10.52
+12,2025-02-05,Webcam HD,Bogotá,Venta,3,768.997,2306.99,7.8
+13,2025-10-14,Audífonos BT,Bucaramanga,Venta,6,851.167,5107.0,28.11
+14,2024-01-04,Laptop Pro 14,Medellín,Venta,4,595.104,2380.42,24.37
+15,2025-06-25,Webcam HD,Bogotá,Venta,8,262.802,2102.42,43.32
+16,2024-07-07,Monitor 27,Barranquilla,Ajuste Contable,6,543.573,147.28,-9.8
+17,2025-07-25,Mouse Inalámbrico,Bucaramanga,Devolución,5,231.113,-1155.57,-25.02
+18,2025-02-26,Mouse Inalámbrico,Cartagena,Venta,4,349.647,1398.59,40.27
+19,2024-01-29,Monitor 27,Cali,Venta,8,742.546,5940.37,36.49
+20,2024-01-27,Audífonos BT,Cartagena,Venta,5,126.062,630.31,19.77
+21,2025-02-07,Audífonos BT,Bogotá,Venta,1,1008.936,1008.94,10.99
+22,2024-01-26,Mouse Inalámbrico,Medellín,Devolución,1,791.958,-791.96,-9.96
+23,2025-01-07,Laptop Pro 14,Cartagena,Ajuste Contable,2,515.541,235.14,4.39
+24,2025-04-01,Mouse Inalámbrico,Cali,Venta,6,523.681,3142.09,38.42
+25,2025-05-29,Monitor 27,Cartagena,Venta,3,176.521,529.56,28.5
+26,2024-10-20,Silla Ergonómica,Medellín,Devolución,2,486.567,-973.13,-16.61
+27,2024-05-04,Mouse Inalámbrico,Bogotá,Ajuste Contable,1,767.243,457.97,-3.96
+28,2024-06-25,Mouse Inalámbrico,Bucaramanga,Venta,8,316.902,2535.22,8.7
+29,2025-01-25,Mouse Inalámbrico,Medellín,Devolución,3,970.554,-2911.66,-20.44
+30,2025-03-03,Mouse Inalámbrico,Cartagena,Venta,1,93.341,93.34,29.92
+31,2025-08-09,Mouse Inalámbrico,Bogotá,Venta,5,1178.02,5890.1,35.16
+32,2025-10-01,Webcam HD,Bucaramanga,Ajuste Contable,1,1031.788,-359.45,-3.27
+33,2024-12-22,Disco SSD 1TB,Cartagena,Venta,3,1170.899,3512.7,34.65
+34,2025-06-26,Audífonos BT,Medellín,Ajuste Contable,2,757.454,66.18,2.26
+35,2025-11-05,Disco SSD 1TB,Cali,Venta,5,711.587,3557.93,16.13
+36,2024-04-12,Audífonos BT,Medellín,Venta,2,871.058,1742.12,9.37
+37,2024-01-08,Disco SSD 1TB,Medellín,Venta,3,762.319,2286.96,9.83
+38,2024-04-03,Monitor 27,Bucaramanga,Ajuste Contable,1,80.743,-125.77,-1.84
+39,2025-04-28,Laptop Pro 14,Medellín,Venta,4,299.933,1199.73,27.67
+40,2025-04-29,Audífonos BT,Cali,Devolución,2,671.027,-1342.05,-21.42
+41,2025-06-06,Monitor 27,Barranquilla,Venta,5,370.581,1852.91,17.47
+42,2025-02-13,Silla Ergonómica,Medellín,Venta,3,355.424,1066.27,44.03
+43,2024-11-21,Teclado Mecánico,Bogotá,Venta,5,40.705,203.52,23.57
+44,2025-02-03,Silla Ergonómica,Bucaramanga,Ajuste Contable,3,909.854,-54.68,-5.51
+45,2025-01-29,Silla Ergonómica,Medellín,Venta,8,924.742,7397.94,22.53
+46,2025-02-19,Mouse Inalámbrico,Cartagena,Devolución,5,318.572,-1592.86,-27.87
+47,2024-12-02,Monitor 27,Medellín,Ajuste Contable,6,1042.569,-333.81,9.46
+48,2024-10-31,Audífonos BT,Cartagena,Venta,4,916.66,3666.64,19.64
+49,2024-03-09,Mouse Inalámbrico,Cartagena,Venta,7,173.931,1217.52,25.09
+50,2024-10-05,Audífonos BT,Cali,Devolución,7,963.781,-6746.47,-18.84
+51,2025-02-11,Silla Ergonómica,Cali,Venta,6,105.147,630.88,26.56
+52,2025-03-25,Laptop Pro 14,Cartagena,Venta,5,552.477,2762.38,24.79
+53,2024-02-21,Monitor 27,Bucaramanga,Venta,6,251.242,1507.45,9.45
+54,2024-03-20,Teclado Mecánico,Cartagena,Venta,4,902.552,3610.21,45.03
+55,2025-07-05,Teclado Mecánico,Cali,Devolución,5,797.92,-3989.6,-25.12
+56,2024-12-20,Silla Ergonómica,Medellín,Venta,5,710.152,3550.76,15.48
+57,2025-07-30,Audífonos BT,Bucaramanga,Venta,6,875.114,5250.68,15.46
+58,2025-03-11,Laptop Pro 14,Cali,Venta,6,771.723,4630.34,12.82
+59,2024-10-10,Webcam HD,Cali,Venta,5,238.136,1190.68,31.74
+60,2024-11-11,Teclado Mecánico,Barranquilla,Ajuste Contable,2,455.006,108.37,-0.15
+61,2024-06-30,Silla Ergonómica,Cartagena,Venta,7,835.788,5850.52,15.53
+62,2025-01-21,Monitor 27,Barranquilla,Ajuste Contable,6,762.801,-195.55,-7.31
+63,2024-06-28,Monitor 27,Cali,Venta,4,343.505,1374.02,12.97
+64,2025-06-11,Monitor 27,Bucaramanga,Venta,1,544.514,544.51,42.27
+65,2025-09-16,Laptop Pro 14,Medellín,Venta,5,273.416,1367.08,37.23
+66,2025-05-02,Disco SSD 1TB,Cali,Venta,8,928.356,7426.85,14.9
+67,2024-04-05,Mouse Inalámbrico,Barranquilla,Venta,6,998.164,5988.98,15.34
+68,2024-07-30,Teclado Mecánico,Medellín,Venta,1,684.632,684.63,42.39
+69,2025-10-10,Monitor 27,Cartagena,Ajuste Contable,4,66.469,-190.91,0.02
+70,2024-07-05,Audífonos BT,Bogotá,Venta,6,800.958,4805.75,6.07
+71,2024-11-09,Webcam HD,Bucaramanga,Venta,8,201.493,1611.94,7.21
+72,2024-03-27,Laptop Pro 14,Cali,Devolución,5,287.412,-1437.06,-13.36
+73,2024-08-06,Monitor 27,Bucaramanga,Venta,7,137.187,960.31,20.73
+74,2024-03-08,Mouse Inalámbrico,Barranquilla,Venta,1,1122.356,1122.36,23.13
+75,2024-08-15,Webcam HD,Bucaramanga,Venta,7,865.858,6061.01,43.47
+76,2024-04-09,Webcam HD,Medellín,Venta,7,1084.9,7594.3,39.78
+77,2025-07-18,Monitor 27,Medellín,Ajuste Contable,6,208.285,-72.85,-3.5
+78,2024-04-16,Teclado Mecánico,Cartagena,Ajuste Contable,4,86.941,-36.34,-8.91
+79,2024-06-24,Audífonos BT,Medellín,Venta,1,1080.689,1080.69,25.86
+80,2024-07-18,Monitor 27,Cali,Venta,1,459.426,459.43,6.3
+81,2024-05-02,Webcam HD,Bogotá,Devolución,6,1016.709,-6100.25,-13.27
+82,2025-02-09,Monitor 27,Medellín,Ajuste Contable,8,864.947,16.32,6.21
+83,2024-03-04,Disco SSD 1TB,Bucaramanga,Devolución,4,714.312,-2857.25,-16.65
+84,2025-06-21,Mouse Inalámbrico,Cartagena,Ajuste Contable,6,399.667,282.26,6.07
+85,2025-08-10,Laptop Pro 14,Cali,Ajuste Contable,4,197.975,145.41,-6.19
+86,2025-02-24,Webcam HD,Cali,Venta,4,889.208,3556.83,40.53
+87,2024-10-09,Monitor 27,Cartagena,Venta,5,792.724,3963.62,29.71
+88,2024-07-17,Silla Ergonómica,Bucaramanga,Venta,1,343.054,343.05,12.45
+89,2024-08-06,Teclado Mecánico,Bogotá,Ajuste Contable,7,362.693,-378.73,-9.16
+90,2025-07-19,Teclado Mecánico,Medellín,Venta,2,1089.389,2178.78,6.55
+91,2024-08-06,Monitor 27,Cartagena,Ajuste Contable,6,216.889,-249.37,-1.2
+92,2024-03-27,Webcam HD,Cartagena,Ajuste Contable,2,1090.586,8.85,6.48
+93,2024-11-29,Disco SSD 1TB,Bogotá,Devolución,4,692.089,-2768.36,-12.91
+94,2024-09-25,Webcam HD,Cartagena,Venta,6,317.165,1902.99,8.47
+95,2025-08-22,Webcam HD,Medellín,Devolución,3,1128.4,-3385.2,-27.85
+96,2024-12-24,Disco SSD 1TB,Bucaramanga,Ajuste Contable,2,598.899,-235.37,-6.09
+97,2025-03-01,Laptop Pro 14,Medellín,Venta,4,295.141,1180.56,15.21
+98,2024-07-01,Audífonos BT,Bucaramanga,Venta,2,38.084,76.17,20.07
+99,2025-07-14,Monitor 27,Medellín,Venta,8,1047.649,8381.19,29.84
+100,2025-02-21,Mouse Inalámbrico,Bogotá,Devolución,5,683.482,-3417.41,-17.5
+101,2025-07-18,Webcam HD,Bucaramanga,Venta,4,716.456,2865.82,25.38
+102,2025-10-15,Silla Ergonómica,Bogotá,Venta,1,735.341,735.34,10.81
+103,2025-11-03,Webcam HD,Cartagena,Ajuste Contable,8,523.123,-162.56,0.84
+104,2024-08-14,Disco SSD 1TB,Cartagena,Venta,2,1013.527,2027.05,14.07
+105,2024-05-23,Laptop Pro 14,Cali,Venta,8,1028.467,8227.74,43.54
+106,2025-06-21,Laptop Pro 14,Bogotá,Venta,3,1067.775,3203.33,10.47
+107,2025-12-01,Webcam HD,Bogotá,Venta,4,582.842,2331.37,25.33
+108,2024-06-12,Monitor 27,Bucaramanga,Devolución,7,697.155,-4880.09,-23.57
+109,2025-09-14,Audífonos BT,Cartagena,Devolución,2,985.089,-1970.18,-15.09
+110,2025-01-11,Teclado Mecánico,Medellín,Ajuste Contable,8,131.251,-94.93,-1.59
+111,2024-05-27,Mouse Inalámbrico,Cartagena,Devolución,1,962.724,-962.72,-22.89
+112,2025-05-07,Audífonos BT,Barranquilla,Venta,4,370.594,1482.38,31.97
+113,2025-01-08,Mouse Inalámbrico,Barranquilla,Ajuste Contable,8,801.282,-306.59,-6.11
+114,2024-06-28,Teclado Mecánico,Barranquilla,Devolución,8,589.355,-4714.84,-9.59
+115,2024-11-21,Audífonos BT,Bucaramanga,Venta,8,1151.181,9209.45,41.69
+116,2024-04-07,Silla Ergonómica,Barranquilla,Ajuste Contable,1,1085.531,-258.14,-4.94
+117,2025-10-25,Disco SSD 1TB,Barranquilla,Venta,8,968.322,7746.58,14.22
+118,2025-10-22,Teclado Mecánico,Cali,Venta,1,281.786,281.79,40.46
+119,2024-07-29,Audífonos BT,Cali,Venta,8,132.406,1059.25,37.94
+120,2025-08-24,Disco SSD 1TB,Bogotá,Devolución,7,98.446,-689.12,-12.59
+121,2024-09-15,Silla Ergonómica,Medellín,Ajuste Contable,3,904.058,-346.44,9.34
+122,2024-04-19,Disco SSD 1TB,Cali,Venta,3,693.462,2080.39,17.34
+123,2024-01-03,Disco SSD 1TB,Barranquilla,Venta,2,176.1,352.2,13.35
+124,2024-12-26,Teclado Mecánico,Cali,Venta,7,793.542,5554.79,30.37
+125,2024-04-24,Disco SSD 1TB,Cartagena,Devolución,1,681.679,-681.68,-18.69
+126,2024-01-04,Laptop Pro 14,Bogotá,Venta,2,1053.332,2106.66,14.15
+127,2025-02-15,Monitor 27,Medellín,Ajuste Contable,1,801.555,-389.04,-7.21
+128,2024-10-21,Teclado Mecánico,Cartagena,Venta,8,585.556,4684.45,19.57
+129,2024-12-06,Monitor 27,Cali,Venta,8,129.005,1032.04,37.61
+130,2024-02-16,Monitor 27,Cartagena,Venta,4,1105.065,4420.26,30.85
+131,2025-10-19,Laptop Pro 14,Cali,Ajuste Contable,6,998.739,459.63,-3.76
+132,2025-02-18,Webcam HD,Medellín,Ajuste Contable,1,301.148,-440.56,-5.66
+133,2024-12-18,Monitor 27,Bucaramanga,Ajuste Contable,7,22.392,22.81,-7.48
+134,2024-06-29,Monitor 27,Medellín,Venta,4,1105.909,4423.64,30.42
+135,2025-05-31,Laptop Pro 14,Medellín,Venta,7,835.064,5845.45,34.98
+136,2025-09-30,Webcam HD,Cali,Venta,2,1129.924,2259.85,25.57
+137,2025-05-24,Monitor 27,Barranquilla,Venta,1,1062.358,1062.36,25.41
+138,2024-07-14,Disco SSD 1TB,Cali,Venta,5,784.414,3922.07,20.97
+139,2025-09-05,Disco SSD 1TB,Bogotá,Ajuste Contable,4,1006.199,439.58,0.62
+140,2024-04-09,Teclado Mecánico,Cali,Venta,8,1101.013,8808.1,17.28
+141,2025-01-05,Silla Ergonómica,Barranquilla,Venta,4,411.687,1646.75,16.99
+142,2025-07-27,Mouse Inalámbrico,Barranquilla,Venta,5,291.619,1458.1,43.87
+143,2024-11-17,Silla Ergonómica,Cartagena,Venta,2,582.968,1165.94,16.72
+144,2025-01-11,Laptop Pro 14,Cartagena,Venta,4,190.802,763.21,20.28
+145,2024-12-27,Disco SSD 1TB,Bogotá,Devolución,5,990.65,-4953.25,-10.34
+146,2025-07-03,Silla Ergonómica,Bogotá,Venta,7,905.413,6337.89,16.31
+147,2024-10-23,Mouse Inalámbrico,Bucaramanga,Venta,7,400.493,2803.45,5.51
+148,2025-09-01,Mouse Inalámbrico,Bucaramanga,Venta,8,257.71,2061.68,36.47
+149,2025-06-17,Webcam HD,Cali,Venta,6,769.839,4619.03,28.26
+150,2025-01-31,Webcam HD,Bogotá,Ajuste Contable,2,194.65,61.59,-5.16
+151,2025-08-31,Silla Ergonómica,Medellín,Ajuste Contable,3,420.58,444.23,-5.67
+152,2024-03-08,Webcam HD,Cartagena,Venta,6,927.406,5564.44,36.49
+153,2025-02-04,Audífonos BT,Cali,Venta,1,28.283,28.28,44.72
+154,2025-11-16,Teclado Mecánico,Bucaramanga,Venta,1,134.707,134.71,12.14
+155,2025-01-13,Audífonos BT,Bogotá,Venta,6,325.992,1955.95,26.22
+156,2024-07-30,Laptop Pro 14,Medellín,Devolución,2,435.624,-871.25,-19.42
+157,2025-04-21,Webcam HD,Bogotá,Venta,7,107.321,751.25,33.03
+158,2024-09-22,Teclado Mecánico,Barranquilla,Ajuste Contable,8,282.064,-203.92,2.67
+159,2024-06-03,Monitor 27,Medellín,Venta,5,824.634,4123.17,29.29
+160,2024-06-06,Silla Ergonómica,Medellín,Venta,8,377.827,3022.62,25.63
+161,2024-05-08,Audífonos BT,Cartagena,Devolución,4,677.102,-2708.41,-12.78
+162,2025-03-15,Silla Ergonómica,Bucaramanga,Venta,7,930.342,6512.39,40.27
+163,2024-02-16,Teclado Mecánico,Bogotá,Venta,4,704.463,2817.85,5.6
+164,2024-09-17,Mouse Inalámbrico,Medellín,Devolución,6,1177.088,-7062.53,-28.81
+165,2024-05-06,Audífonos BT,Bucaramanga,Devolución,3,1060.86,-3182.58,-17.31
+166,2025-03-20,Audífonos BT,Bogotá,Venta,6,310.085,1860.51,31.37
+167,2025-03-21,Laptop Pro 14,Cartagena,Devolución,2,50.054,-100.11,-7.43
+168,2025-10-24,Monitor 27,Cali,Venta,8,363.255,2906.04,22.67
+169,2024-07-29,Laptop Pro 14,Bogotá,Devolución,6,456.992,-2741.95,-30.06
+170,2024-06-13,Laptop Pro 14,Cartagena,Venta,7,790.014,5530.1,24.3
+171,2025-11-28,Laptop Pro 14,Cartagena,Ajuste Contable,6,1152.384,191.92,-3.18
+172,2024-02-05,Monitor 27,Bogotá,Venta,2,1057.627,2115.25,42.83
+173,2024-01-29,Teclado Mecánico,Medellín,Devolución,2,1025.375,-2050.75,-7.0
+174,2025-08-30,Teclado Mecánico,Bogotá,Venta,8,784.425,6275.4,43.55
+175,2025-04-04,Silla Ergonómica,Bogotá,Ajuste Contable,4,1106.728,189.13,6.08
+176,2024-11-07,Monitor 27,Bucaramanga,Venta,6,234.501,1407.01,44.8
+177,2024-03-30,Audífonos BT,Bogotá,Venta,4,744.953,2979.81,38.56
+178,2024-11-18,Webcam HD,Cartagena,Ajuste Contable,4,144.835,-441.95,-1.14
+179,2024-05-11,Teclado Mecánico,Bucaramanga,Ajuste Contable,7,363.141,47.57,4.76
+180,2024-08-29,Disco SSD 1TB,Medellín,Ajuste Contable,7,198.98,102.63,-0.06

@@ -1,0 +1,101 @@
+id_venta,fecha,producto,categoria,cantidad,precio_unitario,total,ciudad
+1,2024-08-31,Tablet 10,Cómputo,9,169.55,1525.95,Cartagena
+2,2025-04-30,Tablet 10,Cómputo,2,732.64,1465.28,Cali
+3,2024-09-22,Cargador USB-C,Accesorios,4,242.22,968.88,Cali
+4,2025-07-07,Cargador USB-C,Accesorios,8,485.6,3884.8,Bogotá
+5,2024-08-25,Teclado Mecánico,Accesorios,9,477.08,4293.72,Barranquilla
+6,2025-11-18,Mouse Inalámbrico,Accesorios,3,913.5,2740.5,Cartagena
+7,2024-02-13,Silla Ergonómica,Mobiliario,1,990.93,990.93,Medellín
+8,2025-04-29,Tablet 10,Cómputo,7,861.24,6028.68,Cali
+9,2025-02-08,Tablet 10,Cómputo,8,1157.45,9259.6,Bogotá
+10,2025-01-09,Mouse Inalámbrico,Accesorios,1,176.12,176.12,Bogotá
+11,2024-09-21,Webcam HD,Accesorios,5,514.06,2570.3,Cali
+12,2025-08-10,Audífonos BT,Accesorios,9,708.31,6374.79,Cartagena
+13,2024-08-25,Audífonos BT,Accesorios,1,1029.83,1029.83,Cartagena
+14,2025-11-18,Teclado Mecánico,Accesorios,6,1158.09,6948.54,Cartagena
+15,2025-08-05,Mouse Inalámbrico,Accesorios,4,765.08,3060.32,Cartagena
+16,2024-09-30,Silla Ergonómica,Mobiliario,2,90.2,180.4,Cali
+17,2024-03-31,Audífonos BT,Accesorios,2,501.4,1002.8,Bogotá
+18,2024-01-21,Silla Ergonómica,Mobiliario,7,926.02,6482.14,Barranquilla
+19,2024-02-15,Tablet 10,Cómputo,10,917.54,9175.4,Cali
+20,2025-08-23,Audífonos BT,Accesorios,9,1058.87,9529.83,Medellín
+21,2025-06-01,Monitor 27,Cómputo,1,381.96,381.96,Barranquilla
+22,2024-04-20,Tablet 10,Cómputo,9,52.18,469.62,Bogotá
+23,2025-02-21,Silla Ergonómica,Mobiliario,10,327.1,3271.0,Barranquilla
+24,2024-12-13,Audífonos BT,Accesorios,6,1151.01,6906.06,Cali
+25,2025-01-20,Disco SSD 1TB,Almacenamiento,9,472.64,4253.76,Cartagena
+26,2025-11-28,Cargador USB-C,Accesorios,2,749.85,1499.7,Cartagena
+27,2024-10-04,Webcam HD,Accesorios,4,1124.68,4498.72,Cali
+28,2024-09-21,Cargador USB-C,Accesorios,5,664.89,3324.45,Barranquilla
+29,2025-03-01,Tablet 10,Cómputo,6,38.76,232.56,Cartagena
+30,2025-08-26,Teclado Mecánico,Accesorios,1,765.74,765.74,Medellín
+31,2025-04-22,Audífonos BT,Accesorios,6,736.5,4419.0,Medellín
+32,2025-05-16,Laptop Pro 14,Cómputo,10,86.78,867.8,Barranquilla
+33,2025-01-13,Silla Ergonómica,Mobiliario,8,368.88,2951.04,Cartagena
+34,2024-11-23,Teclado Mecánico,Accesorios,6,234.52,1407.12,Medellín
+35,2025-09-01,Silla Ergonómica,Mobiliario,5,947.95,4739.75,Barranquilla
+36,2024-01-28,Tablet 10,Cómputo,3,382.37,1147.11,Bogotá
+37,2025-10-31,Silla Ergonómica,Mobiliario,4,403.43,1613.72,Cali
+38,2025-10-27,Mouse Inalámbrico,Accesorios,2,726.86,1453.72,Medellín
+39,2025-11-22,Monitor 27,Cómputo,8,974.57,7796.56,Bogotá
+40,2024-03-22,Audífonos BT,Accesorios,4,1063.6,4254.4,Cali
+41,2024-10-04,Monitor 27,Cómputo,2,55.18,110.36,Bogotá
+42,2024-11-18,Tablet 10,Cómputo,3,1038.52,3115.56,Medellín
+43,2025-10-19,Mouse Inalámbrico,Accesorios,10,424.16,4241.6,Bogotá
+44,2025-03-07,Silla Ergonómica,Mobiliario,9,955.73,8601.57,Medellín
+45,2025-04-20,Audífonos BT,Accesorios,7,359.12,2513.84,Cartagena
+46,2025-02-23,Laptop Pro 14,Cómputo,7,199.86,1399.02,Barranquilla
+47,2025-05-03,Tablet 10,Cómputo,9,529.71,4767.39,Bogotá
+48,2024-02-03,Disco SSD 1TB,Almacenamiento,9,1156.59,10409.31,Cartagena
+49,2024-12-15,Monitor 27,Cómputo,2,1031.71,2063.42,Medellín
+50,2024-05-02,Monitor 27,Cómputo,1,56.65,56.65,Cartagena
+51,2024-07-22,Webcam HD,Accesorios,10,73.49,734.9,Cali
+52,2024-05-03,Teclado Mecánico,Accesorios,9,370.37,3333.33,Barranquilla
+53,2025-06-21,Cargador USB-C,Accesorios,7,78.1,546.7,Cartagena
+54,2024-04-26,Audífonos BT,Accesorios,3,314.18,942.54,Cartagena
+55,2025-05-03,Laptop Pro 14,Cómputo,6,276.65,1659.9,Barranquilla
+56,2025-07-01,Mouse Inalámbrico,Accesorios,3,298.76,896.28,Medellín
+57,2024-05-11,Laptop Pro 14,Cómputo,8,759.9,6079.2,Cali
+58,2024-02-21,Silla Ergonómica,Mobiliario,4,333.27,1333.08,Cartagena
+59,2025-06-16,Webcam HD,Accesorios,1,575.39,575.39,Barranquilla
+60,2024-02-26,Teclado Mecánico,Accesorios,1,162.68,162.68,Barranquilla
+61,2025-05-09,Laptop Pro 14,Cómputo,2,625.75,1251.5,Cali
+62,2024-11-19,Teclado Mecánico,Accesorios,6,100.05,600.3,Cali
+63,2025-10-24,Webcam HD,Accesorios,10,375.38,3753.8,Medellín
+64,2024-07-14,Audífonos BT,Accesorios,7,161.65,1131.55,Cartagena
+65,2024-01-04,Webcam HD,Accesorios,2,686.58,1373.16,Barranquilla
+66,2025-01-17,Disco SSD 1TB,Almacenamiento,10,785.57,7855.7,Cartagena
+67,2025-01-24,Laptop Pro 14,Cómputo,10,1065.55,10655.5,Barranquilla
+68,2025-01-16,Disco SSD 1TB,Almacenamiento,6,513.31,3079.86,Cali
+69,2025-04-16,Laptop Pro 14,Cómputo,4,274.1,1096.4,Medellín
+70,2025-08-27,Mouse Inalámbrico,Accesorios,7,280.96,1966.72,Bogotá
+71,2024-01-29,Audífonos BT,Accesorios,6,1163.04,6978.24,Cartagena
+72,2024-09-25,Mouse Inalámbrico,Accesorios,8,833.31,6666.48,Cartagena
+73,2025-01-20,Mouse Inalámbrico,Accesorios,6,683.16,4098.96,Barranquilla
+74,2025-08-24,Laptop Pro 14,Cómputo,8,185.07,1480.56,Cali
+75,2024-02-15,Cargador USB-C,Accesorios,2,683.72,1367.44,Cali
+76,2024-07-02,Laptop Pro 14,Cómputo,6,1012.22,6073.32,Barranquilla
+77,2024-01-27,Mouse Inalámbrico,Accesorios,8,1005.88,8047.04,Medellín
+78,2025-08-15,Silla Ergonómica,Mobiliario,2,57.98,115.96,Cartagena
+79,2025-06-07,Cargador USB-C,Accesorios,4,141.49,565.96,Barranquilla
+80,2025-07-20,Laptop Pro 14,Cómputo,9,399.23,3593.07,Cartagena
+81,2024-07-03,Mouse Inalámbrico,Accesorios,4,1198.04,4792.16,Bogotá
+82,2025-04-10,Tablet 10,Cómputo,7,314.68,2202.76,Cartagena
+83,2025-02-10,Audífonos BT,Accesorios,9,510.59,4595.31,Barranquilla
+84,2025-01-19,Cargador USB-C,Accesorios,4,1168.07,4672.28,Cali
+85,2024-06-13,Webcam HD,Accesorios,10,911.0,9110.0,Cartagena
+86,2025-05-10,Teclado Mecánico,Accesorios,7,1078.42,7548.94,Bogotá
+87,2024-06-15,Mouse Inalámbrico,Accesorios,8,901.56,7212.48,Cartagena
+88,2025-03-29,Tablet 10,Cómputo,3,176.5,529.5,Bogotá
+89,2024-05-30,Tablet 10,Cómputo,9,388.09,3492.81,Bogotá
+90,2025-07-04,Silla Ergonómica,Mobiliario,7,720.34,5042.38,Cartagena
+91,2025-08-21,Silla Ergonómica,Mobiliario,4,379.06,1516.24,Medellín
+92,2025-05-05,Webcam HD,Accesorios,4,219.11,876.44,Medellín
+93,2024-09-01,Audífonos BT,Accesorios,8,932.43,7459.44,Bogotá
+94,2025-03-04,Disco SSD 1TB,Almacenamiento,10,258.82,2588.2,Cartagena
+95,2025-10-30,Cargador USB-C,Accesorios,1,585.34,585.34,Barranquilla
+96,2025-02-13,Laptop Pro 14,Cómputo,8,1094.41,8755.28,Bogotá
+97,2025-10-25,Mouse Inalámbrico,Accesorios,4,1026.85,4107.4,Bogotá
+98,2024-07-13,Silla Ergonómica,Mobiliario,3,236.82,710.46,Barranquilla
+99,2024-09-18,Teclado Mecánico,Accesorios,1,386.4,386.4,Cali
+100,2024-04-03,Mouse Inalámbrico,Accesorios,2,124.78,249.56,Medellín

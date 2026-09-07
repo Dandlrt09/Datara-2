@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { useSessionEvents } from "../lib/useSessionEvents";
 
 /** Create a readable stream that stays open (never closes). */

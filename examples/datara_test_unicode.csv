@@ -1,0 +1,151 @@
+id_venta,fecha,producto,categoria,ciudad,vendedor,canal,comentario_cliente
+1,2024-06-17,Vitamina C Efervescente 💊,Papelería,Popayán,Camila Vásquez,Tienda física,No llegó a tiempo ⏰
+2,2025-06-08,Muñeca de Trapo,Decoración,Barranquilla,José Ñáñez,En línea 🌐,"Regular, esperaba más..."
+3,2025-08-22,Vitamina C Efervescente 💊,Alimentación,Cúcuta,María José Peña,Tienda física,¡Excelente atención! 😃
+4,2025-03-23,Té de Manzanilla 🌼,Papelería,Riohacha,José Ñáñez,Marketplace,Perfecto para regalo 🎁
+5,2025-05-24,Té de Manzanilla 🌼,Alimentación,Ibagué,José Ñáñez,Tienda física,"Muy bueno, volvería a comprar 👍"
+6,2024-05-07,Jabón de Avena,Alimentación,Riohacha,María José Peña,Marketplace,"Ñam ñam, delicioso 😋"
+7,2025-05-11,Muñeca de Trapo,Niños & Bebés,Bogotá,Camila Vásquez,Tienda física,"Muy bueno, volvería a comprar 👍"
+8,2024-07-21,Peluche Corazón 🧸💕,Decoración,Medellín,José Ñáñez,Teléfono ☎️,Perfecto para regalo 🎁
+9,2025-02-01,Peluche Corazón 🧸💕,Salud & Bienestar,Cúcuta,Andrés Muñoz 🙂,Teléfono ☎️,¡Increíble calidad! 🎉👏
+10,2025-01-08,Chocolate Artesanal 🍫,Decoración,Neiva,Iñaki Zubizarreta,Teléfono ☎️,"Ñam ñam, delicioso 😋"
+11,2024-09-29,Café en Grano Premium ☕,Alimentación,Cúcuta,Yolanda Restrepo,Teléfono ☎️,¡Excelente atención! 😃
+12,2025-05-18,Piña Deshidratada 🍍,Decoración,Barranquilla,Andrés Muñoz 🙂,Marketplace,Perfecto para regalo 🎁
+13,2025-09-29,Piña Deshidratada 🍍,Niños & Bebés,Cúcuta,Yolanda Restrepo,Marketplace,"Regular, esperaba más..."
+14,2024-12-20,Jabón de Avena,Decoración,Popayán,María José Peña,En línea 🌐,"Envío rápido, todo bien 📦"
+15,2024-03-08,Piñata Cumpleaños 🎉,Niños & Bebés,Neiva,Iñaki Zubizarreta,Tienda física,¡Excelente atención! 😃
+16,2025-11-23,Aromatizante Vainilla,Niños & Bebés,Neiva,María José Peña,En línea 🌐,"Regular, esperaba más..."
+17,2025-05-17,Aromatizante Vainilla,Papelería,Barranquilla,María José Peña,Tienda física,Perfecto para regalo 🎁
+18,2024-03-11,Chocolate Artesanal 🍫,Papelería,Riohacha,José Ñáñez,Marketplace,¡Excelente atención! 😃
+19,2024-09-21,Cámara Instantánea 📷,Salud & Bienestar,Bogotá,Camila Vásquez,Tienda física,"Envío rápido, todo bien 📦"
+20,2025-02-07,Piña Deshidratada 🍍,Salud & Bienestar,Cúcuta,María José Peña,Teléfono ☎️,¡Excelente atención! 😃
+21,2024-09-15,Muñeca de Trapo,Decoración,Riohacha,José Ñáñez,Tienda física,"Regular, esperaba más..."
+22,2024-06-06,Piñata Cumpleaños 🎉,Salud & Bienestar,Neiva,Camila Vásquez,Teléfono ☎️,¡Increíble calidad! 🎉👏
+23,2024-05-22,Aromatizante Vainilla,Decoración,Popayán,María José Peña,En línea 🌐,"Ñam ñam, delicioso 😋"
+24,2024-05-08,Té de Manzanilla 🌼,Alimentación,Popayán,Andrés Muñoz 🙂,Marketplace,Producto dañado 😞
+25,2025-08-21,Vitamina C Efervescente 💊,Salud & Bienestar,Neiva,María José Peña,Tienda física,"Envío rápido, todo bien 📦"
+26,2024-04-07,Vitamina C Efervescente 💊,Alimentación,Cúcuta,José Ñáñez,Teléfono ☎️,"Envío rápido, todo bien 📦"
+27,2024-03-14,Cojín Decorativo ⭐,Alimentación,Popayán,María José Peña,Marketplace,Perfecto para regalo 🎁
+28,2024-11-28,Vitamina C Efervescente 💊,Papelería,Barranquilla,Andrés Muñoz 🙂,Tienda física,"Envío rápido, todo bien 📦"
+29,2024-07-07,Cojín Decorativo ⭐,Papelería,Barranquilla,Yolanda Restrepo,En línea 🌐,Atención un poco lenta 🙃
+30,2025-05-31,Cojín Decorativo ⭐,Alimentación,Bogotá,Camila Vásquez,Teléfono ☎️,"Muy bueno, volvería a comprar 👍"
+31,2025-02-11,Jabón de Avena,Decoración,Cúcuta,Yolanda Restrepo,Tienda física,¡Increíble calidad! 🎉👏
+32,2025-09-11,Álbum de Fotos,Alimentación,Barranquilla,Camila Vásquez,Tienda física,¡Increíble calidad! 🎉👏
+33,2024-10-29,Cojín Decorativo ⭐,Decoración,Riohacha,Andrés Muñoz 🙂,En línea 🌐,Perfecto para regalo 🎁
+34,2025-09-07,Café en Grano Premium ☕,Decoración,Ibagué,Andrés Muñoz 🙂,Marketplace,¡Increíble calidad! 🎉👏
+35,2025-10-01,Aromatizante Vainilla,Decoración,Barranquilla,José Ñáñez,Marketplace,Producto dañado 😞
+36,2024-12-29,Piña Deshidratada 🍍,Salud & Bienestar,Neiva,José Ñáñez,En línea 🌐,"Muy bueno, volvería a comprar 👍"
+37,2025-10-03,Cojín Decorativo ⭐,Papelería,Bogotá,Yolanda Restrepo,Teléfono ☎️,No llegó a tiempo ⏰
+38,2025-06-13,Aromatizante Vainilla,Papelería,Neiva,José Ñáñez,Tienda física,¡Excelente atención! 😃
+39,2024-02-19,Cámara Instantánea 📷,Papelería,Bogotá,María José Peña,Marketplace,Atención un poco lenta 🙃
+40,2025-02-18,Té de Manzanilla 🌼,Papelería,Riohacha,María José Peña,Teléfono ☎️,"Ñam ñam, delicioso 😋"
+41,2024-12-01,Chocolate Artesanal 🍫,Niños & Bebés,Medellín,José Ñáñez,Teléfono ☎️,"Envío rápido, todo bien 📦"
+42,2025-05-18,Álbum de Fotos,Decoración,Barranquilla,Camila Vásquez,Marketplace,Producto dañado 😞
+43,2025-05-07,Piñata Cumpleaños 🎉,Papelería,Neiva,Iñaki Zubizarreta,Teléfono ☎️,Perfecto para regalo 🎁
+44,2024-01-07,Muñeca de Trapo,Salud & Bienestar,Barranquilla,Iñaki Zubizarreta,Teléfono ☎️,"Envío rápido, todo bien 📦"
+45,2024-04-02,Aromatizante Vainilla,Niños & Bebés,Medellín,Andrés Muñoz 🙂,Marketplace,Atención un poco lenta 🙃
+46,2025-01-19,Té de Manzanilla 🌼,Papelería,Medellín,María José Peña,Teléfono ☎️,Producto dañado 😞
+47,2025-11-25,Álbum de Fotos,Salud & Bienestar,Barranquilla,Iñaki Zubizarreta,En línea 🌐,¡Excelente atención! 😃
+48,2024-11-25,Aromatizante Vainilla,Salud & Bienestar,Cúcuta,Yolanda Restrepo,Tienda física,Producto dañado 😞
+49,2025-09-04,Té de Manzanilla 🌼,Salud & Bienestar,Neiva,María José Peña,Teléfono ☎️,No llegó a tiempo ⏰
+50,2025-02-15,Vitamina C Efervescente 💊,Papelería,Popayán,Yolanda Restrepo,Tienda física,"Ñam ñam, delicioso 😋"
+51,2025-09-28,Camión de Juguete 🚚,Alimentación,Barranquilla,María José Peña,En línea 🌐,"Regular, esperaba más..."
+52,2025-10-06,Piñata Cumpleaños 🎉,Salud & Bienestar,Bogotá,José Ñáñez,En línea 🌐,"Ñam ñam, delicioso 😋"
+53,2025-09-14,Chocolate Artesanal 🍫,Papelería,Barranquilla,José Ñáñez,Tienda física,"Muy bueno, volvería a comprar 👍"
+54,2024-11-12,Peluche Corazón 🧸💕,Papelería,Ibagué,José Ñáñez,Marketplace,"Envío rápido, todo bien 📦"
+55,2024-05-18,Bolígrafo Edición Ñoño,Papelería,Bogotá,Iñaki Zubizarreta,Tienda física,"Ñam ñam, delicioso 😋"
+56,2025-02-16,Piñata Cumpleaños 🎉,Decoración,Barranquilla,María José Peña,Teléfono ☎️,¡Excelente atención! 😃
+57,2025-11-05,Bolígrafo Edición Ñoño,Alimentación,Medellín,Camila Vásquez,Tienda física,"Envío rápido, todo bien 📦"
+58,2024-03-02,Chocolate Artesanal 🍫,Decoración,Riohacha,Camila Vásquez,Marketplace,"Envío rápido, todo bien 📦"
+59,2024-10-03,Muñeca de Trapo,Salud & Bienestar,Popayán,Iñaki Zubizarreta,En línea 🌐,"Muy bueno, volvería a comprar 👍"
+60,2025-11-15,Piña Deshidratada 🍍,Niños & Bebés,Medellín,Yolanda Restrepo,Tienda física,"Regular, esperaba más..."
+61,2024-10-03,Álbum de Fotos,Alimentación,Cúcuta,José Ñáñez,Teléfono ☎️,¡Increíble calidad! 🎉👏
+62,2025-11-28,Jabón de Avena,Papelería,Cúcuta,José Ñáñez,En línea 🌐,Producto dañado 😞
+63,2025-01-02,Aromatizante Vainilla,Salud & Bienestar,Neiva,María José Peña,Tienda física,Perfecto para regalo 🎁
+64,2025-03-09,Piña Deshidratada 🍍,Salud & Bienestar,Barranquilla,María José Peña,En línea 🌐,"Regular, esperaba más..."
+65,2025-09-13,Aromatizante Vainilla,Niños & Bebés,Bogotá,Yolanda Restrepo,Marketplace,No llegó a tiempo ⏰
+66,2025-05-04,Muñeca de Trapo,Papelería,Bogotá,Iñaki Zubizarreta,En línea 🌐,Producto dañado 😞
+67,2025-11-28,Jabón de Avena,Decoración,Medellín,Iñaki Zubizarreta,Teléfono ☎️,Producto dañado 😞
+68,2025-04-20,Piñata Cumpleaños 🎉,Salud & Bienestar,Bogotá,Iñaki Zubizarreta,Tienda física,Atención un poco lenta 🙃
+69,2024-09-28,Bolígrafo Edición Ñoño,Alimentación,Neiva,Yolanda Restrepo,Tienda física,"Envío rápido, todo bien 📦"
+70,2025-07-03,Aromatizante Vainilla,Papelería,Barranquilla,María José Peña,Marketplace,No llegó a tiempo ⏰
+71,2025-01-06,Piñata Cumpleaños 🎉,Alimentación,Barranquilla,Camila Vásquez,Tienda física,"Regular, esperaba más..."
+72,2025-07-06,Cámara Instantánea 📷,Salud & Bienestar,Cúcuta,José Ñáñez,Teléfono ☎️,Atención un poco lenta 🙃
+73,2024-01-27,Cámara Instantánea 📷,Niños & Bebés,Medellín,María José Peña,Marketplace,Perfecto para regalo 🎁
+74,2024-10-30,Piña Deshidratada 🍍,Niños & Bebés,Barranquilla,Yolanda Restrepo,Teléfono ☎️,Atención un poco lenta 🙃
+75,2025-10-18,Chocolate Artesanal 🍫,Papelería,Barranquilla,Yolanda Restrepo,Tienda física,¡Increíble calidad! 🎉👏
+76,2024-07-07,Vitamina C Efervescente 💊,Papelería,Barranquilla,Camila Vásquez,Teléfono ☎️,¡Increíble calidad! 🎉👏
+77,2024-02-11,Aromatizante Vainilla,Papelería,Barranquilla,José Ñáñez,Marketplace,Atención un poco lenta 🙃
+78,2025-03-26,Jabón de Avena,Salud & Bienestar,Cúcuta,Yolanda Restrepo,Tienda física,"Envío rápido, todo bien 📦"
+79,2025-01-20,Muñeca de Trapo,Papelería,Bogotá,José Ñáñez,Marketplace,Atención un poco lenta 🙃
+80,2025-04-13,Peluche Corazón 🧸💕,Papelería,Barranquilla,Yolanda Restrepo,Teléfono ☎️,¡Excelente atención! 😃
+81,2024-01-28,Álbum de Fotos,Niños & Bebés,Riohacha,Iñaki Zubizarreta,Teléfono ☎️,"Regular, esperaba más..."
+82,2025-02-02,Bolígrafo Edición Ñoño,Papelería,Medellín,Iñaki Zubizarreta,En línea 🌐,"Regular, esperaba más..."
+83,2025-11-02,Camión de Juguete 🚚,Papelería,Medellín,María José Peña,Marketplace,"Muy bueno, volvería a comprar 👍"
+84,2024-11-11,Peluche Corazón 🧸💕,Niños & Bebés,Cúcuta,Iñaki Zubizarreta,En línea 🌐,Atención un poco lenta 🙃
+85,2024-10-29,Cámara Instantánea 📷,Niños & Bebés,Barranquilla,María José Peña,Teléfono ☎️,No llegó a tiempo ⏰
+86,2024-08-11,Café en Grano Premium ☕,Salud & Bienestar,Ibagué,José Ñáñez,Tienda física,"Envío rápido, todo bien 📦"
+87,2024-10-17,Café en Grano Premium ☕,Salud & Bienestar,Neiva,José Ñáñez,En línea 🌐,Atención un poco lenta 🙃
+88,2025-11-01,Aromatizante Vainilla,Alimentación,Barranquilla,Andrés Muñoz 🙂,Teléfono ☎️,No llegó a tiempo ⏰
+89,2025-05-27,Aromatizante Vainilla,Decoración,Ibagué,Camila Vásquez,En línea 🌐,"Regular, esperaba más..."
+90,2024-05-26,Álbum de Fotos,Papelería,Riohacha,Yolanda Restrepo,Teléfono ☎️,Perfecto para regalo 🎁
+91,2025-08-23,Peluche Corazón 🧸💕,Papelería,Barranquilla,José Ñáñez,Teléfono ☎️,Producto dañado 😞
+92,2025-08-23,Piñata Cumpleaños 🎉,Decoración,Medellín,Iñaki Zubizarreta,Teléfono ☎️,"Envío rápido, todo bien 📦"
+93,2024-06-18,Café en Grano Premium ☕,Salud & Bienestar,Ibagué,Yolanda Restrepo,Marketplace,¡Increíble calidad! 🎉👏
+94,2024-08-08,Café en Grano Premium ☕,Papelería,Cúcuta,María José Peña,Tienda física,¡Excelente atención! 😃
+95,2025-10-01,Muñeca de Trapo,Niños & Bebés,Barranquilla,Andrés Muñoz 🙂,En línea 🌐,"Envío rápido, todo bien 📦"
+96,2025-07-01,Cámara Instantánea 📷,Alimentación,Neiva,José Ñáñez,En línea 🌐,Producto dañado 😞
+97,2024-08-01,Aromatizante Vainilla,Alimentación,Medellín,María José Peña,Tienda física,Atención un poco lenta 🙃
+98,2025-08-04,Piña Deshidratada 🍍,Niños & Bebés,Barranquilla,Camila Vásquez,En línea 🌐,"Ñam ñam, delicioso 😋"
+99,2024-11-05,Álbum de Fotos,Salud & Bienestar,Neiva,José Ñáñez,Teléfono ☎️,¡Excelente atención! 😃
+100,2025-02-17,Jabón de Avena,Decoración,Riohacha,María José Peña,En línea 🌐,"Muy bueno, volvería a comprar 👍"
+101,2024-09-20,Jabón de Avena,Papelería,Popayán,Andrés Muñoz 🙂,Tienda física,¡Increíble calidad! 🎉👏
+102,2024-12-15,Álbum de Fotos,Papelería,Popayán,Camila Vásquez,Marketplace,¡Excelente atención! 😃
+103,2024-04-28,Camión de Juguete 🚚,Decoración,Medellín,Camila Vásquez,Marketplace,"Envío rápido, todo bien 📦"
+104,2024-06-01,Camión de Juguete 🚚,Salud & Bienestar,Neiva,José Ñáñez,Marketplace,No llegó a tiempo ⏰
+105,2024-08-25,Café en Grano Premium ☕,Salud & Bienestar,Neiva,Andrés Muñoz 🙂,En línea 🌐,No llegó a tiempo ⏰
+106,2024-08-11,Aromatizante Vainilla,Salud & Bienestar,Barranquilla,José Ñáñez,Teléfono ☎️,¡Increíble calidad! 🎉👏
+107,2025-09-14,Álbum de Fotos,Papelería,Cúcuta,José Ñáñez,Teléfono ☎️,Perfecto para regalo 🎁
+108,2024-07-24,Muñeca de Trapo,Alimentación,Barranquilla,María José Peña,Tienda física,"Regular, esperaba más..."
+109,2024-01-14,Cámara Instantánea 📷,Niños & Bebés,Riohacha,María José Peña,Marketplace,Perfecto para regalo 🎁
+110,2025-01-19,Peluche Corazón 🧸💕,Salud & Bienestar,Cúcuta,Yolanda Restrepo,Marketplace,No llegó a tiempo ⏰
+111,2024-05-26,Álbum de Fotos,Salud & Bienestar,Cúcuta,Iñaki Zubizarreta,En línea 🌐,¡Excelente atención! 😃
+112,2024-09-08,Té de Manzanilla 🌼,Salud & Bienestar,Ibagué,Andrés Muñoz 🙂,Teléfono ☎️,"Envío rápido, todo bien 📦"
+113,2025-02-08,Café en Grano Premium ☕,Decoración,Popayán,Iñaki Zubizarreta,Tienda física,Atención un poco lenta 🙃
+114,2024-08-24,Jabón de Avena,Alimentación,Bogotá,María José Peña,Teléfono ☎️,Producto dañado 😞
+115,2025-05-26,Cámara Instantánea 📷,Decoración,Barranquilla,María José Peña,Teléfono ☎️,"Ñam ñam, delicioso 😋"
+116,2025-11-10,Piñata Cumpleaños 🎉,Salud & Bienestar,Cúcuta,Andrés Muñoz 🙂,Teléfono ☎️,¡Excelente atención! 😃
+117,2024-05-20,Té de Manzanilla 🌼,Alimentación,Medellín,María José Peña,Teléfono ☎️,"Muy bueno, volvería a comprar 👍"
+118,2025-04-29,Café en Grano Premium ☕,Alimentación,Ibagué,José Ñáñez,Tienda física,Perfecto para regalo 🎁
+119,2025-08-19,Camión de Juguete 🚚,Papelería,Popayán,Camila Vásquez,Teléfono ☎️,Perfecto para regalo 🎁
+120,2024-04-28,Camión de Juguete 🚚,Salud & Bienestar,Bogotá,Yolanda Restrepo,Teléfono ☎️,¡Increíble calidad! 🎉👏
+121,2025-04-19,Cámara Instantánea 📷,Salud & Bienestar,Popayán,Iñaki Zubizarreta,Tienda física,Perfecto para regalo 🎁
+122,2024-12-19,Cámara Instantánea 📷,Salud & Bienestar,Barranquilla,Yolanda Restrepo,Tienda física,"Muy bueno, volvería a comprar 👍"
+123,2024-10-12,Jabón de Avena,Niños & Bebés,Bogotá,Iñaki Zubizarreta,En línea 🌐,"Envío rápido, todo bien 📦"
+124,2024-12-20,Té de Manzanilla 🌼,Niños & Bebés,Bogotá,José Ñáñez,En línea 🌐,"Envío rápido, todo bien 📦"
+125,2024-11-28,Bolígrafo Edición Ñoño,Decoración,Barranquilla,María José Peña,Marketplace,Atención un poco lenta 🙃
+126,2024-06-21,Bolígrafo Edición Ñoño,Niños & Bebés,Medellín,María José Peña,Marketplace,"Ñam ñam, delicioso 😋"
+127,2024-09-15,Álbum de Fotos,Niños & Bebés,Neiva,Camila Vásquez,Marketplace,¡Excelente atención! 😃
+128,2024-09-06,Camión de Juguete 🚚,Salud & Bienestar,Barranquilla,Iñaki Zubizarreta,Teléfono ☎️,Producto dañado 😞
+129,2024-03-26,Bolígrafo Edición Ñoño,Papelería,Riohacha,Yolanda Restrepo,Tienda física,"Envío rápido, todo bien 📦"
+130,2025-09-22,Chocolate Artesanal 🍫,Alimentación,Neiva,Camila Vásquez,En línea 🌐,Perfecto para regalo 🎁
+131,2025-05-13,Piñata Cumpleaños 🎉,Niños & Bebés,Medellín,Andrés Muñoz 🙂,En línea 🌐,¡Excelente atención! 😃
+132,2024-11-13,Aromatizante Vainilla,Niños & Bebés,Bogotá,Yolanda Restrepo,En línea 🌐,No llegó a tiempo ⏰
+133,2024-04-02,Bolígrafo Edición Ñoño,Papelería,Ibagué,Andrés Muñoz 🙂,Teléfono ☎️,No llegó a tiempo ⏰
+134,2025-05-15,Té de Manzanilla 🌼,Salud & Bienestar,Cúcuta,Andrés Muñoz 🙂,Marketplace,Producto dañado 😞
+135,2024-11-05,Piña Deshidratada 🍍,Niños & Bebés,Cúcuta,Camila Vásquez,Marketplace,Perfecto para regalo 🎁
+136,2024-09-24,Jabón de Avena,Salud & Bienestar,Neiva,Andrés Muñoz 🙂,En línea 🌐,"Regular, esperaba más..."
+137,2025-06-30,Aromatizante Vainilla,Alimentación,Medellín,Yolanda Restrepo,Tienda física,Producto dañado 😞
+138,2025-04-16,Álbum de Fotos,Papelería,Popayán,Andrés Muñoz 🙂,Tienda física,Perfecto para regalo 🎁
+139,2025-04-29,Camión de Juguete 🚚,Niños & Bebés,Ibagué,Iñaki Zubizarreta,Teléfono ☎️,Perfecto para regalo 🎁
+140,2025-03-06,Jabón de Avena,Niños & Bebés,Popayán,María José Peña,Tienda física,Perfecto para regalo 🎁
+141,2025-06-24,Piñata Cumpleaños 🎉,Niños & Bebés,Medellín,Yolanda Restrepo,Tienda física,¡Increíble calidad! 🎉👏
+142,2025-05-07,Vitamina C Efervescente 💊,Decoración,Popayán,María José Peña,Marketplace,"Muy bueno, volvería a comprar 👍"
+143,2025-09-11,Cámara Instantánea 📷,Alimentación,Popayán,Andrés Muñoz 🙂,En línea 🌐,Producto dañado 😞
+144,2025-07-04,Muñeca de Trapo,Alimentación,Barranquilla,Yolanda Restrepo,Teléfono ☎️,"Ñam ñam, delicioso 😋"
+145,2025-12-01,Cojín Decorativo ⭐,Papelería,Popayán,Andrés Muñoz 🙂,Tienda física,"Ñam ñam, delicioso 😋"
+146,2024-07-15,Café en Grano Premium ☕,Salud & Bienestar,Neiva,Camila Vásquez,Tienda física,¡Increíble calidad! 🎉👏
+147,2025-10-06,Cámara Instantánea 📷,Papelería,Riohacha,Iñaki Zubizarreta,Tienda física,¡Excelente atención! 😃
+148,2025-11-18,Álbum de Fotos,Salud & Bienestar,Ibagué,Iñaki Zubizarreta,Teléfono ☎️,Perfecto para regalo 🎁
+149,2024-02-28,Camión de Juguete 🚚,Niños & Bebés,Barranquilla,María José Peña,En línea 🌐,"Regular, esperaba más..."
+150,2025-11-01,Jabón de Avena,Niños & Bebés,Cúcuta,Andrés Muñoz 🙂,Tienda física,"Regular, esperaba más..."

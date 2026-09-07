@@ -1,0 +1,201 @@
+id_venta,fecha,producto,categoria,cantidad,precio_unitario,total,ciudad,vendedor,canal,satisfaccion_cliente
+1,2024-11-27,Teclado Mecánico,Accesorios,7,,5504.52,Bogotá,Sofía Díaz,,3
+2,2025-10-07,Impresora Láser,,10,1138.04,11380.4,Pereira,Ana Torres,,1
+3,2024-04-09,Cargador USB-C,Accesorios,2,683.78,1367.56,Cali,,Teléfono,3
+4,2025-04-04,Silla Ergonómica,Mobiliario,10,,11765.1,Bogotá,Sofía Díaz,Teléfono,2
+5,2025-08-31,Disco SSD 1TB,,10,959.32,9593.2,Bogotá,Ana Torres,Marketplace,4
+6,,Audífonos BT,Accesorios,3,738.94,,Santa Marta,Ana Torres,Tienda Física,3
+7,2024-10-12,Router WiFi6,Redes,7,1183.96,8287.72,Pereira,,Tienda Física,1
+8,2024-05-08,,,9,,,Barranquilla,Carlos Pérez,Teléfono,
+9,2024-06-03,Cargador USB-C,Accesorios,2,1139.5,2279.0,,Ana Torres,Tienda Física,5
+10,,Mouse Inalámbrico,Accesorios,6,,5353.92,,Jorge Ramírez,Tienda Física,5
+11,2024-09-24,Cargador USB-C,Accesorios,6,1091.29,6547.74,Bucaramanga,Luis Gómez,Marketplace,2
+12,2024-01-29,Micrófono USB,Accesorios,5,574.6,,,Jorge Ramírez,Marketplace,4
+13,2025-09-16,Lámpara LED,Oficina,1,583.18,583.18,Bucaramanga,Jorge Ramírez,Online,1
+14,2025-02-15,,Redes,2,873.89,1747.78,Medellín,Luis Gómez,Online,2
+15,,Mouse Inalámbrico,Accesorios,9,903.15,8128.35,Medellín,Carlos Pérez,,2
+16,2025-11-09,,Cómputo,9,513.44,4620.96,,,Tienda Física,
+17,2025-11-29,Cargador USB-C,,,673.2,,Bogotá,,Online,2
+18,2024-07-23,,Redes,5,551.03,2755.15,Santa Marta,,,5
+19,,Webcam HD,Accesorios,2,267.04,534.08,Cartagena,Ana Torres,Tienda Física,3
+20,2025-03-17,Cargador USB-C,,7,416.85,,Cali,Marta Ruiz,Marketplace,
+21,2024-08-22,Base Notebook,Accesorios,2,114.61,229.22,Cartagena,Ana Torres,Tienda Física,3
+22,2024-10-12,Laptop Pro 14,,3,,1557.0,Bogotá,Marta Ruiz,Online,1
+23,2024-05-12,Laptop Pro 14,Cómputo,9,855.8,7702.2,Bogotá,Luis Gómez,Marketplace,1
+24,2024-02-07,Laptop Pro 14,,1,883.7,883.7,Cali,Sofía Díaz,Teléfono,2
+25,,"Monitor 27""",Cómputo,3,494.57,,Bucaramanga,Ana Torres,Tienda Física,1
+26,2024-10-27,,Cómputo,8,234.64,,Cartagena,Carlos Pérez,Online,3
+27,,Cargador USB-C,Accesorios,4,309.09,1236.36,,Ana Torres,Marketplace,1
+28,2025-09-02,Webcam HD,,6,869.0,5214.0,Santa Marta,Luis Gómez,,5
+29,,,Oficina,,960.59,9605.9,Cali,Ana Torres,Online,1
+30,2024-03-12,Router WiFi6,,9,1078.96,9710.64,Bogotá,Jorge Ramírez,Online,4
+31,2025-12-01,Silla Ergonómica,Mobiliario,1,746.11,,,Ana Torres,Tienda Física,3
+32,2024-10-24,Router WiFi6,Redes,9,,3180.33,Santa Marta,Carlos Pérez,Online,5
+33,2024-08-03,Mouse Inalámbrico,Accesorios,10,122.01,1220.1,Cartagena,Marta Ruiz,,
+34,,Webcam HD,Accesorios,5,876.71,4383.55,Pereira,Marta Ruiz,,3
+35,2024-03-07,Webcam HD,Accesorios,,1198.57,8389.99,,Marta Ruiz,Teléfono,3
+36,,Base Notebook,Accesorios,1,977.18,977.18,Pereira,,Tienda Física,
+37,2024-12-17,Silla Ergonómica,Mobiliario,,318.06,,Cartagena,Carlos Pérez,Tienda Física,3
+38,2025-04-05,Webcam HD,Accesorios,3,664.13,1992.39,,Ana Torres,Tienda Física,3
+39,2024-10-03,Audífonos BT,Accesorios,1,605.3,605.3,Bucaramanga,Luis Gómez,,
+40,2025-04-29,"Tablet 10""",,8,15.21,121.68,Pereira,Sofía Díaz,Teléfono,4
+41,2025-07-18,Micrófono USB,Accesorios,1,16.62,16.62,,Luis Gómez,Online,3
+42,2025-09-07,Laptop Pro 14,Cómputo,1,651.91,651.91,Santa Marta,,Marketplace,2
+43,2024-09-20,"Monitor 27""",Cómputo,7,,7779.24,Cali,,Online,3
+44,2024-07-17,,Cómputo,8,277.41,2219.28,,Ana Torres,Teléfono,5
+45,2024-02-23,Router WiFi6,Redes,1,233.16,233.16,Santa Marta,,Marketplace,1
+46,2024-12-05,Disco SSD 1TB,Almacenamiento,3,144.11,432.33,Bogotá,Marta Ruiz,Online,
+47,,Audífonos BT,Accesorios,9,1104.62,,,,Marketplace,4
+48,2025-09-12,Audífonos BT,Accesorios,6,337.69,2026.14,,Marta Ruiz,,3
+49,,Micrófono USB,Accesorios,5,1097.55,5487.75,Santa Marta,Luis Gómez,Teléfono,2
+50,2025-06-08,"Monitor 27""",Cómputo,7,907.17,,,Carlos Pérez,Online,1
+51,2025-04-02,Teclado Mecánico,Accesorios,,172.52,690.08,Santa Marta,Sofía Díaz,Tienda Física,5
+52,2024-09-08,"Monitor 27""",Cómputo,3,348.4,,Cali,,,4
+53,2025-04-04,Base Notebook,Accesorios,6,62.83,376.98,Cartagena,Luis Gómez,Online,1
+54,2024-04-18,Impresora Láser,,10,,8560.0,Bucaramanga,Luis Gómez,Online,3
+55,2025-09-27,Silla Ergonómica,Mobiliario,2,256.04,512.08,Santa Marta,Sofía Díaz,Teléfono,1
+56,2025-03-03,Laptop Pro 14,Cómputo,5,898.23,4491.15,Bucaramanga,,Teléfono,1
+57,2025-02-19,"Tablet 10""",Cómputo,6,,3367.02,Medellín,Luis Gómez,,1
+58,2024-03-09,Mouse Inalámbrico,Accesorios,,596.25,4173.75,Cali,Marta Ruiz,Tienda Física,1
+59,2024-08-15,"Tablet 10""",Cómputo,7,743.45,,Cali,Carlos Pérez,Tienda Física,
+60,2025-11-19,Laptop Pro 14,Cómputo,6,154.51,927.06,Santa Marta,,Marketplace,4
+61,,Micrófono USB,Accesorios,,1006.31,8050.48,,Carlos Pérez,,1
+62,2025-06-07,Mouse Inalámbrico,Accesorios,1,906.19,906.19,Pereira,Jorge Ramírez,Tienda Física,1
+63,2024-08-14,,Accesorios,,738.38,4430.28,Cartagena,Luis Gómez,Marketplace,5
+64,2024-07-05,Webcam HD,Accesorios,,769.34,2308.02,Cartagena,Jorge Ramírez,Marketplace,4
+65,2024-04-17,Silla Ergonómica,Mobiliario,,761.28,,Pereira,Jorge Ramírez,Marketplace,3
+66,2024-11-13,,Oficina,10,1115.22,11152.2,,Jorge Ramírez,Online,
+67,2025-08-03,,Accesorios,5,141.04,705.2,,Sofía Díaz,Tienda Física,
+68,2025-10-15,,Accesorios,5,491.31,2456.55,Cartagena,Ana Torres,,
+69,2024-07-09,"Monitor 27""",Cómputo,3,84.18,252.54,Bogotá,Ana Torres,,2
+70,2025-05-04,Router WiFi6,Redes,9,,202.68,,Jorge Ramírez,Teléfono,1
+71,2024-02-23,Silla Ergonómica,,9,819.89,7379.01,Cartagena,Marta Ruiz,Tienda Física,1
+72,2024-09-01,Webcam HD,Accesorios,9,571.35,,Barranquilla,,,
+73,2024-12-19,Teclado Mecánico,,1,51.58,51.58,Medellín,Jorge Ramírez,,1
+74,2025-01-28,,Accesorios,4,,,Bogotá,Ana Torres,Online,1
+75,2024-09-19,Base Notebook,,5,72.36,361.8,Bucaramanga,Marta Ruiz,Teléfono,3
+76,2024-04-03,"Tablet 10""",Cómputo,,216.89,1084.45,Barranquilla,Sofía Díaz,Tienda Física,3
+77,2024-09-23,"Tablet 10""",Cómputo,3,351.22,1053.66,Cali,,Tienda Física,
+78,2024-03-29,Webcam HD,Accesorios,1,455.76,455.76,Cartagena,Marta Ruiz,Teléfono,5
+79,2024-11-30,Cargador USB-C,Accesorios,3,1043.58,3130.74,Santa Marta,Jorge Ramírez,Marketplace,2
+80,2025-09-24,,Accesorios,3,1170.1,3510.3,Bucaramanga,Sofía Díaz,Marketplace,2
+81,2024-11-05,,Redes,,530.38,2651.9,Cali,Ana Torres,Online,3
+82,2025-09-10,Router WiFi6,Redes,7,21.54,150.78,Cali,Carlos Pérez,,2
+83,2024-04-10,,Accesorios,,302.24,2115.68,Pereira,Jorge Ramírez,Tienda Física,3
+84,2025-05-16,Base Notebook,Accesorios,2,60.2,120.4,,Luis Gómez,Tienda Física,5
+85,2025-04-12,"Monitor 27""",Cómputo,,,1440.3,Bogotá,Jorge Ramírez,Marketplace,
+86,,Cargador USB-C,Accesorios,4,1193.16,4772.64,Pereira,Carlos Pérez,Tienda Física,2
+87,2025-02-27,Disco SSD 1TB,Almacenamiento,5,915.47,4577.35,,Carlos Pérez,Marketplace,2
+88,2025-05-06,,Almacenamiento,,753.69,5275.83,Bogotá,,Marketplace,2
+89,,"Monitor 27""",Cómputo,2,792.31,1584.62,Cartagena,Sofía Díaz,Online,5
+90,2024-04-02,,Oficina,9,948.87,8539.83,Cartagena,Luis Gómez,,2
+91,2025-04-23,Base Notebook,Accesorios,3,845.0,2535.0,Cali,Carlos Pérez,Tienda Física,5
+92,2025-11-23,Mouse Inalámbrico,,3,769.89,,Barranquilla,Ana Torres,,
+93,2024-12-15,Disco SSD 1TB,Almacenamiento,9,671.64,6044.76,Cali,Marta Ruiz,Teléfono,3
+94,2025-11-01,,Almacenamiento,2,,814.22,Bucaramanga,Jorge Ramírez,,2
+95,,Lámpara LED,Oficina,8,736.29,,,Sofía Díaz,Teléfono,5
+96,2024-02-07,Webcam HD,Accesorios,2,1098.19,2196.38,Barranquilla,Marta Ruiz,Tienda Física,
+97,,Lámpara LED,Oficina,2,931.93,1863.86,Pereira,Sofía Díaz,Teléfono,
+98,2024-06-04,Impresora Láser,,1,520.99,520.99,Barranquilla,Jorge Ramírez,Online,1
+99,2024-05-28,Router WiFi6,,,362.37,724.74,,Carlos Pérez,Marketplace,1
+100,2025-05-13,"Tablet 10""",,1,389.79,389.79,Santa Marta,Carlos Pérez,Tienda Física,2
+101,2024-12-07,Silla Ergonómica,Mobiliario,5,86.86,434.3,Bucaramanga,Sofía Díaz,Online,2
+102,2024-01-02,Audífonos BT,Accesorios,5,332.61,1663.05,Medellín,Sofía Díaz,Online,3
+103,2024-03-28,Cargador USB-C,Accesorios,9,589.44,5304.96,Pereira,Luis Gómez,Tienda Física,
+104,2024-03-05,"Monitor 27""",Cómputo,7,,4912.67,Cartagena,Sofía Díaz,Marketplace,4
+105,2024-09-09,Laptop Pro 14,Cómputo,8,458.24,,,Marta Ruiz,Teléfono,1
+106,2024-09-24,Base Notebook,Accesorios,5,519.75,,,Sofía Díaz,Tienda Física,3
+107,2024-03-06,Lámpara LED,Oficina,,773.21,7732.1,Bogotá,Jorge Ramírez,Online,3
+108,2024-06-25,Laptop Pro 14,Cómputo,5,1130.28,5651.4,,Sofía Díaz,,1
+109,2025-08-26,"Tablet 10""",,8,913.11,7304.88,,Carlos Pérez,,3
+110,2024-02-06,Teclado Mecánico,Accesorios,4,,,Bucaramanga,Jorge Ramírez,Tienda Física,
+111,2024-12-05,"Monitor 27""",Cómputo,1,228.58,228.58,Santa Marta,Sofía Díaz,Tienda Física,4
+112,2025-05-09,Mouse Inalámbrico,Accesorios,3,1174.67,3524.01,Barranquilla,Jorge Ramírez,Tienda Física,
+113,,,,5,186.06,930.3,Barranquilla,Carlos Pérez,Marketplace,5
+114,2024-07-03,,Accesorios,4,858.27,,Cali,Sofía Díaz,Online,1
+115,,Webcam HD,Accesorios,1,,629.37,Bucaramanga,Marta Ruiz,Marketplace,
+116,2025-08-11,,Cómputo,1,437.05,437.05,Santa Marta,Sofía Díaz,Online,1
+117,2025-05-21,,Almacenamiento,,45.39,408.51,,,Tienda Física,1
+118,2025-09-05,Impresora Láser,,10,564.77,5647.7,Cali,Jorge Ramírez,,
+119,2025-07-08,"Tablet 10""",Cómputo,4,1035.39,4141.56,Medellín,Jorge Ramírez,Teléfono,4
+120,2024-12-12,Webcam HD,,4,1008.7,4034.8,Pereira,Sofía Díaz,Marketplace,4
+121,2024-03-11,Audífonos BT,Accesorios,7,252.93,1770.51,Barranquilla,Luis Gómez,,4
+122,,"Tablet 10""",,5,,,Barranquilla,Sofía Díaz,,3
+123,,Mouse Inalámbrico,Accesorios,8,714.44,5715.52,,Carlos Pérez,Online,5
+124,2025-10-27,Webcam HD,Accesorios,,665.06,2660.24,Bucaramanga,Carlos Pérez,Marketplace,5
+125,,Audífonos BT,,9,400.69,3606.21,Cartagena,Marta Ruiz,Tienda Física,3
+126,2025-06-17,"Monitor 27""",Cómputo,3,,1526.55,Bucaramanga,Luis Gómez,Tienda Física,5
+127,,Webcam HD,Accesorios,2,20.12,,Bogotá,Carlos Pérez,Teléfono,5
+128,2025-06-22,Cargador USB-C,Accesorios,10,,4706.3,Bucaramanga,,Teléfono,4
+129,2024-09-05,Audífonos BT,Accesorios,4,1166.96,4667.84,Barranquilla,Ana Torres,Online,3
+130,2025-01-01,Laptop Pro 14,Cómputo,10,816.33,8163.3,Santa Marta,Ana Torres,Online,5
+131,2025-08-24,Audífonos BT,,9,899.56,8096.04,Bogotá,Luis Gómez,Marketplace,3
+132,2025-10-08,Teclado Mecánico,Accesorios,9,358.56,3227.04,Cali,,Tienda Física,4
+133,2025-07-20,,Cómputo,5,486.12,2430.6,Bogotá,Sofía Díaz,Online,1
+134,2024-06-09,Cargador USB-C,Accesorios,9,141.38,1272.42,Bogotá,Ana Torres,,5
+135,2024-02-03,Silla Ergonómica,,2,1033.3,2066.6,,,Tienda Física,4
+136,2025-08-24,Lámpara LED,Oficina,3,,1164.09,Santa Marta,Marta Ruiz,Teléfono,5
+137,,Micrófono USB,Accesorios,4,118.65,474.6,Medellín,Marta Ruiz,Teléfono,2
+138,2024-12-25,Cargador USB-C,Accesorios,,474.03,1896.12,,Marta Ruiz,Marketplace,2
+139,2025-04-23,Lámpara LED,Oficina,4,203.68,814.72,Bucaramanga,Luis Gómez,Teléfono,4
+140,2025-03-26,"Tablet 10""",,6,648.57,3891.42,Pereira,Sofía Díaz,Tienda Física,2
+141,,Router WiFi6,Redes,2,838.18,1676.36,Cali,,Tienda Física,1
+142,2024-12-30,Webcam HD,Accesorios,8,933.37,,Medellín,Marta Ruiz,Tienda Física,1
+143,,Teclado Mecánico,Accesorios,5,151.55,757.75,,Jorge Ramírez,Online,4
+144,,,Almacenamiento,9,316.83,2851.47,Pereira,Jorge Ramírez,Marketplace,1
+145,2024-11-22,"Monitor 27""",Cómputo,,903.19,5419.14,Bogotá,Carlos Pérez,Teléfono,5
+146,2025-04-08,Cargador USB-C,,1,816.76,816.76,Cali,Carlos Pérez,Tienda Física,4
+147,,Teclado Mecánico,Accesorios,6,426.47,2558.82,Bogotá,Luis Gómez,Marketplace,2
+148,2024-05-25,,Cómputo,10,300.31,3003.1,Bogotá,Sofía Díaz,,2
+149,2024-10-14,Silla Ergonómica,Mobiliario,4,146.06,,,Carlos Pérez,Online,
+150,2025-07-31,Silla Ergonómica,Mobiliario,,779.45,1558.9,Pereira,Carlos Pérez,Tienda Física,
+151,2024-01-26,Micrófono USB,Accesorios,7,1009.9,7069.3,Cartagena,Marta Ruiz,Tienda Física,5
+152,,Teclado Mecánico,Accesorios,9,1104.86,9943.74,,Luis Gómez,Online,1
+153,2025-09-09,"Tablet 10""",Cómputo,2,183.14,366.28,Cali,Luis Gómez,,4
+154,,Webcam HD,,3,350.66,1051.98,Barranquilla,,Teléfono,3
+155,2025-04-25,Mouse Inalámbrico,Accesorios,9,,3587.22,Santa Marta,Carlos Pérez,Tienda Física,4
+156,2025-10-24,Teclado Mecánico,,5,1040.34,5201.7,Barranquilla,Luis Gómez,Tienda Física,4
+157,2024-07-26,,Accesorios,2,277.19,554.38,Cartagena,,Online,2
+158,,,Oficina,2,963.4,1926.8,Medellín,Sofía Díaz,,5
+159,2024-08-30,Laptop Pro 14,Cómputo,6,64.46,386.76,Cali,Carlos Pérez,Marketplace,1
+160,2024-12-15,Micrófono USB,Accesorios,1,,993.37,,Luis Gómez,Marketplace,
+161,2025-11-22,"Monitor 27""",Cómputo,,434.91,2174.55,Santa Marta,Ana Torres,Teléfono,1
+162,2024-09-13,Cargador USB-C,Accesorios,,1139.29,,Barranquilla,Ana Torres,Marketplace,2
+163,2025-04-04,Webcam HD,Accesorios,4,,4198.12,Bogotá,Marta Ruiz,Marketplace,5
+164,2024-01-07,Audífonos BT,Accesorios,10,587.87,,Cali,,Tienda Física,4
+165,2025-08-21,Teclado Mecánico,Accesorios,1,1099.34,1099.34,Bogotá,Luis Gómez,Teléfono,5
+166,2025-06-05,Lámpara LED,Oficina,4,430.26,1721.04,Pereira,Marta Ruiz,Online,3
+167,2025-11-18,Disco SSD 1TB,Almacenamiento,7,542.94,3800.58,Cartagena,Luis Gómez,Online,
+168,2025-08-17,Audífonos BT,Accesorios,8,438.02,3504.16,Pereira,Jorge Ramírez,,
+169,2025-09-09,Silla Ergonómica,,9,782.99,7046.91,,Luis Gómez,Online,2
+170,2024-01-29,"Monitor 27""",Cómputo,6,402.2,2413.2,,Jorge Ramírez,Teléfono,4
+171,2025-04-19,Lámpara LED,Oficina,1,45.5,,Bucaramanga,Sofía Díaz,Marketplace,1
+172,2024-12-18,Cargador USB-C,Accesorios,10,1041.08,10410.8,Medellín,Jorge Ramírez,Marketplace,2
+173,2025-06-19,,Accesorios,5,171.26,856.3,Barranquilla,,,
+174,2025-05-28,"Monitor 27""",Cómputo,9,936.18,8425.62,Cartagena,Sofía Díaz,Marketplace,2
+175,,Base Notebook,Accesorios,7,560.22,,Bucaramanga,Ana Torres,Online,1
+176,2024-08-17,Laptop Pro 14,Cómputo,5,39.61,198.05,Pereira,Luis Gómez,Tienda Física,3
+177,2024-09-30,Micrófono USB,Accesorios,3,990.05,2970.15,Cartagena,Ana Torres,Marketplace,1
+178,2025-01-04,Laptop Pro 14,Cómputo,,231.02,1848.16,Medellín,Marta Ruiz,Online,1
+179,2025-10-19,Base Notebook,Accesorios,,1060.11,7420.77,Barranquilla,,,2
+180,2024-04-22,Mouse Inalámbrico,,8,1165.15,,Pereira,Ana Torres,Tienda Física,2
+181,,Router WiFi6,,2,338.47,676.94,Medellín,,Marketplace,3
+182,2025-07-15,Audífonos BT,Accesorios,7,1179.1,8253.7,Cartagena,Carlos Pérez,Teléfono,3
+183,2024-09-17,Router WiFi6,Redes,10,,8800.5,Cali,Luis Gómez,Online,1
+184,2024-01-01,Disco SSD 1TB,Almacenamiento,8,619.5,4956.0,Pereira,Luis Gómez,Teléfono,3
+185,2024-09-28,Silla Ergonómica,,8,1031.38,8251.04,Bucaramanga,Sofía Díaz,Teléfono,5
+186,2025-04-16,Teclado Mecánico,Accesorios,,396.53,396.53,Bucaramanga,Carlos Pérez,,4
+187,2024-04-24,Disco SSD 1TB,Almacenamiento,8,880.85,7046.8,Medellín,Sofía Díaz,,1
+188,2024-02-29,"Tablet 10""",Cómputo,3,378.25,,,Marta Ruiz,Marketplace,2
+189,2025-03-29,Webcam HD,Accesorios,6,64.48,386.88,Cartagena,Carlos Pérez,Teléfono,5
+190,2024-12-03,Lámpara LED,Oficina,2,109.73,,Santa Marta,Carlos Pérez,Teléfono,5
+191,2024-06-29,,Accesorios,,536.21,1072.42,Santa Marta,Luis Gómez,,2
+192,2024-01-16,,Accesorios,8,119.58,956.64,Cali,Sofía Díaz,,1
+193,2025-10-03,Teclado Mecánico,Accesorios,6,411.19,2467.14,Barranquilla,Luis Gómez,,5
+194,2025-03-22,Lámpara LED,Oficina,9,319.65,2876.85,Cali,Luis Gómez,Online,2
+195,2024-02-22,Router WiFi6,Redes,6,25.08,150.48,Bogotá,Carlos Pérez,Marketplace,1
+196,2024-02-29,Teclado Mecánico,Accesorios,,1031.88,7223.16,Bogotá,Ana Torres,Tienda Física,1
+197,,,Oficina,3,187.74,563.22,Cali,Sofía Díaz,Online,4
+198,2024-05-16,Laptop Pro 14,Cómputo,3,1005.81,3017.43,Cartagena,Luis Gómez,Marketplace,5
+199,2024-06-08,Impresora Láser,Oficina,5,,1398.45,,Luis Gómez,Teléfono,2
+200,2024-10-24,Disco SSD 1TB,Almacenamiento,6,36.06,216.36,Santa Marta,Ana Torres,Tienda Física,4
