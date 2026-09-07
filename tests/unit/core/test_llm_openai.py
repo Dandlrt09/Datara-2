@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 
-from core.errors import LLMInvalidJSONError, LLMRateLimitError, LLMTimeoutError
+from core.errors import LLMError, LLMInvalidJSONError, LLMRateLimitError, LLMTimeoutError
 from core.protocols.llm_provider import LLMUsage
 from server.services.llm_openai import OpenAIProvider, _estimate_cost
 
@@ -207,6 +207,60 @@ class TestErrorHandling:
                 await provider.complete(
                     messages=[{"role": "user", "content": "write code"}],
                 )
+
+    async def test_auth_error_maps_to_llm_error(self, provider):
+        """401 AuthenticationError maps to a clean LLMError (no retry)."""
+        auth_error = openai.AuthenticationError(
+            "Error code: 401 - Missing Authentication Header",
+            response=MagicMock(),
+            body={"error": {"message": "Missing Authentication Header", "code": 401}},
+        )
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock:
+            mock.side_effect = auth_error
+            with pytest.raises(LLMError, match="Authentication failed"):
+                await provider.complete(
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+        assert mock.call_count == 1, "Auth errors must not be retried"
+
+    async def test_empty_choices_exhausted_raises_llm_error(self, provider):
+        """Persistent empty choices must raise LLMError, not NameError.
+
+        Regression: the final raise referenced LLMError without importing
+        it, so the 3rd empty response crashed with NameError instead.
+        """
+        empty = _make_fake_response("")
+        empty.choices = []
+        mock = AsyncMock(return_value=empty)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            # Skip the 2s+4s+8s backoff sleeps
+            with patch("asyncio.sleep", AsyncMock()):
+                with pytest.raises(LLMError, match="empty response"):
+                    await provider.complete(
+                        messages=[{"role": "user", "content": "hello"}],
+                    )
+        assert mock.call_count == 4  # initial + 3 retries
+
+    async def test_stream_auth_error_maps_to_llm_error(self, provider):
+        """401 during streaming maps to a clean LLMError."""
+
+        async def _fake_stream(**kwargs):
+            raise openai.AuthenticationError(
+                "Error code: 401 - Missing Authentication Header",
+                response=MagicMock(),
+                body={},
+            )
+            yield  # pragma: no cover — makes this an async generator
+
+        with patch.object(provider._client.chat.completions, "create", AsyncMock(side_effect=_fake_stream)):
+            with pytest.raises(LLMError, match="Authentication failed"):
+                chunks = []
+                async for chunk in provider.stream(messages=[{"role": "user", "content": "hi"}]):
+                    chunks.append(chunk)
 
 
 # ── Cost estimation ──────────────────────────────────────────────────────────

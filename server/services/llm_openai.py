@@ -18,6 +18,7 @@ import openai
 from openai import AsyncOpenAI
 
 from core.errors import (
+    LLMError,
     LLMInvalidJSONError,
     LLMRateLimitError,
     LLMTimeoutError,
@@ -134,6 +135,11 @@ class OpenAIProvider:
                 raise LLMRateLimitError(
                     f"Rate-limited after {attempts - 1} retries"
                 ) from None
+            except openai.AuthenticationError as e:
+                # Invalid/expired API key (401): retrying cannot help.
+                # Surface a clean auth error instead of a generic
+                # runtime_error from the generic exception handler.
+                raise LLMError(f"Authentication failed: {e}") from None
             except openai.APITimeoutError:
                 raise LLMTimeoutError(
                     f"OpenAI call timed out after {self._timeout}s"
@@ -257,6 +263,8 @@ class OpenAIProvider:
                     yield delta.content
         except openai.RateLimitError:
             raise LLMRateLimitError("Rate-limited during streaming") from None
+        except openai.AuthenticationError as e:
+            raise LLMError(f"Authentication failed: {e}") from None
         except (openai.APITimeoutError, asyncio.TimeoutError):
             raise LLMTimeoutError(
                 f"Streaming call timed out after {self._timeout}s"
