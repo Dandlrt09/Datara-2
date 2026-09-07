@@ -245,6 +245,18 @@ async def chat_stream(
                     "dataset with EXACTLY its 'path' value above (absolute path), e.g. "
                     "df = pd.read_csv('<path>'). Never invent paths."
                 )
+                system_prompt += (
+                    "\n\nIMPORTANT — dataset facts (citation discipline): each "
+                    "dataset has an authoritative 'row_count' = total data rows. "
+                    "When stating how many rows a dataset has, cite that number "
+                    "EXACTLY — never derive dataset size from per-column stats. "
+                    "In the stats, 'unique_count' is the number of DISTINCT values "
+                    "in that ONE column, not the dataset size. Describe date "
+                    "coverage only from explicit min/max when present, or from "
+                    "dates your code actually computed — never infer a range from "
+                    "the 5 sample values. Quote means/mins/maxes exactly as they "
+                    "appear in the profile; do not round or retype them."
+                )
             system_prompt += (
                 "\n\nIMPORTANT — execution model: every turn runs in a completely "
                 "fresh sandbox. NOTHING persists between turns: no variables, no "

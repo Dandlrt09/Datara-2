@@ -66,6 +66,12 @@ async def build_chat_context(
                     # Absolute server-side path: the sandbox reads uploads
                     # by exact path (its cwd is a fresh temp dir).
                     "path": f["storage_path"],
+                    # Authoritative dataset size, from the files table. The
+                    # per-column profile stats (unique_count etc.) describe
+                    # single columns and MUST NOT be read as dataset size —
+                    # without this field the model once cited a column's
+                    # unique_count as the row count.
+                    "row_count": f.get("row_count"),
                     "profile": _serialize_profile(profile),
                 }
             )

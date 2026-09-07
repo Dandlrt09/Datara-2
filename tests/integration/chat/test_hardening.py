@@ -261,3 +261,34 @@ class TestLLMContextGuardrails:
             "Raw CSV header should not be in system prompt"
         assert "30,95.5" not in captured_system_prompt, \
             "Raw data values should not be in system prompt as bare CSV"
+
+    async def test_context_includes_authoritative_row_count(
+        self, client, auth_cookie, session_id, store
+    ):
+        """Regression (Rigor mov-1): the LLM context must carry the dataset's
+        authoritative row_count — without it the model once cited a column's
+        unique_count as the row count."""
+        csv_content = (
+            b"name,age,score\n"
+            b"Alice,30,95.5\n"
+            b"Bob,25,87.3\n"
+            b"Charlie,35,92.1\n"
+        )
+        upload_resp = client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("rows.csv", csv_content, "text/csv")},
+            headers={"Cookie": auth_cookie},
+        )
+        assert upload_resp.status_code == 201
+
+        user = await store.get_user_by_email("costguard@example.com")
+        context = await build_chat_context(
+            store, user_id=user["id"], chat_session=session_id
+        )
+        assert context["profiles"], "Expected at least one profile in context"
+        profile_entry = context["profiles"][0]
+        assert profile_entry["row_count"] == 3, (
+            f"Expected authoritative row_count=3, got {profile_entry.get('row_count')}"
+        )
+        # And it must be at dataset level, not inside per-column stats
+        assert "row_count" not in profile_entry["profile"]["stats"]
