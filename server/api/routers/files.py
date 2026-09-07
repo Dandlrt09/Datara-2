@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.data.parser import parse_upload, parse_upload_sheet
@@ -104,6 +104,7 @@ def _validate_extension(filename: str) -> str:
 @router.post("/sessions/{session_id}/files", status_code=201)
 async def upload_file(
     session_id: str,
+    request: Request,
     file: UploadFile,
     user: dict = Depends(current_user),
     store: SqliteStore = Depends(get_store),
@@ -112,6 +113,12 @@ async def upload_file(
 
     Parses the file (CSV/TSV/XLSX/JSON), auto-profiles it, and caches
     the profile. For XLSX, returns the sheet list for UI picker.
+
+    Cancellation: the client may abort the upload (AbortController).
+    The disconnect is checked after the body is received and again
+    before persisting, so a cancelled upload never leaves a file row
+    or an orphaned file on disk. 499 is the nginx convention for
+    "client closed request".
     """
     user_id = user["id"]
 
@@ -129,6 +136,8 @@ async def upload_file(
     dest_path = upload_dir / safe_filename
 
     content = await file.read()
+    if await request.is_disconnected():
+        return Response(status_code=499)
     dest_path.write_bytes(content)
     size_bytes = len(content)
 
@@ -145,6 +154,12 @@ async def upload_file(
 
     # Build profile
     profile = build_profile(df, size_bytes=size_bytes)
+
+    # The client may have cancelled while parsing/profiling a large file —
+    # do not persist a file the user no longer wants.
+    if await request.is_disconnected():
+        dest_path.unlink(missing_ok=True)
+        return Response(status_code=499)
 
     # Persist file record
     file_record = await store.create_file(

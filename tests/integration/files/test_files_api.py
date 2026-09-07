@@ -313,3 +313,74 @@ class TestFileRuntimeHarness:
         # population column should have min/max/mean/std (numeric)
         assert "population" in stats
         assert stats["population"]["min"] is not None
+
+
+class TestUploadCancel:
+    """Client-aborted uploads must never persist a file row or orphan a file."""
+
+    def test_disconnect_after_read_returns_499_without_persist(
+        self, auth_client, session_id, monkeypatch
+    ):
+        """Disconnect noticed before persisting → 499 and no file row."""
+        from starlette.requests import Request
+
+        async def _disconnected(self):
+            return True
+
+        monkeypatch.setattr(Request, "is_disconnected", _disconnected)
+
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("cancelled.csv", b"name,age\nAlice,30\n", "text/csv")},
+        )
+        assert resp.status_code == 499
+
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        assert listing.json() == []
+
+    def test_disconnect_after_parse_cleans_up_file(
+        self, auth_client, session_id, monkeypatch
+    ):
+        """Disconnect during the slow parse → file unlinked, no file row."""
+        from starlette.requests import Request
+
+        from server.api.routers import files as files_router
+
+        calls = {"n": 0}
+
+        async def _disconnected(self):
+            calls["n"] += 1
+            # 1st call: after body read (False); 2nd call: after parse (True)
+            return calls["n"] >= 2
+
+        monkeypatch.setattr(Request, "is_disconnected", _disconnected)
+
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("cancelled_mid.csv", b"name,age\nAlice,30\n", "text/csv")},
+        )
+        assert resp.status_code == 499
+
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        assert listing.json() == []
+
+        # The written file was cleaned up from the session upload dir
+        session_dirs = list(files_router.UPLOADS_DIR.rglob(session_id))
+        for d in session_dirs:
+            assert list(d.iterdir()) == []
+
+    def test_normal_upload_still_persists(self, auth_client, session_id, monkeypatch):
+        """With no disconnect, the cancel checks are transparent no-ops."""
+        from starlette.requests import Request
+
+        async def _disconnected(self):
+            return False
+
+        monkeypatch.setattr(Request, "is_disconnected", _disconnected)
+
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("normal.csv", b"name,age\nAlice,30\n", "text/csv")},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["filename"] == "normal.csv"

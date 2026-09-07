@@ -85,6 +85,34 @@ describe("FilesView", () => {
     expect(screen.getByText(/Upload failed/i)).toBeTruthy();
   });
 
+  it("shows Cancel button while upload is pending", () => {
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useUploadFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      isError: false,
+      isPending: true,
+    });
+    renderWithProviders(<FilesView />);
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.getByText("Cancel")).toBeTruthy();
+  });
+
+  it("shows 'Upload cancelled' instead of failure when aborted", () => {
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    useUploadFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      isError: true,
+      isPending: false,
+      error: abortError,
+    });
+    renderWithProviders(<FilesView />);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Upload cancelled")).toBeTruthy();
+    expect(screen.queryByText(/Upload failed/i)).toBeNull();
+  });
+
   it("__all__ regression: all endpoints reject → error + retry visible (R-TestWall-2)", () => {
     // Both global files and sessions fail
     useFilesGlobalMock.mockReturnValue({

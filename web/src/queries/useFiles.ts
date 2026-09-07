@@ -43,9 +43,11 @@ export function useUploadFile() {
     mutationFn: async ({
       sessionId,
       file,
+      signal,
     }: {
       sessionId: string;
       file: File;
+      signal?: AbortSignal;
     }) => {
       const form = new FormData();
       form.append("file", file);
@@ -53,6 +55,7 @@ export function useUploadFile() {
         method: "POST",
         credentials: "include",
         body: form,
+        signal,
       });
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
       return res.json() as Promise<UploadedFile & { profile_summary: ProfileSummary }>;

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSessions } from "../queries/useSessions";
 import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile } from "../queries/useFiles";
@@ -12,6 +12,9 @@ export default function FilesView() {
   const uploadFileMut = useUploadFile();
   const deleteFileMut = useDeleteFile();
 
+  // AbortController for the in-flight upload (Cancel button).
+  const uploadAbortRef = useRef<AbortController | null>(null);
+
   // Default to most recent session once sessions load
   const sessionList = sessions.data ?? [];
   const effectiveSessionId = selectedSessionId ?? sessionList[0]?.id ?? null;
@@ -21,12 +24,26 @@ export default function FilesView() {
   const onDrop = useCallback(
     (accepted: File[]) => {
       if (!accepted.length || !effectiveSessionId) return;
+      if (uploadFileMut.isPending) return; // one upload at a time
       const file = accepted[0];
       if (!file) return;
-      uploadFileMut.mutate({ sessionId: effectiveSessionId, file });
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
+      uploadFileMut.mutate({
+        sessionId: effectiveSessionId,
+        file,
+        signal: controller.signal,
+      });
     },
     [effectiveSessionId, uploadFileMut]
   );
+
+  const handleCancelUpload = useCallback(() => {
+    uploadAbortRef.current?.abort();
+  }, []);
+
+  const uploadError = uploadFileMut.error as Error | null;
+  const uploadAborted = uploadFileMut.isError && uploadError?.name === "AbortError";
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -85,10 +102,23 @@ export default function FilesView() {
         )}
       </div>
 
+      {/* In-flight upload status with cancel */}
+      {uploadFileMut.isPending && (
+        <div role="status" style={{ marginBottom: 16 }}>
+          <span style={{ marginRight: 8 }}>Uploading file…</span>
+          <button onClick={handleCancelUpload}>Cancel</button>
+        </div>
+      )}
+
       {/* Upload mutation error */}
       {uploadFileMut.isError && (
-        <p role="alert" style={{ color: "red", marginBottom: 16 }}>
-          Upload failed: {(uploadFileMut.error as Error)?.message ?? "Unknown error"}
+        <p
+          role="alert"
+          style={{ color: uploadAborted ? "#555" : "red", marginBottom: 16 }}
+        >
+          {uploadAborted
+            ? "Upload cancelled"
+            : `Upload failed: ${uploadError?.message ?? "Unknown error"}`}
         </p>
       )}
 
