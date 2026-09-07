@@ -5,8 +5,9 @@ Bypasses FastAPI entirely: calls ``OpenAIProvider.complete()`` and
 ``run_code()`` directly against canonical questions.  Exits 0 (all pass /
 flaky-only), 1 (hard fail), or 2 (usage/env error).
 
-KEEP IN SYNC with ``server/api/routers/chat.py:_event_stream`` system
-prompt — copy the body into ``_SYSTEM_PROMPT_TEMPLATE`` below.
+The system prompt is imported live from
+``server.api.routers.chat.build_system_prompt`` — the bench always runs
+the exact production prompt, with real profile context per question.
 """
 
 from __future__ import annotations
@@ -41,22 +42,10 @@ _DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 # PROD-PARITY sandbox limits (overrides the 512 MB default in sandbox_local.py).
 _PROD_LIMITS = {"memory_mb": 2048, "cpu_seconds": 30, "timeout_seconds": 30}
 
-# System prompt — KEEP IN SYNC with server/api/routers/chat.py:_event_stream.
-_SYSTEM_PROMPT_TEMPLATE = """You are a data analysis assistant. The user's datasets are described below. Generate Python code (pandas, numpy, plotly) to answer their question. Return valid JSON with 'code' and 'explanation' fields only.
-
-IMPORTANT — file access: the code runs in a FRESH temporary working directory, so relative filenames do not exist. Read each dataset with EXACTLY its 'path' value above (absolute path), e.g. df = pd.read_csv('<path>'). Never invent paths.
-
-IMPORTANT — execution model: every turn runs in a completely fresh sandbox. NOTHING persists between turns: no variables, no imports, no previous DataFrames. Your code must load the data itself and define every variable it uses, starting from scratch. Never reference df or any variable defined in a previous turn.
-
-IMPORTANT — output size: keep 'explanation' under 120 words and never echo the question back. The JSON must always be complete and properly closed; prefer shorter code over an incomplete answer.
-
-IMPORTANT — surfacing results: the chat UI only displays figures (variables named fig, fig1, fig2...), tables (DataFrames named df_result, df_<name>...) and printed output. The user NEVER sees console output unless it is printed or assigned to such variables. So: (1) assign every requested result table to a DataFrame variable named df_result (or df_<name>); (2) print() the key metrics; (3) state the main numbers directly in 'explanation' — never just describe what the code computes. Load the raw dataset into 'df' and do NOT reassign 'df' with a filtered/aggregated result: use a new df_<name> variable instead, so the raw dataset preview is not the table the user sees.
-
-IMPORTANT — monthly aggregation: when grouping or resampling by month, anchor each label to the FIRST day of the month (resample('MS') or .dt.to_period('M').dt.start_time), never month-end ('M'), so chart bars align under the correct month label. On monthly charts force one tick per month: fig.update_xaxes(dtick='M1', tickformat='%b %Y').
-
-IMPORTANT — empty results: if a filter or groupby returns zero rows, SAY that plainly in 'explanation' (e.g. 'no hay ventas de ese producto en esas ciudades') and do NOT plot the empty frame. NEVER invent, estimate or use placeholder values (no X, Y, Z, W): every number in 'explanation' must be one you actually computed. Write plain text: no Markdown, no **.
-
-IMPORTANT — numeric precision: never round results to 2 decimals when tiny values are possible (e.g. a minimum of 0.001): a non-zero value must never display as 0. Keep full precision or format with up to 6 decimals. Name ONLY final result tables df_<name>; intermediate/filtered frames get other names (aux, filtrado) so they don't render as tables."""
+# System prompt — DO NOT copy it here anymore: the bench now calls
+# server.api.routers.chat.build_system_prompt() so it always exercises the
+# REAL production prompt (the old hand-copied template drifted and never
+# included the profile JSON, invalidating the whole suite).
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────────
@@ -345,14 +334,14 @@ def _cache_put(key: str, response: dict) -> None:
 
 async def _run_seed_experiment(provider, questions: list[BenchQuestion]) -> int:
     """Run determinism experiment: N=5 runs of Q1 at temperature=0, seed=0."""
-    from server.api.routers.chat import _CHAT_JSON_SCHEMA
+    from server.api.routers.chat import _CHAT_JSON_SCHEMA, build_system_prompt
     q = questions[0]
     csv_path = _EXAMPLES_DIR / q.csv_basename
     if not csv_path.exists():
         print(f"ERROR: CSV not found: {csv_path}", file=sys.stderr)
         return 2
 
-    messages = [{"role": "system", "content": _SYSTEM_PROMPT_TEMPLATE}]
+    messages = [{"role": "system", "content": build_system_prompt(_bench_profiles(csv_path))}]
     messages.append({"role": "user", "content": q.question + f"\n\nThe data file is at: {csv_path}"})
 
     n_runs = 5
@@ -441,6 +430,46 @@ class QuestionResult:
     code: str = ""
 
 
+def _bench_profiles(csv_path: Path) -> list[dict]:
+    """Build the profile context for a bench CSV, mirroring the app shape.
+
+    Mirrors profile_cache.save_profile's split + chat_context's
+    _serialize_profile so the model sees exactly what a real chat turn
+    would see for this file (schema, per-column stats, 5 sample rows,
+    and the authoritative row_count).
+    """
+    from core.data.parser import parse_upload
+    from core.data.profiler import build_profile
+
+    fmt = csv_path.suffix.lstrip(".")
+    df, meta = parse_upload(str(csv_path), format_hint=fmt)
+    prof = build_profile(df, size_bytes=csv_path.stat().st_size)
+    return [
+        {
+            "filename": csv_path.name,
+            "format": meta.format,
+            "path": str(csv_path),
+            "row_count": prof.row_count,
+            "profile": {
+                "columns": [{"name": c.name, "dtype": c.dtype} for c in prof.columns],
+                "stats": {
+                    c.name: {
+                        "null_count": c.null_count,
+                        "unique_count": c.unique_count,
+                        "sample_values": c.sample_values,
+                        "min": c.min,
+                        "max": c.max,
+                        "mean": c.mean,
+                        "std": c.std,
+                    }
+                    for c in prof.columns
+                },
+                "sample": prof.sample_rows[:5],
+            },
+        }
+    ]
+
+
 async def _run_question(
     provider,
     q: BenchQuestion,
@@ -448,7 +477,7 @@ async def _run_question(
     cache_enabled: bool = False,
 ) -> QuestionResult:
     """Run a single canonical question through the LLM + sandbox pipeline."""
-    from server.api.routers.chat import _CHAT_JSON_SCHEMA
+    from server.api.routers.chat import _CHAT_JSON_SCHEMA, build_system_prompt
     from server.services.sandbox_local import run_code
     start = time.time()
 
@@ -461,9 +490,9 @@ async def _run_question(
             artifacts_expected=sorted(q.expected_artifact_types), artifacts_found=[],
         )
 
-    # Build messages
+    # Build messages — REAL production prompt with real profile context
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT_TEMPLATE},
+        {"role": "system", "content": build_system_prompt(_bench_profiles(csv_path))},
         {"role": "user", "content": q.question + f"\n\nThe data file is at: {csv_path}"},
     ]
 
