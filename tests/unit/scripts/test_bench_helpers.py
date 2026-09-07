@@ -155,13 +155,18 @@ class TestQuestionSuite:
         assert "min" in q1.tolerance_abs
 
     def test_q10_no_number_assertions(self):
-        """Q10 expects has_figures which is always 1 — artifact check only."""
+        """Q10 is artifact-checked only (figures) — no numeric assertions.
+
+        The old has_figures=1.0 sentinel was treated as a number to find
+        in the explanation text and hard-failed correct answers citing
+        real numbers.
+        """
         q10 = next(q for q in _QUESTIONS if q.id == 10)
         import pandas as pd
 
         df = pd.DataFrame({"a": [1]})
         expected = q10.compute_expected(df)
-        assert expected == {"has_figures": 1.0}
+        assert expected == {}
 
     @pytest.mark.parametrize("qid", [2, 3, 4, 5, 6, 7, 8, 9])
     def test_q2_to_q9_have_compute_expected(self, qid):
