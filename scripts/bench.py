@@ -217,12 +217,10 @@ def _q9_expected(df: pd.DataFrame) -> dict[str, float]:
     return {"avg_price": avg_price, "online_satisfaccion": online_sat}
 
 
-def _q10_expected(_df: pd.DataFrame) -> dict[str, float]:
-    """Two charts question — verified via expected_artifact_types={"figure"}.
-
-    No numeric assertions: a has_figures=1.0 sentinel here was treated as
-    a number to find in the explanation text and hard-failed correct
-    answers that mentioned any other number.
+def _q11_expected(_df: pd.DataFrame) -> dict[str, float]:
+    """Question 11: Descriptive question expecting zero artifacts.
+    
+    No numeric assertions, but requires row_count mention in explanation.
     """
     return {}
 
@@ -308,6 +306,13 @@ _QUESTIONS: list[BenchQuestion] = [
         csv_basename="datara_test_pequeno.csv",
         expected_artifact_types={"figure"},
         compute_expected=_q10_expected,
+    ),
+    BenchQuestion(
+        id=11,
+        question="¿De qué trata este dataset?",
+        csv_basename="datara_test_pequeno.csv",
+        expected_artifact_types=set(),
+        compute_expected=_q11_expected,
     ),
 ]
 
@@ -623,12 +628,36 @@ async def _run_question(
             llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
         )
 
+    # Symmetric check: fail on unexpected artifacts when expected set is empty
+    if not q.expected_artifact_types and artifacts_found:
+        return QuestionResult(
+            id=q.id, question=q.question, csv=q.csv_basename,
+            status="fail",
+            reason=f"Unexpected artifacts found: {sorted(artifacts_found)}",
+            artifacts_expected=sorted(q.expected_artifact_types),
+            artifacts_found=artifacts_found,
+            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
+            llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
+        )
+
     # Compute expected values
     df = pd.read_csv(csv_path)
     expected = q.compute_expected(df) if q.compute_expected else {}
 
     if not expected:
-        # Q10 — no number assertions, just artifact check
+        # Q10/Q11 — no numeric assertions, just artifact check
+        # For Q11, also check for row_count mention in explanation
+        if q.id == 11 and "row_count" not in explanation.lower():
+            return QuestionResult(
+                id=q.id, question=q.question, csv=q.csv_basename,
+                status="fail", reason="Missing 'row_count' mention in explanation",
+                artifacts_expected=sorted(q.expected_artifact_types),
+                artifacts_found=artifacts_found,
+                cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+                tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
+                llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
+            )
         return QuestionResult(
             id=q.id, question=q.question, csv=q.csv_basename,
             status="pass", reason="ok",
