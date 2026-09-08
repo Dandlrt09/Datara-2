@@ -100,6 +100,33 @@ class TestValidResponse:
         assert result.text == "plain text response"
         assert result.structured_data is None
 
+    async def test_markdown_fenced_json_is_parsed(self, provider):
+        """Models intermittently wrap the JSON payload in ```json fences
+        despite json_schema enforcement; the parser must tolerate it
+        (rigor-mov2 live validation: B2-R / bench Q3 surfaced raw
+        LLMInvalidJSONError to users)."""
+        expected = {"code": "print('x')", "explanation": "ok"}
+        fenced = f"```json\n{json.dumps(expected)}\n```"
+        fake = _make_fake_response(fenced)
+        with patch.object(provider._client.chat.completions, "create", AsyncMock(return_value=fake)):
+            result = await provider.complete(
+                messages=[{"role": "user", "content": "write code"}],
+                response_format={"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}},
+            )
+        assert result.structured_data == expected
+
+    async def test_bare_fenced_json_is_parsed(self, provider):
+        """Fences without the language tag also parse."""
+        expected = {"code": "", "explanation": "narrative only"}
+        fenced = f"```\n{json.dumps(expected)}\n```"
+        fake = _make_fake_response(fenced)
+        with patch.object(provider._client.chat.completions, "create", AsyncMock(return_value=fake)):
+            result = await provider.complete(
+                messages=[{"role": "user", "content": "write code"}],
+                response_format={"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}},
+            )
+        assert result.structured_data == expected
+
 
 # ── Error handling ───────────────────────────────────────────────────────────
 

@@ -304,8 +304,12 @@ class TestGroundedNarrativePersistence:
     1. The second-pass grounded narrative ran AFTER persist, so the
        persisted message (the source of truth ChatView refetches on done)
        never contained it — the narrative flashed and vanished. It must
-       run BEFORE persist and be merged into content_text.
-    2. Full-precision floats (e.g. 2500.8230981333336) leaked into
+       run BEFORE persist.
+    2. REWRITE semantics (spec R2): the grounded narrative REPLACES the
+       streamed approach in the persisted message — appending both left
+       the approach's invented estimates contradicting the computed
+       numbers in the final message (B1-R finding).
+    3. Full-precision floats (e.g. 2500.8230981333336) leaked into
        narratives despite the ≤6-decimals prompt rule — formatting is now
        enforced deterministically on the explanation.
     """
@@ -364,13 +368,13 @@ class TestGroundedNarrativePersistence:
         assert assistant_msgs, "No assistant message persisted"
 
         content = assistant_msgs[0]["content_text"]
-        # The grounded narrative IS in the persisted message (formatted)
-        assert "El promedio exacto es 10.507123 unidades." in content, (
-            f"Grounded narrative missing from persisted message: {content!r}"
+        # REWRITE: the persisted message is ONLY the grounded narrative —
+        # the approach's (invented) numbers must not survive beside it
+        assert content == "El promedio exacto es 10.507123 unidades.", (
+            f"Persisted message should be the formatted grounded rewrite: {content!r}"
         )
-        # Full-precision floats must be capped in both parts
-        assert "10.507123" in content and "10.507123333333332" not in content
-        assert "2,500.823098" in content and "2500.8230981333336" not in content
+        assert "2500.8230981333336" not in content
+        assert "10.507123333333332" not in content
         # Usage merged from both calls (fake: 50 in / 100 out each)
         assert assistant_msgs[0]["tokens_in"] == 100
         assert assistant_msgs[0]["tokens_out"] == 200

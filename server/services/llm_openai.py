@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any, AsyncIterator
 
 import openai
@@ -26,6 +27,19 @@ from core.errors import (
 from core.protocols.llm_provider import LLMProvider, LLMResponse, LLMUsage
 
 logger = logging.getLogger(__name__)
+
+# Some models escape json_schema enforcement intermittently and wrap the
+# payload in markdown fences (```json ... ```). Parse must tolerate it —
+# the retry policy alone surfaced a raw LLMInvalidJSONError to users
+# (Rigor mov-2 live validation, B2-R / bench Q3).
+_JSON_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n?```\s*$", re.DOTALL)
+
+
+def _strip_json_fences(text: str) -> str:
+    """Strip markdown code fences around a JSON payload, if present."""
+    t = text.strip()
+    match = _JSON_FENCE_RE.match(t)
+    return match.group(1).strip() if match else t
 
 # Default timeout for the LLM call (seconds). Non-streamed json_schema
 # responses on routed backends (e.g. OpenRouter) can be slow; configurable
@@ -186,7 +200,7 @@ class OpenAIProvider:
             structured_data: dict | None = None
             if response_format is not None:
                 try:
-                    structured_data = json.loads(content)
+                    structured_data = json.loads(_strip_json_fences(content))
                 except json.JSONDecodeError:
                     if attempts < 2:  # one retry for invalid JSON
                         logger.warning(

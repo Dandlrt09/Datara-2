@@ -11,8 +11,9 @@ Flow per design Chat Flow steps 1–9:
 4. Call LLM (non-streamed, json_schema)
 5. Emit status(llm done) → token deltas
 6. Run sandbox (single-shot)
-7. Second-pass grounded narrative (pre-persist: merged into the
-   persisted text so the refetched message keeps it)
+7. Second-pass grounded narrative (pre-persist rewrite: replaces the
+   streamed approach in the persisted message so the refetched
+   answer carries only real computed numbers)
 8. Persist assistant message BEFORE emitting artifacts (persist-then-emit)
 9. Emit artifact → narrative deltas → status(done) → done {message_id}
 """
@@ -238,7 +239,9 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
         "Descriptive questions ask about dataset characteristics (e.g., '¿De qué trata este dataset?', 'what are the columns?', 'how many rows?') "
         "— answer these with a narrative-only response citing row_count and key profile facts. Return empty code (\"code\": \"\") and emit zero artifacts. "
         "Analytical questions ask for computation, aggregation, filtering, or visualization — generate Python code to compute the answer, then "
-        "write a grounded explanation that cites the computed numbers."
+        "write a grounded explanation that cites the computed numbers. "
+        "IMPORTANT: in the pre-code explanation describe WHAT you will compute — NEVER invent or estimate specific result values; "
+        "the exact numbers only exist after the code executes."
         "\n\nIMPORTANT — narrative quality: Write natural professional Spanish. Start with the conclusion or key finding. "
         "Format numeric values with ≤6 decimal places and thousands separators for readability (e.g., 5,035,600.021 — never full-precision floats like 2500.8230981333336). "
         "Never dump raw column listings or generate unsolicited charts. "
@@ -468,8 +471,10 @@ async def chat_stream(
                                 "You are a data analysis assistant. The user asked a question and received an initial answer. "
                                 "The code has now executed and produced results below. "
                                 "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
-                                "Incorporate the exact numbers from the execution output, not the initial estimates. "
-                                "Keep the response concise (under 100 words). Write in natural professional Spanish."
+                                "Incorporate the exact numbers from the execution output — keep every key computed value, do not drop any. "
+                                "Do not keep the original estimates: the rewritten narrative must contain ONLY the real computed values. "
+                                "Refer to results naturally (e.g. 'la tabla', 'el gráfico'), never by variable names like df_result. "
+                                "Keep the response concise (under 150 words). Write in natural professional Spanish."
                             )},
                             {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
                         ]
@@ -483,7 +488,12 @@ async def chat_stream(
                         )
                         grounding_usage = grounding_response.usage
                         if grounded_narrative:
-                            explanation = f"{explanation}\n\n{grounded_narrative}"
+                            # Rewrite semantics (spec R2): the grounded
+                            # narrative REPLACES the streamed approach in the
+                            # persisted message. Appending both left the
+                            # approach's invented estimates contradicting the
+                            # computed numbers in the final message.
+                            explanation = grounded_narrative
                     except Exception as e:
                         logger.warning("Second-pass LLM failed, continuing with original explanation: %s", e)
                         # Continue with original explanation if second-pass fails
