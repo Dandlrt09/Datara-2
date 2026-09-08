@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["files"])
 
-UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+_DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+
+# Uploads root, resolved at import time. Override with DATARA_UPLOADS_DIR so
+# deployments and test harnesses can relocate it (tests point this at a
+# per-test tmp directory; no test may write into the real server/uploads/).
+UPLOADS_DIR = Path(os.environ.get("DATARA_UPLOADS_DIR", str(_DEFAULT_UPLOADS_DIR)))
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────

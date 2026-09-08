@@ -29,7 +29,7 @@ INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
 
 
 @pytest.fixture
-def app():
+def app(tmp_path, monkeypatch):
     from server.api import store as api_store  # noqa: PLC0415
 
     application = FastAPI()
@@ -38,6 +38,10 @@ def app():
     application.include_router(chat_router.router)
     application.include_router(archive_router.router)
     application.include_router(files_router.router)
+
+    # Isolation: uploads must land in a per-test tmp dir, never the real
+    # server/uploads/ used by the live server.
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
 
     import asyncio
 
