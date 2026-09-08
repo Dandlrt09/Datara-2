@@ -67,6 +67,31 @@ class TestSandboxExecution:
         result = _run_direct("import numpy as np\nprint(np.array([1, 2, 3]).sum())")
         assert result["status"] == "ok"
 
+    def test_duplicate_table_content_deduped(self):
+        """Same frame assigned to two df_ names renders ONE table.
+
+        rigor-mov2 live validation: the model created df_cat + df_result
+        with identical content and both rendered as separate tables.
+        """
+        result = _run_direct(
+            "import pandas as pd\n"
+            "df_result = pd.DataFrame({'a': [1, 2]})\n"
+            "df_cat = df_result\n"
+        )
+        assert result["status"] == "ok"
+        assert len(result["tables"]) == 1
+        assert result["tables"][0]["name"] == "df_result"
+
+    def test_distinct_tables_both_kept(self):
+        """Tables with DIFFERENT content must all be kept."""
+        result = _run_direct(
+            "import pandas as pd\n"
+            "df_result = pd.DataFrame({'a': [1, 2]})\n"
+            "df_other = pd.DataFrame({'b': [3, 4]})\n"
+        )
+        assert result["status"] == "ok"
+        assert len(result["tables"]) == 2
+
     def test_figure_collection(self):
         """Plotly figure should be collected in the result (px is pre-imported)."""
         code = """

@@ -331,6 +331,10 @@ def _execute_code(code: str, limits: dict) -> dict:
 
     figures: list[dict] = []
     tables: list[dict] = []
+    # Dedupe identical result tables: models sometimes assign the same
+    # frame to two df_ names (df_cat + df_result); rendering both is
+    # pure noise. Key on content (columns + repr(rows)), not name.
+    seen_table_contents: set[tuple] = set()
     try:
         # Compile the code
         compiled = compile(code, "<sandbox>", "exec", flags=0, dont_inherit=True)
@@ -369,13 +373,19 @@ def _execute_code(code: str, limits: dict) -> dict:
                         # NaN/±Inf would serialize as bare `NaN`/`Infinity`,
                         # which browsers' JSON.parse rejects — poisoning the
                         # whole SSE artifact event and the persisted message.
+                        columns = [str(c) for c in head.columns]
+                        rows = [
+                            [_json_safe_cell(v) for v in row]
+                            for row in head.itertuples(index=False, name=None)
+                        ]
+                        content_key = (tuple(columns), repr(rows))
+                        if content_key in seen_table_contents:
+                            continue
+                        seen_table_contents.add(content_key)
                         tables.append({
                             "name": name,
-                            "columns": [str(c) for c in head.columns],
-                            "rows": [
-                                [_json_safe_cell(v) for v in row]
-                                for row in head.itertuples(index=False, name=None)
-                            ],
+                            "columns": columns,
+                            "rows": rows,
                         })
                 except Exception:
                     pass

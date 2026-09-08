@@ -296,3 +296,81 @@ class TestLLMContextGuardrails:
         )
         # And it must be at dataset level, not inside per-column stats
         assert "row_count" not in profile_entry["profile"]["stats"]
+
+
+class TestGroundedNarrativePersistence:
+    """rigor-mov2 live-validation findings, fixed:
+
+    1. The second-pass grounded narrative ran AFTER persist, so the
+       persisted message (the source of truth ChatView refetches on done)
+       never contained it — the narrative flashed and vanished. It must
+       run BEFORE persist and be merged into content_text.
+    2. Full-precision floats (e.g. 2500.8230981333336) leaked into
+       narratives despite the ≤6-decimals prompt rule — formatting is now
+       enforced deterministically on the explanation.
+    """
+
+    async def test_second_pass_persisted_with_formatted_numbers(
+        self, client, auth_cookie, session_id, store
+    ):
+        csv_content = (
+            b"name,age,score\n"
+            b"Alice,30,95.5\n"
+            b"Bob,25,87.3\n"
+        )
+        upload_resp = client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("grounded.csv", csv_content, "text/csv")},
+            headers={"Cookie": auth_cookie},
+        )
+        assert upload_resp.status_code in (200, 201)
+
+        call_count = 0
+
+        def _two_phase_fake(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Main structured call: full-precision float in explanation
+                return _make_openai_fake(json.dumps({
+                    "code": "print('grounded test')",
+                    "explanation": "La media es 2500.8230981333336 segun el perfil.",
+                }))
+            # Second-pass grounding call (no response_format): plain prose
+            # carrying another full-precision float that must be formatted.
+            return _make_openai_fake(
+                "El promedio exacto es 10.507123333333332 unidades."
+            )
+
+        mock_create = AsyncMock(side_effect=_two_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "analyze the data"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        # Main call + grounding call both hit the provider
+        assert call_count == 2, f"expected main+grounding calls, got {call_count}"
+
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_msgs, "No assistant message persisted"
+
+        content = assistant_msgs[0]["content_text"]
+        # The grounded narrative IS in the persisted message (formatted)
+        assert "El promedio exacto es 10.507123 unidades." in content, (
+            f"Grounded narrative missing from persisted message: {content!r}"
+        )
+        # Full-precision floats must be capped in both parts
+        assert "10.507123" in content and "10.507123333333332" not in content
+        assert "2,500.823098" in content and "2500.8230981333336" not in content
+        # Usage merged from both calls (fake: 50 in / 100 out each)
+        assert assistant_msgs[0]["tokens_in"] == 100
+        assert assistant_msgs[0]["tokens_out"] == 200

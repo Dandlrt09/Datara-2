@@ -4,15 +4,17 @@
   (SSE events: ``status``, ``token``, ``artifact``, ``done``, ``error``)
 - ``GET /api/sessions/{id}/messages`` — paginated message history
 
-Flow per design Chat Flow steps 1–8:
+Flow per design Chat Flow steps 1–9:
 1. Validate ownership
 2. Persist user message
 3. Load context (profiles + message window)
 4. Call LLM (non-streamed, json_schema)
 5. Emit status(llm done) → token deltas
 6. Run sandbox (single-shot)
-7. Persist assistant message BEFORE emitting artifacts (persist-then-emit)
-8. Emit artifact → status(done) → done {message_id}
+7. Second-pass grounded narrative (pre-persist: merged into the
+   persisted text so the refetched message keeps it)
+8. Persist assistant message BEFORE emitting artifacts (persist-then-emit)
+9. Emit artifact → narrative deltas → status(done) → done {message_id}
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator
 
@@ -140,6 +143,27 @@ async def _emit_token_deltas(
         await asyncio.sleep(0.01)  # small delay for human-readable pacing
 
 
+# Narrative decimals: models copy full-precision floats (e.g. profile means)
+# into explanations despite prompt rules; enforce ≤6 places deterministically.
+_FULL_PRECISION_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})*\.\d{7,}|\d+\.\d{7,}")
+
+
+def _format_narrative_numbers(text: str) -> str:
+    """Cap decimal places of numeric literals in narrative text to 6.
+
+    Matches plain (``2500.8230981333336``) and thousands-grouped
+    (``1,500,000.123456789``) decimals only — 7+ fractional digits — and
+    rewrites them rounded to 6 places with thousands separators. Shorter
+    decimals, integers, and non-numeric tokens (prod_004, dates) pass
+    through untouched.
+    """
+    def _repl(match: re.Match[str]) -> str:
+        value = float(match.group(0).replace(",", ""))
+        return f"{value:,.6f}".rstrip("0").rstrip(".")
+
+    return _FULL_PRECISION_NUMBER.sub(_repl, text)
+
+
 def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
     """Assemble the chat system prompt.
 
@@ -216,9 +240,12 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
         "Analytical questions ask for computation, aggregation, filtering, or visualization — generate Python code to compute the answer, then "
         "write a grounded explanation that cites the computed numbers."
         "\n\nIMPORTANT — narrative quality: Write natural professional Spanish. Start with the conclusion or key finding. "
-        "Format numeric values with ≤6 decimal places and thousands separators for readability (e.g., 5,035,600.021). "
+        "Format numeric values with ≤6 decimal places and thousands separators for readability (e.g., 5,035,600.021 — never full-precision floats like 2500.8230981333336). "
         "Never dump raw column listings or generate unsolicited charts. "
         "No Markdown formatting: use plain text, no **bold**, no bullet lists."
+        "\n\nIMPORTANT — single result table: assign the final result to EXACTLY ONE df_ variable (df_result or df_<name>). "
+        "Never store the same data under two df_ names (each df_ renders as a separate table): reuse and overwrite the same variable instead. "
+        "Intermediate or filtered frames must use non-df names (aux, filtrado) so they don't render as tables."
     )
     return system_prompt
 
@@ -343,7 +370,9 @@ async def chat_stream(
                 return
 
             structured = llm_response.structured_data or {}
-            explanation = structured.get("explanation", llm_response.text)
+            explanation = _format_narrative_numbers(
+                structured.get("explanation", llm_response.text) or ""
+            )
             code = structured.get("code", "")
 
             # Step 5: Emit SSE — status(llm done) → token deltas → status(sandbox running)
@@ -423,7 +452,43 @@ async def chat_stream(
                     "payload": {"text": stdout_text[:4000]},
                 })
 
-            # Step 7: Persist assistant message BEFORE emitting artifacts (persist-then-emit)
+            # Step 7: Second-pass grounded narrative for analytical turns.
+            # Runs BEFORE persisting so the persisted message row is the
+            # single source of truth: ChatView clears streaming text and
+            # refetches messages on done, so a narrative emitted after
+            # persist-but-not-persisted is discarded by the refetch.
+            grounded_narrative = ""
+            grounding_usage = None
+            if code.strip() and sandbox_result.get("status") == "ok":
+                sandbox_output = str(sandbox_result.get("text") or "").strip()
+                if sandbox_output:
+                    try:
+                        grounding_messages = [
+                            {"role": "system", "content": (
+                                "You are a data analysis assistant. The user asked a question and received an initial answer. "
+                                "The code has now executed and produced results below. "
+                                "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
+                                "Incorporate the exact numbers from the execution output, not the initial estimates. "
+                                "Keep the response concise (under 100 words). Write in natural professional Spanish."
+                            )},
+                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
+                        ]
+                        grounding_response = await provider.complete(
+                            messages=grounding_messages,
+                            max_tokens=500,
+                            temperature=0.1,
+                        )
+                        grounded_narrative = _format_narrative_numbers(
+                            grounding_response.text.strip()
+                        )
+                        grounding_usage = grounding_response.usage
+                        if grounded_narrative:
+                            explanation = f"{explanation}\n\n{grounded_narrative}"
+                    except Exception as e:
+                        logger.warning("Second-pass LLM failed, continuing with original explanation: %s", e)
+                        # Continue with original explanation if second-pass fails
+
+            # Step 8: Persist assistant message BEFORE emitting artifacts (persist-then-emit)
             message = await store.create_message(
                 user_id=user_id,
                 chat_session=session_id,
@@ -433,12 +498,12 @@ async def chat_stream(
                 artifacts_json=json.dumps(artifacts, allow_nan=False) if artifacts else None,
                 model=llm_response.model,
                 provider=llm_response.provider,
-                tokens_in=llm_response.usage.tokens_in,
-                tokens_out=llm_response.usage.tokens_out,
-                cost_usd=llm_response.usage.cost_usd,
+                tokens_in=llm_response.usage.tokens_in + (grounding_usage.tokens_in if grounding_usage else 0),
+                tokens_out=llm_response.usage.tokens_out + (grounding_usage.tokens_out if grounding_usage else 0),
+                cost_usd=llm_response.usage.cost_usd + (grounding_usage.cost_usd if grounding_usage else 0.0),
             )
 
-            # Step 8: Emit — artifact → status(done) → done {message_id}
+            # Step 9: Emit — artifact → grounded narrative deltas → status(done) → done
             if artifacts:
                 yield _sse_event("artifact", {
                     "figures": sandbox_result.get("figures", []),
@@ -450,38 +515,9 @@ async def chat_stream(
                     ],
                 })
 
-            # Step 9: Second-pass grounded narrative for analytical turns
-            grounded_narrative = ""
-            if code.strip() and sandbox_result.get("status") == "ok":
-                try:
-                    # Build context for grounded narrative
-                    sandbox_output = sandbox_result.get("text", "").strip()
-                    if sandbox_output:
-                        # Create a prompt asking to ground the explanation in computed results
-                        grounding_messages = [
-                            {"role": "system", "content": (
-                                "You are a data analysis assistant. The user asked a question and received an initial answer. "
-                                "The code has now executed and produced results below. "
-                                "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
-                                "Incorporate the exact numbers from the execution output, not the initial estimates. "
-                                "Keep the response concise (under 100 words). Write in natural professional Spanish."
-                            )},
-                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
-                        ]
-                        
-                        grounding_response = await provider.complete(
-                            messages=grounding_messages,
-                            max_tokens=500,
-                            temperature=0.1,
-                        )
-                        grounded_narrative = grounding_response.text.strip()
-                        
-                        # Emit grounded narrative as additional token deltas
-                        async for token_event in _emit_token_deltas("\n\n" + grounded_narrative):
-                            yield token_event
-                except Exception as e:
-                    logger.warning("Second-pass LLM failed, continuing with original explanation: %s", e)
-                    # Continue with original explanation if second-pass fails
+            if grounded_narrative:
+                async for token_event in _emit_token_deltas("\n\n" + grounded_narrative):
+                    yield token_event
 
             yield _sse_event("status", {"stage": "done", "state": "done"})
             yield _sse_event("done", {"message_id": message["id"]})
