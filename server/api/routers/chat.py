@@ -207,15 +207,18 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
         "\n\nIMPORTANT — empty results: if a filter or groupby returns "
         "zero rows, SAY that plainly in 'explanation' (e.g. 'no hay "
         "ventas de ese producto en esas ciudades') and do NOT plot the "
-        "empty frame. NEVER invent, estimate or use placeholder values "
+"empty frame. NEVER invent, estimate or use placeholder values "
         "(no X, Y, Z, W): every number in 'explanation' must be one you "
         "actually computed. Write plain text: no Markdown, no **."
-        "\n\nIMPORTANT — numeric precision: never round results to 2 "
-        "decimals when tiny values are possible (e.g. a minimum of "
-        "0.001): a non-zero value must never display as 0. Keep full "
-        "precision or format with up to 6 decimals. Name ONLY final "
-        "result tables df_<name>; intermediate/filtered frames get "
-        "other names (aux, filtrado) so they don't render as tables."
+        "\n\nIMPORTANT — intent routing: First classify whether the user's question is descriptive or analytical. "
+        "Descriptive questions ask about dataset characteristics (e.g., '¿De qué trata este dataset?', 'what are the columns?', 'how many rows?') "
+        "— answer these with a narrative-only response citing row_count and key profile facts. Return empty code (\"code\": \"\") and emit zero artifacts. "
+        "Analytical questions ask for computation, aggregation, filtering, or visualization — generate Python code to compute the answer, then "
+        "write a grounded explanation that cites the computed numbers."
+        "\n\nIMPORTANT — narrative quality: Write natural professional Spanish. Start with the conclusion or key finding. "
+        "Format numeric values with ≤6 decimal places and thousands separators for readability (e.g., 5,035,600.021). "
+        "Never dump raw column listings or generate unsolicited charts. "
+        "No Markdown formatting: use plain text, no **bold**, no bullet lists."
     )
     return system_prompt
 
@@ -446,6 +449,40 @@ async def chat_stream(
                         if a["kind"] == "text"
                     ],
                 })
+
+            # Step 9: Second-pass grounded narrative for analytical turns
+            grounded_narrative = ""
+            if code.strip() and sandbox_result.get("status") == "ok":
+                try:
+                    # Build context for grounded narrative
+                    sandbox_output = sandbox_result.get("text", "").strip()
+                    if sandbox_output:
+                        # Create a prompt asking to ground the explanation in computed results
+                        grounding_messages = [
+                            {"role": "system", "content": (
+                                "You are a data analysis assistant. The user asked a question and received an initial answer. "
+                                "The code has now executed and produced results below. "
+                                "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
+                                "Incorporate the exact numbers from the execution output, not the initial estimates. "
+                                "Keep the response concise (under 100 words). Write in natural professional Spanish."
+                            )},
+                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
+                        ]
+                        
+                        grounding_response = await provider.complete(
+                            messages=grounding_messages,
+                            max_tokens=500,
+                            temperature=0.1,
+                        )
+                        grounded_narrative = grounding_response.text.strip()
+                        
+                        # Emit grounded narrative as additional token deltas
+                        async for token_event in _emit_token_deltas("\n\n" + grounded_narrative):
+                            yield token_event
+                except Exception as e:
+                    logger.warning("Second-pass LLM failed, continuing with original explanation: %s", e)
+                    # Continue with original explanation if second-pass fails
+
             yield _sse_event("status", {"stage": "done", "state": "done"})
             yield _sse_event("done", {"message_id": message["id"]})
 

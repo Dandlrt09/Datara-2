@@ -134,8 +134,8 @@ class TestCacheKey:
 
 
 class TestQuestionSuite:
-    def test_has_10_questions(self):
-        assert len(_QUESTIONS) == 10
+    def test_has_11_questions(self):
+        assert len(_QUESTIONS) == 11
 
     def test_all_questions_have_unique_ids(self):
         ids = [q.id for q in _QUESTIONS]
@@ -143,7 +143,8 @@ class TestQuestionSuite:
 
     def test_all_questions_have_expected_artifact_types(self):
         for q in _QUESTIONS:
-            assert q.expected_artifact_types, f"Q{q.id} missing artifacts"
+            # Q11 expects zero artifacts (empty set) - that's valid
+            assert q.expected_artifact_types is not None, f"Q{q.id} missing artifacts"
 
     def test_all_questions_have_csv(self):
         for q in _QUESTIONS:
@@ -154,21 +155,22 @@ class TestQuestionSuite:
         assert q1.tolerance_abs is not None
         assert "min" in q1.tolerance_abs
 
-    def test_q10_no_number_assertions(self):
-        """Q10 is artifact-checked only (figures) — no numeric assertions.
-
+    def test_q10_and_q11_no_number_assertions(self):
+        """Q10 and Q11 are artifact-checked only — no numeric assertions.
+        
+        Q10 expects figures, Q11 expects zero artifacts.
         The old has_figures=1.0 sentinel was treated as a number to find
         in the explanation text and hard-failed correct answers citing
         real numbers.
         """
-        q10 = next(q for q in _QUESTIONS if q.id == 10)
-        import pandas as pd
+        for qid in [10, 11]:
+            q = next(q for q in _QUESTIONS if q.id == qid)
+            import pandas as pd
+            df = pd.DataFrame({"a": [1]})
+            expected = q.compute_expected(df)
+            assert expected == {}
 
-        df = pd.DataFrame({"a": [1]})
-        expected = q10.compute_expected(df)
-        assert expected == {}
-
-    @pytest.mark.parametrize("qid", [2, 3, 4, 5, 6, 7, 8, 9])
-    def test_q2_to_q9_have_compute_expected(self, qid):
+    @pytest.mark.parametrize("qid", [2, 3, 4, 5, 6, 7, 8, 9, 10])
+    def test_q2_to_q10_have_compute_expected(self, qid):
         q = next(qq for qq in _QUESTIONS if qq.id == qid)
         assert q.compute_expected is not None, f"Q{qid} missing compute_expected"
