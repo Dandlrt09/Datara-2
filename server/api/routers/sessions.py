@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 from typing import AsyncIterator
 
@@ -11,10 +12,13 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from server.api.deps import current_user, get_store
 from server.api import event_bus as _event_bus_module
+from server.api.deps import current_user, get_store
+from server.api.routers import files as files_router
 from server.services.events import EventBus, SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -78,6 +82,18 @@ async def delete_session(
     to the user (be safe — don't reveal existence to other users).
     """
     await store.delete_chat_session(session_id, user["id"])
+
+    # Best-effort: the DB rows (files → profiles, messages) cascade via FK,
+    # but the uploaded files on disk would be orphaned. Cleanup must never
+    # fail the delete.
+    try:
+        files_router.remove_session_uploads(user["id"], session_id)
+    except Exception:  # pragma: no cover — remove_session_uploads never raises
+        logger.warning(
+            "Session upload cleanup failed for session %s (best-effort)",
+            session_id,
+            exc_info=True,
+        )
     return None
 
 

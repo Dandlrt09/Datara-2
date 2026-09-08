@@ -164,3 +164,45 @@ class TestGlobalFileList:
         assert resp.status_code == 200
         data = resp.json()
         assert all(f["id"] != file_id for f in data)
+
+
+class TestSessionDeleteUploadCleanup:
+    """Deleting a session removes its upload directory from disk.
+
+    The DB rows (files → profiles, messages) cascade via FK; the stored
+    files under uploads/<user_id>/<session_id>/ used to be orphaned.
+    """
+
+    def test_deleted_session_removes_upload_dir(self, auth_client, session_id):
+        """Upload a file, delete the session, assert the directory is gone."""
+        upload = _upload_csv(auth_client, session_id, "disk_cleanup.csv", b"x\n1\n")
+        assert upload.status_code == 201
+
+        session_dirs = list(files_router.UPLOADS_DIR.rglob(session_id))
+        assert session_dirs and any(d.is_dir() for d in session_dirs)
+
+        resp = auth_client.delete(f"/api/sessions/{session_id}")
+        assert resp.status_code == 204
+
+        assert list(files_router.UPLOADS_DIR.rglob(session_id)) == []
+
+    def test_session_delete_survives_cleanup_failure(
+        self, auth_client, session_id, monkeypatch
+    ):
+        """A failing disk cleanup never fails the delete (log-and-continue)."""
+        upload = _upload_csv(auth_client, session_id, "stuck.csv", b"x\n1\n")
+        assert upload.status_code == 201
+        file_id = upload.json()["id"]
+
+        def _raise(user_id, chat_session):
+            raise OSError("simulated disk failure")
+
+        monkeypatch.setattr(files_router, "remove_session_uploads", _raise)
+
+        resp = auth_client.delete(f"/api/sessions/{session_id}")
+        assert resp.status_code == 204
+
+        # The DB cascade still applied despite the cleanup failure.
+        resp = auth_client.get("/api/files")
+        assert resp.status_code == 200
+        assert all(f["id"] != file_id for f in resp.json())

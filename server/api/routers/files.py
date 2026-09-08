@@ -93,6 +93,29 @@ def _ensure_upload_dir(user_id: int, chat_session: str) -> Path:
     return upload_path
 
 
+def remove_session_uploads(user_id: int, chat_session: str) -> None:
+    """Remove a session's upload directory from disk (best-effort).
+
+    Called on session delete: the DB rows (files → profiles, messages)
+    cascade via FK, but the stored files would otherwise be orphaned
+    under ``UPLOADS_DIR/<user_id>/<session_id>/``. Never raises — a
+    filesystem failure is logged and the caller's delete must still
+    succeed.
+    """
+    session_dir = UPLOADS_DIR / str(user_id) / chat_session
+    try:
+        if session_dir.is_dir():
+            shutil.rmtree(session_dir)
+    except OSError:
+        logger.warning(
+            "Best-effort cleanup failed: could not remove upload dir for "
+            "session %s (user %s)",
+            chat_session,
+            user_id,
+            exc_info=True,
+        )
+
+
 _SUPPORTED_EXTENSIONS = frozenset({".csv", ".tsv", ".xlsx", ".json"})
 
 
