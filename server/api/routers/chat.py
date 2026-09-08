@@ -465,6 +465,22 @@ async def chat_stream(
             # single source of truth: ChatView clears streaming text and
             # refetches messages on done, so a narrative emitted after
             # persist-but-not-persisted is discarded by the refetch.
+            # The grounding call receives the EXACT table values: stdout
+            # prints large floats in scientific notation (9.407413e+08),
+            # which silently loses precision — narratives built from it
+            # rounded (940,741,300 vs the table's 940,741,259.01).
+            table_context = ""
+            for tbl in artifacts:
+                if tbl["kind"] != "table":
+                    continue
+                lines = [
+                    f"{tbl['name']}: columns={tbl['payload']['columns']}",
+                    *(
+                        "  " + " | ".join(str(cell) for cell in row)
+                        for row in tbl["payload"]["rows"]
+                    ),
+                ]
+                table_context += "\nResult table (exact values):\n" + "\n".join(lines)
             grounded_narrative = ""
             grounding_usage = None
             if code.strip() and sandbox_result.get("status") == "ok":
@@ -475,8 +491,9 @@ async def chat_stream(
                             {"role": "system", "content": (
                                 "You are a data analysis assistant. The user asked a question and received an initial answer. "
                                 "The code has now executed and produced results below. "
-                                "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
-                                "Copy numeric values EXACTLY as they appear in the execution output — never round or reformat them. "
+                                "Rewrite the explanation to be grounded in the ACTUAL computed numbers. "
+                                "Copy numeric values EXACTLY as they appear in the provided results — never round them. "
+                                "Format large numbers with thousands separators for readability (e.g. 76,036,762.77). "
                                 "Keep every key computed value, do not drop any. For long results never enumerate every row: "
                                 "highlight only the top 2-3 inline and refer to the table for the rest. "
                                 "Do not keep the original estimates: the rewritten narrative must contain ONLY the real computed values. "
@@ -484,7 +501,7 @@ async def chat_stream(
                                 "Plain text only: no Markdown, no **bold**, no bullet lists. "
                                 "Keep the response concise (under 80 words). Write in natural professional Spanish."
                             )},
-                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
+                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}{table_context}"}
                         ]
                         grounding_response = await provider.complete(
                             messages=grounding_messages,

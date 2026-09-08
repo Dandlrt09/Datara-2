@@ -432,3 +432,65 @@ class TestStdoutSuppression:
         assert "text" not in kinds, (
             f"stdout box must be suppressed when a table renders: {kinds}"
         )
+
+
+class TestGroundingTableContext:
+    """rigor-mov2 validation round 4: the grounding call must receive the
+    exact table values. stdout prints large floats in scientific notation
+    (9.407413e+08), which silently loses precision — narratives built only
+    from it cited rounded numbers (940,741,300 vs the table's
+    940,741,259.01)."""
+
+    async def test_grounding_call_receives_exact_table_values(
+        self, client, auth_cookie, session_id, store
+    ):
+        csv_content = (
+            b"name,age,score\n"
+            b"Alice,30,95.5\n"
+            b"Bob,25,87.3\n"
+        )
+        upload_resp = client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("tbl.csv", csv_content, "text/csv")},
+            headers={"Cookie": auth_cookie},
+        )
+        assert upload_resp.status_code in (200, 201)
+
+        captured_calls: list[list[dict]] = []
+        call_count = 0
+
+        def _two_phase_fake(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            captured_calls.append(kwargs.get("messages", []))
+            if call_count == 1:
+                return _make_openai_fake(json.dumps({
+                    "code": (
+                        "import pandas as pd\n"
+                        "df_result = pd.DataFrame({'categoria': ['A'], 'monto_total': [940741259.01]})\n"
+                        "print(df_result)"
+                    ),
+                    "explanation": "Total por categoria.",
+                }))
+            return _make_openai_fake("La categoria A totaliza 940741259.01.")
+
+        mock_create = AsyncMock(side_effect=_two_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "total por categoria"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert call_count == 2, f"expected main+grounding calls, got {call_count}"
+        grounding_user_content = captured_calls[1][-1]["content"]
+        # The grounding context carries the table's EXACT value (the stdout
+        # print alone only has e-notation 9.407413e+08)
+        assert "940741259.01" in grounding_user_content, (
+            f"Grounding context must include exact table values: {grounding_user_content!r}"
+        )
+        assert "Result table (exact values)" in grounding_user_content
