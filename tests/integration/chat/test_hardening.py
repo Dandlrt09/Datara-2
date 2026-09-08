@@ -224,11 +224,15 @@ class TestLLMContextGuardrails:
 
         def _capture_context(*args, **kwargs):
             nonlocal captured_system_prompt
-            messages = kwargs.get("messages", [])
-            for msg in messages:
-                if msg["role"] == "system":
-                    captured_system_prompt = msg["content"]
-                    break
+            # Capture only the FIRST (main generation) call. The analytical
+            # second-pass grounding call is a separate, deliberately scoped
+            # request whose system prompt does not carry profile context.
+            if captured_system_prompt is None:
+                messages = kwargs.get("messages", [])
+                for msg in messages:
+                    if msg["role"] == "system":
+                        captured_system_prompt = msg["content"]
+                        break
             return _make_openai_fake(json.dumps({
                 "code": "print('profile test')",
                 "explanation": "Testing profile-only context.",
