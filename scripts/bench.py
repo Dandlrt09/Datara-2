@@ -217,6 +217,16 @@ def _q9_expected(df: pd.DataFrame) -> dict[str, float]:
     return {"avg_price": avg_price, "online_satisfaccion": online_sat}
 
 
+def _q10_expected(_df: pd.DataFrame) -> dict[str, float]:
+    """Question 10: Two charts question — verified via expected_artifact_types={"figure"}.
+
+    No numeric assertions: a has_figures=1.0 sentinel here was treated as
+    a number to find in the explanation text and hard-failed correct
+    answers that mentioned any other number.
+    """
+    return {}
+
+
 def _q11_expected(_df: pd.DataFrame) -> dict[str, float]:
     """Question 11: Descriptive question expecting zero artifacts.
     
@@ -648,16 +658,36 @@ async def _run_question(
     if not expected:
         # Q10/Q11 — no numeric assertions, just artifact check
         # For Q11, also check for row_count mention in explanation
-        if q.id == 11 and "row_count" not in explanation.lower():
-            return QuestionResult(
-                id=q.id, question=q.question, csv=q.csv_basename,
-                status="fail", reason="Missing 'row_count' mention in explanation",
-                artifacts_expected=sorted(q.expected_artifact_types),
-                artifacts_found=artifacts_found,
-                cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
-                tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
-                llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
-            )
+        if q.id == 11:
+            # Check for row count presence in explanation
+            # The profile has row_count, but a natural narrative cites the number (e.g., "80 filas")
+            # not the literal JSON key "row_count". Compute actual row count from CSV
+            # (len(df) because df was already read for expected values)
+            row_count = len(df)
+            
+            # Check combined text (explanation + sandbox_text) for the row count number
+            combined_text = f"{explanation} {sandbox_text}"
+            
+            # Check if any word in combined_text matches the row count
+            found_row_count = False
+            for word in combined_text.split():
+                norm = _normalize_number(word)
+                if norm is not None:
+                    # Compare as integers (allow float 80.0 == int 80)
+                    if int(norm) == row_count:
+                        found_row_count = True
+                        break
+            
+            if not found_row_count:
+                return QuestionResult(
+                    id=q.id, question=q.question, csv=q.csv_basename,
+                    status="fail", reason=f"Missing row count ({row_count}) mention in explanation",
+                    artifacts_expected=sorted(q.expected_artifact_types),
+                    artifacts_found=artifacts_found,
+                    cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+                    tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
+                    llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
+                )
         return QuestionResult(
             id=q.id, question=q.question, csv=q.csv_basename,
             status="pass", reason="ok",
