@@ -378,3 +378,57 @@ class TestGroundedNarrativePersistence:
         # Usage merged from both calls (fake: 50 in / 100 out each)
         assert assistant_msgs[0]["tokens_in"] == 100
         assert assistant_msgs[0]["tokens_out"] == 200
+
+class TestStdoutSuppression:
+    """rigor-mov2 validation round 3: the raw stdout box (scientific
+    notation, index numbers) is redundant noise when a result table
+    already renders the same data. Keep the stdout box only for
+    stdout-only answers."""
+
+    async def test_stdout_suppressed_when_table_present(
+        self, client, auth_cookie, session_id, store
+    ):
+        csv_content = (
+            b"name,age,score\n"
+            b"Alice,30,95.5\n"
+            b"Bob,25,87.3\n"
+        )
+        upload_resp = client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("sup.csv", csv_content, "text/csv")},
+            headers={"Cookie": auth_cookie},
+        )
+        assert upload_resp.status_code in (200, 201)
+
+        valid_response = {
+            "code": (
+                "import pandas as pd\n"
+                "df_result = pd.DataFrame({'categoria': ['A', 'B'], 'monto_total': [940.0, 936.0]})\n"
+                "print(df_result)"
+            ),
+            "explanation": "Total por categoria.",
+        }
+        mock_create = AsyncMock(
+            return_value=_make_openai_fake(json.dumps(valid_response))
+        )
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "total por categoria"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_msgs, "No assistant message persisted"
+        artifacts = json.loads(assistant_msgs[0]["artifacts_json"])
+        kinds = [a["kind"] for a in artifacts]
+        assert "table" in kinds, f"expected a table artifact, got {kinds}"
+        assert "text" not in kinds, (
+            f"stdout box must be suppressed when a table renders: {kinds}"
+        )

@@ -445,10 +445,15 @@ async def chat_stream(
             # stdout, but figures/tables alone left numeric answers invisible
             # ("los resultados se imprimen en consola"). Cap to keep the SSE
             # and persisted payloads bounded.
+            # When a result table already renders the same data, the raw
+            # stdout box is redundant noise for the user (scientific
+            # notation, index numbers) — suppress it and keep the stdout
+            # box only for stdout-only answers.
             stdout_text = ""
             if sandbox_result.get("status") == "ok":
                 stdout_text = str(sandbox_result.get("text") or "").strip()
-            if stdout_text:
+            has_table = any(a["kind"] == "table" for a in artifacts)
+            if stdout_text and not has_table:
                 artifacts.append({
                     "kind": "text",
                     "name": "stdout",
@@ -471,10 +476,13 @@ async def chat_stream(
                                 "You are a data analysis assistant. The user asked a question and received an initial answer. "
                                 "The code has now executed and produced results below. "
                                 "Rewrite the explanation to be grounded in the ACTUAL computed numbers from the execution output. "
-                                "Incorporate the exact numbers from the execution output — keep every key computed value, do not drop any. "
+                                "Copy numeric values EXACTLY as they appear in the execution output — never round or reformat them. "
+                                "Keep every key computed value, do not drop any. For long results never enumerate every row: "
+                                "highlight only the top 2-3 inline and refer to the table for the rest. "
                                 "Do not keep the original estimates: the rewritten narrative must contain ONLY the real computed values. "
                                 "Refer to results naturally (e.g. 'la tabla', 'el gráfico'), never by variable names like df_result. "
-                                "Keep the response concise (under 150 words). Write in natural professional Spanish."
+                                "Plain text only: no Markdown, no **bold**, no bullet lists. "
+                                "Keep the response concise (under 80 words). Write in natural professional Spanish."
                             )},
                             {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}"}
                         ]
