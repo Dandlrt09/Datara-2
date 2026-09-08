@@ -388,3 +388,86 @@ class TestUploadCancel:
         )
         assert resp.status_code == 201
         assert resp.json()["filename"] == "normal.csv"
+
+
+class TestSameNameReupload:
+    """Same-name re-upload in the same session is rejected with 409.
+
+    File deletion exists (DELETE /api/files/{id} and the Files UI delete
+    button), so the chosen behavior is reject-and-keep: exactly one files
+    row + one profile per basename, and the user deletes the old file
+    before uploading a replacement. Re-upload used to overwrite the stored
+    file and duplicate the files/profiles rows.
+    """
+
+    def test_same_name_reupload_rejected_with_409(self, auth_client, session_id):
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"a\n1\n", "text/csv")},
+        )
+        assert first.status_code == 201
+        first_id = first.json()["id"]
+
+        second = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"a\n2\n3\n4\n", "text/csv")},
+        )
+        assert second.status_code == 409
+        assert "already exists" in second.json()["detail"]
+        assert "Delete" in second.json()["detail"]
+
+        # Exactly one file row remains — the original, unmodified.
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        rows = listing.json()
+        assert len(rows) == 1
+        assert rows[0]["id"] == first_id
+        assert rows[0]["size_bytes"] == len(b"a\n1\n")
+
+    def test_rejected_reupload_keeps_original_profile(self, auth_client, session_id):
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"v\n1\n2\n", "text/csv")},
+        )
+        first_id = first.json()["id"]
+
+        rejected = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"v\n9\n", "text/csv")},
+        )
+        assert rejected.status_code == 409
+
+        # Profile for the original file still resolves (no duplicate rows).
+        profile = auth_client.get(f"/api/files/{first_id}/profile")
+        assert profile.status_code == 200
+        assert profile.json()["file_id"] == first_id
+
+    def test_reupload_allowed_after_delete(self, auth_client, session_id):
+        """Deleting the file frees the name for a new upload."""
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"a\n1\n", "text/csv")},
+        )
+        file_id = first.json()["id"]
+        assert auth_client.delete(f"/api/files/{file_id}").status_code == 204
+
+        again = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"a\n2\n", "text/csv")},
+        )
+        assert again.status_code == 201
+
+    def test_same_name_in_other_session_allowed(self, auth_client, session_id):
+        """The guard is per-session, not per-user or global."""
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("dup.csv", b"a\n1\n", "text/csv")},
+        )
+        assert first.status_code == 201
+
+        resp = auth_client.post("/api/sessions", json={"title": "Other session"})
+        other_session = resp.json()["id"]
+        second = auth_client.post(
+            f"/api/sessions/{other_session}/files",
+            files={"file": ("dup.csv", b"a\n2\n", "text/csv")},
+        )
+        assert second.status_code == 201

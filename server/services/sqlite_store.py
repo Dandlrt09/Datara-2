@@ -477,6 +477,27 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
+    async def get_file_by_name(
+        self,
+        user_id: int,
+        chat_session: str,
+        filename: str,
+    ) -> dict[str, Any] | None:
+        """Get a file by exact filename within one session (ownership enforced).
+
+        Used by the upload endpoint to reject same-name re-uploads in the
+        same session (the Files UI provides deletion, so the user deletes
+        the old file first instead of silently duplicating rows).
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE user_id = ? AND chat_session = ? AND filename = ? "
+            "LIMIT 1",
+            (user_id, chat_session, filename),
+        )
+        return dict(rows[0]) if rows else None
+
     async def delete_file(self, file_id: int, user_id: int) -> bool:
         """Delete a file, enforcing ownership. Returns True if a row was deleted."""
         cursor = await self.conn.execute(

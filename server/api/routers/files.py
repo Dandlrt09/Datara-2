@@ -135,9 +135,24 @@ async def upload_file(
     ext = _validate_extension(file.filename or "unknown")
     format_hint = ext.lstrip(".")
 
+    safe_filename = Path(file.filename or f"upload{ext}").name
+
+    # Same-name guard: file deletion exists (DELETE /api/files/{id} and the
+    # Files UI), so a repeated basename in the same session is rejected
+    # instead of silently overwriting the stored file and duplicating the
+    # files/profiles rows. The user deletes the old file first.
+    duplicate = await store.get_file_by_name(user_id, session_id, safe_filename)
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"A file named '{safe_filename}' already exists in this session. "
+                "Delete it first before uploading a file with the same name."
+            ),
+        )
+
     # Save to disk
     upload_dir = _ensure_upload_dir(user_id, session_id)
-    safe_filename = Path(file.filename or f"upload{ext}").name
     dest_path = upload_dir / safe_filename
 
     content = await file.read()
