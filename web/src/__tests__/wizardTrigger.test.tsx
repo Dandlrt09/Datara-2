@@ -4,8 +4,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "../routes/AppShell";
 import { useWizardStore } from "../stores/useWizardStore";
-import { useSessions } from "../queries/useSessions";
-import { useFilesGlobal } from "../queries/useFiles";
 import { useChatStore } from "../stores/useChatStore";
 import { clearWizardFlags } from "../lib/wizardStorage";
 

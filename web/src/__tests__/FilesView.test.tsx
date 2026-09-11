@@ -193,6 +193,9 @@ describe("FilesView", () => {
     renderWithProviders(<FilesView />);
     
     expect(screen.getByText("Creating session...")).toBeTruthy();
-    expect(screen.getByText("Create a chat session")).toBeDisabled();
+    // The button should be disabled
+    const button = screen.getByRole("button", { name: /Creating session.../ });
+    expect(button).toBeTruthy();
+    expect(button).toHaveAttribute("disabled");
   });
 });

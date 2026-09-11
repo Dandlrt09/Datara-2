@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, screen, waitFor } from "@testing-library/react";
+import { renderHook, act, screen, fireEvent } from "@testing-library/react";
 import { useChatStore } from "../stores/useChatStore";
 import { renderWithProviders } from "./test-utils";
 import ChatView from "../routes/ChatView";
@@ -228,12 +228,8 @@ describe("ChatView component", () => {
   });
 
   it("consumes suggested question from location.state and populates textarea", () => {
-    // Mock initial location state with suggested question
-    const mockLocationState = { suggestedQuestion: "What are the top 5 products by revenue?" };
-    
     renderWithProviders(<ChatView />, { 
       route: "/app/chat",
-      // We need to simulate navigation with state - for simplicity, we'll test the effect directly
     });
     
     // The test would need to simulate navigation with state, which is complex
