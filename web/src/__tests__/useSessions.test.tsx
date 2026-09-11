@@ -25,34 +25,7 @@ vi.mock("../lib/useSessionEvents", () => ({
   },
 }));
 
-// Mock sessions and files queries so AppShell doesn't make real API calls
-// Only mock useSessions and useFilesGlobal, not useCreateSession/useDeleteSession
-// so the hook tests can test the real implementations
-vi.mock("../queries/useSessions", async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    useSessions: () => ({
-      data: [],
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-    }),
-  };
-});
 
-vi.mock("../queries/useFiles", async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    useFilesGlobal: () => ({
-      data: [],
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-    }),
-  };
-});
 
 // Mock auth so AppShell mounts
 vi.mock("../queries/useAuth", () => ({
@@ -83,12 +56,7 @@ vi.mock("../stores/useWizardStore", () => ({
   }),
 }));
 
-// Mock SSE store
-vi.mock("../stores/useSseStore", () => ({
-  useSseStore: () => ({
-    setSseState: vi.fn(),
-  }),
-}));
+
 
 // Mock react-router so AppShell doesn't require a real router context
 vi.mock("react-router-dom", () => ({
@@ -241,6 +209,30 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
   let qc: QueryClient;
 
   beforeEach(() => {
+    // Mock hooks for AppShell tests
+    vi.doMock("../queries/useSessions", () => ({
+      useSessions: () => ({
+        data: undefined,
+        isLoading: false,
+        isSuccess: false,
+        isError: false,
+      }),
+      useCreateSession: vi.fn(),
+      useDeleteSession: vi.fn(),
+    }));
+    
+    vi.doMock("../queries/useFiles", () => ({
+      useFilesGlobal: () => ({
+        data: undefined,
+        isLoading: false,
+        isSuccess: false,
+        isError: false,
+      }),
+      useUploadFile: vi.fn(),
+      useDeleteFile: vi.fn(),
+      useProfile: vi.fn(),
+    }));
+    
     cleanup();
     qc = createTestQueryClient();
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent = undefined;
