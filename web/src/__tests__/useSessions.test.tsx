@@ -209,30 +209,13 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
   let qc: QueryClient;
 
   beforeEach(() => {
-    // Mock hooks for AppShell tests
-    vi.doMock("../queries/useSessions", () => ({
-      useSessions: () => ({
-        data: undefined,
-        isLoading: false,
-        isSuccess: false,
-        isError: false,
-      }),
-      useCreateSession: vi.fn(),
-      useDeleteSession: vi.fn(),
-    }));
-    
-    vi.doMock("../queries/useFiles", () => ({
-      useFilesGlobal: () => ({
-        data: undefined,
-        isLoading: false,
-        isSuccess: false,
-        isError: false,
-      }),
-      useUploadFile: vi.fn(),
-      useDeleteFile: vi.fn(),
-      useProfile: vi.fn(),
-    }));
-    
+    // AppShell mounts the REAL useSessions/useFilesGlobal hooks: a module
+    // mock here would break the hook tests above, and vi.doMock does not
+    // affect already-evaluated static imports. This suite's premise is a
+    // failed initial fetch (backend restarting), so make api.get reject —
+    // otherwise the leftover mockResolvedValue from the hook tests above
+    // populates the cache and the invalidate branch never fires.
+    (api.get as Mock).mockRejectedValue(new Error("backend restarting"));
     cleanup();
     qc = createTestQueryClient();
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent = undefined;
