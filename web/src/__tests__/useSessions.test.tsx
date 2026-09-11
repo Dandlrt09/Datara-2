@@ -23,6 +23,30 @@ vi.mock("../lib/useSessionEvents", () => ({
   },
 }));
 
+// Mock sessions and files queries so AppShell doesn't make real API calls
+vi.mock("../queries/useSessions", () => ({
+  useSessions: () => ({
+    data: [],
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+  }),
+  useCreateSession: vi.fn(),
+  useDeleteSession: vi.fn(),
+}));
+
+vi.mock("../queries/useFiles", () => ({
+  useFilesGlobal: () => ({
+    data: [],
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+  }),
+  useUploadFile: vi.fn(),
+  useDeleteFile: vi.fn(),
+  useProfile: vi.fn(),
+}));
+
 // Mock auth so AppShell mounts
 vi.mock("../queries/useAuth", () => ({
   useMe: () => ({
@@ -31,6 +55,32 @@ vi.mock("../queries/useAuth", () => ({
     error: null,
   }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+// Mock chat store
+vi.mock("../stores/useChatStore", () => ({
+  useChatStore: () => ({
+    isStreaming: false,
+  }),
+}));
+
+// Mock wizard store  
+vi.mock("../stores/useWizardStore", () => ({
+  useWizardStore: () => ({
+    open: false,
+    engaged: false,
+    manual: false,
+    dismissed: false,
+    openWizard: vi.fn(),
+    closeWizard: vi.fn(),
+  }),
+}));
+
+// Mock SSE store
+vi.mock("../stores/useSseStore", () => ({
+  useSseStore: () => ({
+    setSseState: vi.fn(),
+  }),
 }));
 
 // Mock react-router so AppShell doesn't require a real router context
@@ -47,9 +97,6 @@ vi.mock("../routes/ChatView", () => ({ default: () => null }));
 vi.mock("../routes/FilesView", () => ({ default: () => null }));
 vi.mock("../routes/SettingsView", () => ({ default: () => null }));
 vi.mock("../routes/ArchiveList", () => ({ default: () => null }));
-
-import { api } from "../lib/api";
-import AppShell from "../routes/AppShell";
 
 function createTestQueryClient() {
   return new QueryClient({

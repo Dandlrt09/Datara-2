@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "../routes/AppShell";
@@ -53,7 +53,24 @@ vi.mock("../lib/useSessionEvents", () => ({
   useSessionEvents: () => {},
 }));
 
-function renderAppShell(initialRoute = "/app/chat") {
+// Helper to setup mocks for fresh user state
+const setupFreshUserMocks = () => {
+  useSessionsMock.mockReturnValue({
+    data: [],
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+  });
+  useFilesGlobalMock.mockReturnValue({
+    data: [],
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+  });
+};
+
+// Helper to render AppShell
+const renderAppShell = (initialRoute = "/app/chat") => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -61,7 +78,7 @@ function renderAppShell(initialRoute = "/app/chat") {
     },
   });
 
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialRoute]}>
         <Routes>
@@ -70,11 +87,9 @@ function renderAppShell(initialRoute = "/app/chat") {
       </MemoryRouter>
     </QueryClientProvider>
   );
+};
 
-  return { queryClient };
-}
-
-describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
+describe("AppShell wizard trigger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearWizardFlags();
@@ -99,29 +114,15 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
       setStreaming: vi.fn(),
     });
 
-    // Default mock: fresh user (0 sessions, 0 files, queries resolved)
-    useSessionsMock.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-    });
-
-    useFilesGlobalMock.mockReturnValue({
-      data: [],
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-    });
+    setupFreshUserMocks();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    cleanup();
   });
 
-  it("auto-opens the wizard for a fresh user (0 sessions, 0 files, queries resolved)", async () => {
+  it("auto-opens the wizard for a fresh user", async () => {
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
@@ -136,7 +137,6 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
@@ -151,13 +151,12 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
   });
 
-  it("does NOT open wizard while sessions query is loading (no flash)", async () => {
+  it("does NOT open wizard while sessions query is loading", () => {
     useSessionsMock.mockReturnValue({
       data: undefined,
       isLoading: true,
@@ -166,11 +165,10 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     renderAppShell();
-
     expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
   });
 
-  it("does NOT open wizard while files query is loading (no flash)", async () => {
+  it("does NOT open wizard while files query is loading", () => {
     useFilesGlobalMock.mockReturnValue({
       data: undefined,
       isLoading: true,
@@ -179,56 +177,50 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     renderAppShell();
-
     expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
   });
 
   it("does NOT open wizard while streaming is active", async () => {
     useChatStore.setState({ isStreaming: true });
-
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
   });
 
   it("auto-closes wizard when sessions cache flips non-empty while un-engaged", async () => {
-    // Start with 0 sessions, wizard should open
+    // Start with wizard open
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
 
-    // Wizard is not engaged yet, simulate sessions becoming non-empty
+    // Cleanup and re-render with sessions
+    cleanup();
     useSessionsMock.mockReturnValue({
       data: [{ id: "ses-1", title: "New Session" }],
       isLoading: false,
       isSuccess: true,
       isError: false,
     });
-
-    // Re-render with updated mocks
+    
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
   });
 
-  it("does NOT auto-close wizard when engaged (even if trigger conditions change)", async () => {
+  it("does NOT auto-close wizard when engaged", async () => {
     // Start with wizard open
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
 
-    // Mark wizard as engaged (user clicked "Get started" or dropped a file)
+    // Mark as engaged (simulate user interaction)
     useWizardStore.setState({ engaged: true });
-
-    // Simulate sessions becoming non-empty
+    
+    // Sessions become non-empty but wizard should stay open
     useSessionsMock.mockReturnValue({
       data: [{ id: "ses-1", title: "New Session" }],
       isLoading: false,
@@ -237,17 +229,17 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     // Re-render - wizard should stay open because it's engaged
+    cleanup();
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
   });
 
-  it("does NOT auto-close wizard when opened manually (even if trigger conditions change)", async () => {
-    // Simulate manual open (e.g., from ChatView empty state)
+  it("does NOT auto-close wizard when opened manually", async () => {
+    // Simulate manual open
     useWizardStore.setState({ open: true, manual: true });
-
+    
     // User has sessions, but wizard was opened manually
     useSessionsMock.mockReturnValue({
       data: [{ id: "ses-1", title: "Existing Session" }],
@@ -257,16 +249,13 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
   });
 
   it("persists skipped state across remounts", async () => {
-    // First render, wizard opens
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /first-run wizard/i })).toBeTruthy();
     });
@@ -280,19 +269,18 @@ describe("AppShell wizard trigger (wizardTrigger.test.tsx)", () => {
     });
 
     // Remount - wizard should NOT open because skipped flag is persisted
+    cleanup();
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
   });
 
   it("does NOT open when wizard was previously completed", async () => {
-    // Simulate completed wizard (from localStorage or store)
+    // Simulate completed wizard
     useWizardStore.setState({ dismissed: true });
 
     renderAppShell();
-
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
     });
