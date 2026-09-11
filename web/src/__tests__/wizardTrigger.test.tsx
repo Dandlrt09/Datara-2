@@ -139,6 +139,18 @@ describe("AppShell wizard trigger", () => {
     await expectWizardVisible(false);
   });
 
+  it("reopens manually after skip (spec: reopen regardless of persisted flags)", async () => {
+    renderAppShell();
+    await expectWizardVisible(true);
+
+    fireEvent.click(screen.getByText("Skip"));
+    await expectWizardVisible(false);
+
+    // The ChatView empty-state reopen control calls openWizard(true)
+    useWizardStore.getState().openWizard(true);
+    await expectWizardVisible(true);
+  });
+
   it("hides when previously completed", async () => {
     useWizardStore.setState({ dismissed: true });
     renderAppShell();

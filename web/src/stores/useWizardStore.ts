@@ -24,8 +24,10 @@ export const useWizardStore = create<WizardUiState>((set) => {
     
     openWizard: (_manual = false) => {
       set((state) => {
-        // Don't open if dismissed (skipped or completed)
-        if (state.dismissed) {
+        // Manual reopens (ChatView empty state) bypass the dismissed latch:
+        // the spec requires reopen-after-skip regardless of persisted flags.
+        // Auto-opens stay latched so the wizard never reappears after skip/finish.
+        if (state.dismissed && !_manual) {
           return state;
         }
         
