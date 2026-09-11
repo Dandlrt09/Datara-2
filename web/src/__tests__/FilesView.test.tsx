@@ -3,12 +3,13 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import FilesView from "../routes/FilesView";
 
-const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock } =
+const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock } =
   vi.hoisted(() => ({
     useFilesGlobalMock: vi.fn(),
     useSessionsMock: vi.fn(),
     useUploadFileMock: vi.fn(),
     useDeleteFileMock: vi.fn(),
+    useCreateSessionMock: vi.fn(),
   }));
 
 vi.mock("../queries/useFiles", () => ({
@@ -20,6 +21,7 @@ vi.mock("../queries/useFiles", () => ({
 
 vi.mock("../queries/useSessions", () => ({
   useSessions: () => useSessionsMock(),
+  useCreateSession: () => useCreateSessionMock(),
 }));
 
 describe("FilesView", () => {
@@ -39,6 +41,11 @@ describe("FilesView", () => {
       mutate: vi.fn(),
       isError: false,
       isPending: false,
+    });
+    useCreateSessionMock.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
     });
   });
 
@@ -133,19 +140,59 @@ describe("FilesView", () => {
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 
-  it('upload invalidates all ["files"] keys via prefix match (W-1)', () => {
-    const { qc } = renderWithProviders(<FilesView />);
+  it("when 0 sessions, shows 'Create a chat session' button and no dead-end text", () => {
+    useSessionsMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    
+    renderWithProviders(<FilesView />);
+    
+    // Should show the create session button
+    expect(screen.getByText("Create a chat session")).toBeTruthy();
+    // Should NOT show the old dead-end text
+    expect(screen.queryByText("Create a chat session before uploading files")).toBeNull();
+    // Should show helper text
+    expect(screen.getByText("Create a chat session to upload files")).toBeTruthy();
+  });
 
-    // Pre-populate both session-scoped and global caches
-    qc.setQueryData(["files", "ses-1"], [{ id: 1 }]);
-    qc.setQueryData(["files", "global"], [{ id: 1, filename: "old.csv" }]);
-    qc.setQueryData(["other"], []);
+  it("shows error when session creation fails", () => {
+    useSessionsMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    
+    const errorMessage = "Network error";
+    useCreateSessionMock.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new Error(errorMessage),
+    });
+    
+    renderWithProviders(<FilesView />);
+    
+    expect(screen.getByText(`Failed to create session: ${errorMessage}`)).toBeTruthy();
+  });
 
-    // This is what the real useUploadFile.onSuccess does after the fix
-    qc.invalidateQueries({ queryKey: ["files"] });
-
-    expect(qc.getQueryState(["files", "ses-1"])?.isInvalidated).toBe(true);
-    expect(qc.getQueryState(["files", "global"])?.isInvalidated).toBe(true);
-    expect(qc.getQueryState(["other"])?.isInvalidated).toBeFalsy();
+  it("shows 'Creating session...' while session creation is pending", () => {
+    useSessionsMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    
+    useCreateSessionMock.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: true,
+      isError: false,
+    });
+    
+    renderWithProviders(<FilesView />);
+    
+    expect(screen.getByText("Creating session...")).toBeTruthy();
+    expect(screen.getByText("Create a chat session")).toBeDisabled();
   });
 });
