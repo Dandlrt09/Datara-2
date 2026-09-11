@@ -22,7 +22,7 @@ export const useWizardStore = create<WizardUiState>((set) => {
     manual: false,
     dismissed: initiallyDismissed,
     
-    openWizard: (manual = false) => {
+    openWizard: (_manual = false) => {
       set((state) => {
         // Don't open if dismissed (skipped or completed)
         if (state.dismissed) {
@@ -31,7 +31,7 @@ export const useWizardStore = create<WizardUiState>((set) => {
         
         return {
           open: true,
-          manual: manual,
+          manual: _manual,
           // Reset engaged when opening (fresh wizard session)
           engaged: false,
         };
@@ -39,7 +39,7 @@ export const useWizardStore = create<WizardUiState>((set) => {
     },
     
     closeWizard: (dismiss = false) => {
-      set((state) => {
+      set(() => {
         const nextState: Partial<WizardUiState> = {
           open: false,
           // Reset manual flag when closing

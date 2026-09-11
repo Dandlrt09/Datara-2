@@ -15,7 +15,7 @@ export function WizardOverlay() {
   const [currentStep, setCurrentStep] = useState<'welcome' | 'upload' | 'question' | 'finish'>('welcome');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
-  const [uploadAbortController, setUploadAbortController] = useState<AbortController | null>(null);
+  const [uploadAbortController, _setUploadAbortController] = useState<AbortController | null>(null);
   
   const dialogRef = useRef<HTMLDivElement>(null);
   const skipButtonRef = useRef<HTMLButtonElement>(null);

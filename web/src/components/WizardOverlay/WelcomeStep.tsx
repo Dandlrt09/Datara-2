@@ -47,7 +47,7 @@ export function WelcomeStep({ onSkip }: WelcomeStepProps) {
             borderRadius: '4px',
             cursor: 'pointer',
           }}
-          ref={(el) => {
+          ref={() => {
             // Skip button should be first focusable per design,
             // so we don't auto-focus Get Started
           }}
