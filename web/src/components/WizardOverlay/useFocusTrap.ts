@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 /**
  * A minimal focus trap for modal dialogs.
@@ -9,24 +9,26 @@ import { useEffect, useRef } from 'react';
  *   among visible focusable elements (filter `offsetParent !== null`).
  * - On unmount, restores focus to the saved element.
  *
- * @param element - The dialog element to trap focus within.
- * @param initialFocusElement - The element to focus first (usually the Skip button).
+ * @param elementRef - Ref to the dialog element to trap focus within.
+ * @param initialFocusRef - Ref to the element to focus first (usually the Skip button).
  * @param onEscape - Callback for Escape key (should skip/close the wizard).
  */
 export function useFocusTrap(
-  element: HTMLElement | null,
-  initialFocusElement: HTMLElement | null,
+  elementRef: RefObject<HTMLElement | null>,
+  initialFocusRef: RefObject<HTMLElement | null>,
   onEscape: () => void
 ) {
   const savedFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    const element = elementRef.current;
     if (!element) return;
 
     // Save current focus
     savedFocusRef.current = document.activeElement as HTMLElement;
 
     // Focus the initial element
+    const initialFocusElement = initialFocusRef.current;
     if (initialFocusElement) {
       initialFocusElement.focus();
     }
@@ -85,5 +87,7 @@ export function useFocusTrap(
         savedFocusRef.current.focus();
       }
     };
-  }, [element, initialFocusElement, onEscape]);
+    // Refs are stable objects; re-attach only when the escape callback changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onEscape]);
 }

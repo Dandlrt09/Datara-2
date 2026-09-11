@@ -59,11 +59,7 @@ export function WizardOverlay() {
   }, [sessionId, selectedQuestion, closeWizard, navigate]);
 
   // Set up focus trap
-  useFocusTrap(
-    dialogRef.current,
-    skipButtonRef.current,
-    handleSkip
-  );
+  useFocusTrap(dialogRef, skipButtonRef, handleSkip);
 
   // Render current step
   const renderStep = () => {
