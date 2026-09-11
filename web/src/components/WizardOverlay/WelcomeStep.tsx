@@ -2,13 +2,15 @@ import { useWizardStore } from '../../stores/useWizardStore';
 
 interface WelcomeStepProps {
   onSkip: () => void;
+  onNext: () => void;
 }
 
-export function WelcomeStep({ onSkip }: WelcomeStepProps) {
+export function WelcomeStep({ onSkip, onNext }: WelcomeStepProps) {
   const setEngaged = useWizardStore((state) => state.setEngaged);
 
   const handleGetStarted = () => {
     setEngaged();
+    onNext();
   };
 
   return (
@@ -45,13 +47,9 @@ export function WelcomeStep({ onSkip }: WelcomeStepProps) {
             border: 'none',
             padding: '10px 20px',
             borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-          ref={() => {
-            // Skip button should be first focusable per design,
-            // so we don't auto-focus Get Started
-          }}
-        >
+cursor: 'pointer',
+        }}
+      >
           Get started
         </button>
       </div>
