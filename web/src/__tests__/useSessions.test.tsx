@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSessions, useCreateSession, useDeleteSession } from "../queries/useSessions";
 import { useSseStore } from "../stores/useSseStore";
 import type { ReactNode } from "react";
+import { api } from "../lib/api";
+import AppShell from "../routes/AppShell";
 
 // Mock the api module
 vi.mock("../lib/api", () => ({
@@ -24,28 +26,33 @@ vi.mock("../lib/useSessionEvents", () => ({
 }));
 
 // Mock sessions and files queries so AppShell doesn't make real API calls
-vi.mock("../queries/useSessions", () => ({
-  useSessions: () => ({
-    data: [],
-    isLoading: false,
-    isSuccess: true,
-    isError: false,
-  }),
-  useCreateSession: vi.fn(),
-  useDeleteSession: vi.fn(),
-}));
+// Only mock useSessions and useFilesGlobal, not useCreateSession/useDeleteSession
+// so the hook tests can test the real implementations
+vi.mock("../queries/useSessions", async (importOriginal) => {
+  const original = await importOriginal();
+  return {
+    ...original,
+    useSessions: () => ({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    }),
+  };
+});
 
-vi.mock("../queries/useFiles", () => ({
-  useFilesGlobal: () => ({
-    data: [],
-    isLoading: false,
-    isSuccess: true,
-    isError: false,
-  }),
-  useUploadFile: vi.fn(),
-  useDeleteFile: vi.fn(),
-  useProfile: vi.fn(),
-}));
+vi.mock("../queries/useFiles", async (importOriginal) => {
+  const original = await importOriginal();
+  return {
+    ...original,
+    useFilesGlobal: () => ({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    }),
+  };
+});
 
 // Mock auth so AppShell mounts
 vi.mock("../queries/useAuth", () => ({
