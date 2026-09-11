@@ -95,7 +95,6 @@ vi.mock("../lib/sse", () => ({
 }));
 
 import { streamChat } from "../lib/sse";
-import { fireEvent } from "@testing-library/react";
 
 vi.mock("../components/ChatMessage", () => ({
   default: ({ role, content }: { role: string; content: string }) => (
