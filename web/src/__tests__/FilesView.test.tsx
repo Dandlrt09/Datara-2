@@ -194,7 +194,7 @@ describe("FilesView", () => {
     
     expect(screen.getByText("Creating session...")).toBeTruthy();
     // The button should be disabled
-    const button = screen.getByRole("button", { name: /Creating session.../ });
+    const button = screen.getByRole("button", { name: /Creating session.../ }) as HTMLButtonElement;
     expect(button).toBeTruthy();
     expect(button.disabled).toBe(true);
   });
