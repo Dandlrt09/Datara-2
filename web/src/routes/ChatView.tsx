@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { useSessions, useCreateSession, useDeleteSession } from "../queries/useSessions";
 import { useMessages } from "../queries/useMessages";
 import { useChatStore } from "../stores/useChatStore";
+import { useWizardStore } from "../stores/useWizardStore";
 import { streamChat } from "../lib/sse";
 import ChatMessage from "../components/ChatMessage";
 import { QueryError } from "../components/ErrorCard";
@@ -10,6 +11,7 @@ import { QueryError } from "../components/ErrorCard";
 export default function ChatView() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     data: sessions,
     error: sessionsError,
@@ -21,6 +23,7 @@ export default function ChatView() {
   const deleteSession = useDeleteSession();
 
   const store = useChatStore();
+  const wizardStore = useWizardStore();
   const [question, setQuestion] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -29,11 +32,22 @@ export default function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
+  // Ref to track if we've consumed the suggested question from location.state
+  const consumedSuggestedQuestionRef = useRef(false);
 
   // Set active session
   useEffect(() => {
     store.setActiveSessionId(sessionId ?? null);
   }, [sessionId]);
+
+  // Consume suggested question from location.state (one-shot)
+  useEffect(() => {
+    const suggestedQuestion = (location.state as { suggestedQuestion?: string } | null)?.suggestedQuestion;
+    if (suggestedQuestion && !consumedSuggestedQuestionRef.current) {
+      setQuestion(suggestedQuestion);
+      consumedSuggestedQuestionRef.current = true;
+    }
+  }, [location.state]);
 
   // Bottom-pinned scrolling: charts and tables finish rendering AFTER the
   // message list updates (plotly mutates the DOM from its own effect), so a
@@ -245,7 +259,22 @@ export default function ChatView() {
           <div ref={contentRef}>
           {!sessionId && (
             <div style={{ textAlign: "center", marginTop: 80, color: "#999" }}>
-              Select a chat or create a new one
+              <p>Select a chat or create a new one</p>
+              <button
+                onClick={() => wizardStore.openWizard(true)}
+                style={{
+                  marginTop: "16px",
+                  padding: "10px 20px",
+                  backgroundColor: "#007bff",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "1em",
+                }}
+              >
+                Start first-run wizard
+              </button>
             </div>
           )}
           <QueryError
