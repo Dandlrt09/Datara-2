@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSessions, useCreateSession, useDeleteSession } from "../queries/useSessions";
 import { useSseStore } from "../stores/useSseStore";
 import type { ReactNode } from "react";
+import { api } from "../lib/api";
+import AppShell from "../routes/AppShell";
 
 // Mock the api module
 vi.mock("../lib/api", () => ({
@@ -23,6 +25,8 @@ vi.mock("../lib/useSessionEvents", () => ({
   },
 }));
 
+
+
 // Mock auth so AppShell mounts
 vi.mock("../queries/useAuth", () => ({
   useMe: () => ({
@@ -32,6 +36,27 @@ vi.mock("../queries/useAuth", () => ({
   }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+
+// Mock chat store
+vi.mock("../stores/useChatStore", () => ({
+  useChatStore: () => ({
+    isStreaming: false,
+  }),
+}));
+
+// Mock wizard store  
+vi.mock("../stores/useWizardStore", () => ({
+  useWizardStore: () => ({
+    open: false,
+    engaged: false,
+    manual: false,
+    dismissed: false,
+    openWizard: vi.fn(),
+    closeWizard: vi.fn(),
+  }),
+}));
+
+
 
 // Mock react-router so AppShell doesn't require a real router context
 vi.mock("react-router-dom", () => ({
@@ -47,9 +72,6 @@ vi.mock("../routes/ChatView", () => ({ default: () => null }));
 vi.mock("../routes/FilesView", () => ({ default: () => null }));
 vi.mock("../routes/SettingsView", () => ({ default: () => null }));
 vi.mock("../routes/ArchiveList", () => ({ default: () => null }));
-
-import { api } from "../lib/api";
-import AppShell from "../routes/AppShell";
 
 function createTestQueryClient() {
   return new QueryClient({
@@ -187,6 +209,13 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
   let qc: QueryClient;
 
   beforeEach(() => {
+    // AppShell mounts the REAL useSessions/useFilesGlobal hooks: a module
+    // mock here would break the hook tests above, and vi.doMock does not
+    // affect already-evaluated static imports. This suite's premise is a
+    // failed initial fetch (backend restarting), so make api.get reject —
+    // otherwise the leftover mockResolvedValue from the hook tests above
+    // populates the cache and the invalidate branch never fires.
+    (api.get as Mock).mockRejectedValue(new Error("backend restarting"));
     cleanup();
     qc = createTestQueryClient();
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent = undefined;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from './test-utils';
 
 // Mock with vi.fn() directly
@@ -11,16 +11,21 @@ vi.mock('react-router-dom', async (importOriginal: () => Promise<typeof import('
   };
 });
 
+const { setEngagedMock } = vi.hoisted(() => ({ setEngagedMock: vi.fn() }));
+
 vi.mock('../stores/useWizardStore', () => ({
-  useWizardStore: () => ({
-    open: true,
-    engaged: false,
-    manual: false,
-    dismissed: false,
-    openWizard: vi.fn(),
-    closeWizard: vi.fn(),
-    setEngaged: vi.fn(),
-  }),
+  useWizardStore: (selector?: (s: Record<string, unknown>) => unknown) => {
+    const state = {
+      open: true,
+      engaged: false,
+      manual: false,
+      dismissed: false,
+      openWizard: vi.fn(),
+      closeWizard: vi.fn(),
+      setEngaged: setEngagedMock,
+    };
+    return selector ? selector(state) : state;
+  },
 }));
 
 vi.mock('../lib/wizardStorage', () => ({
@@ -60,6 +65,15 @@ describe('WizardOverlay', () => {
     expect(screen.getByText('Step 2: Upload')).toBeTruthy();
     expect(screen.getByText('Step 3: Question')).toBeTruthy();
     expect(screen.getByText('Step 4: Finish')).toBeTruthy();
+  });
+
+  it('advances to Upload on Get started (engagement + step)', () => {
+    renderWithProviders(<WizardOverlay />);
+
+    fireEvent.click(screen.getByText('Get started'));
+
+    expect(screen.getByText('Upload your dataset')).toBeTruthy();
+    expect(setEngagedMock).toHaveBeenCalled();
   });
 
   it('has dialog ARIA attributes', () => {

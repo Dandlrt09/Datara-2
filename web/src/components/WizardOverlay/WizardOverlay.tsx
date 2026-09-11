@@ -65,7 +65,7 @@ export function WizardOverlay() {
   const renderStep = () => {
     switch (currentStep) {
       case 'welcome':
-        return <WelcomeStep onSkip={handleSkip} />;
+        return <WelcomeStep onSkip={handleSkip} onNext={() => setCurrentStep('upload')} />;
       case 'upload':
         return (
           <UploadStep

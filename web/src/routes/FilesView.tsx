@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { useSessions } from "../queries/useSessions";
+import { useSessions, useCreateSession } from "../queries/useSessions";
 import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile } from "../queries/useFiles";
 import { QueryError } from "../components/ErrorCard";
 
@@ -11,9 +11,21 @@ export default function FilesView() {
   const globalFiles = useFilesGlobal();
   const uploadFileMut = useUploadFile();
   const deleteFileMut = useDeleteFile();
+  const createSession = useCreateSession();
 
   // AbortController for the in-flight upload (Cancel button).
   const uploadAbortRef = useRef<AbortController | null>(null);
+
+  // Handle session creation success - select the new session
+  const handleCreateSession = useCallback(() => {
+    createSession.mutate(undefined, {
+      onSuccess: (newSession) => {
+        // The session list will refresh via cache invalidation
+        // Select the new session by default
+        setSelectedSessionId(newSession.id);
+      },
+    });
+  }, [createSession]);
 
   // Default to most recent session once sessions load
   const sessionList = sessions.data ?? [];
@@ -94,7 +106,32 @@ export default function FilesView() {
       >
         <input {...getInputProps()} disabled={!hasSessions} />
         {!hasSessions ? (
-          <p>Create a chat session before uploading files</p>
+          <div>
+            <button
+              onClick={handleCreateSession}
+              disabled={createSession.isPending}
+              style={{
+                padding: "12px 24px",
+                fontSize: "1em",
+                backgroundColor: "#007bff",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: createSession.isPending ? "not-allowed" : "pointer",
+                marginBottom: "12px",
+              }}
+            >
+              {createSession.isPending ? "Creating session..." : "Create a chat session"}
+            </button>
+            {createSession.isError && (
+              <p role="alert" style={{ color: "red", marginTop: "8px" }}>
+                Failed to create session: {(createSession.error as Error)?.message || "Unknown error"}
+              </p>
+            )}
+            <p style={{ fontSize: "0.9em", color: "#666", marginTop: "8px" }}>
+              Create a chat session to upload files
+            </p>
+          </div>
         ) : isDragActive ? (
           <p>Drop file here...</p>
         ) : (
