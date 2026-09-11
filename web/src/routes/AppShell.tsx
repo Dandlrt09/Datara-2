@@ -2,7 +2,12 @@ import { lazy, Suspense, useEffect, useCallback } from "react";
 import { Routes, Route, useNavigate, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMe, useLogout } from "../queries/useAuth";
+import { useSessions } from "../queries/useSessions";
+import { useFilesGlobal } from "../queries/useFiles";
+import { useChatStore } from "../stores/useChatStore";
 import { RouteErrorBoundary } from "../components/ErrorCard";
+import { WizardOverlay } from "../components/WizardOverlay";
+import { useWizardStore } from "../stores/useWizardStore";
 import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
 import type { ChatSession } from "../queries/useSessions";
 
@@ -39,6 +44,38 @@ export default function AppShell() {
   const logout = useLogout();
   const queryClient = useQueryClient();
 
+  // Query hooks for trigger conditions - use same query keys as views (shared cache)
+  const sessionsQuery = useSessions();
+  const filesQuery = useFilesGlobal();
+  const isStreaming = useChatStore((state) => state.isStreaming);
+
+  // Wizard state
+  const wizard = useWizardStore();
+  const { open: wizardOpen } = wizard;
+
+  // First-run wizard trigger derivation
+  // Design contract: triggerHolds = !!user && queries resolved && 0 sessions && 0 files && !isStreaming && !dismissed
+  const triggerHolds = !!user
+    && sessionsQuery.isSuccess && filesQuery.isSuccess
+    && (sessionsQuery.data ?? []).length === 0
+    && (filesQuery.data ?? []).length === 0
+    && !isStreaming && !wizard.dismissed;
+
+  // Auto-open effect: when triggerHolds becomes true and wizard isn't already open
+  useEffect(() => {
+    if (triggerHolds && !wizard.open) {
+      wizard.openWizard();
+    }
+  }, [triggerHolds, wizard.open, wizard]);
+
+  // Un-engaged auto-close effect: when wizard is open but not engaged/manual, and trigger flips false
+  useEffect(() => {
+    if (wizard.open && !wizard.engaged && !wizard.manual && !triggerHolds) {
+      wizard.closeWizard();
+    }
+  }, [triggerHolds, wizard.open, wizard.engaged, wizard.manual, wizard]);
+
+  // SSE event handling
   const onEvent = useCallback(
     (event: SessionEvent) => {
       // Empty/failed cache (e.g. the initial sessions fetch failed while the
@@ -106,62 +143,67 @@ export default function AppShell() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      {/* Sidebar */}
-      <nav
-        style={{
-          width: 220,
-          background: "#f8f9fa",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <h2 style={{ margin: "0 0 16px" }}>Datara</h2>
-        <Link to="/app/chat" style={{ marginBottom: 8 }}>
-          Chat
-        </Link>
-        <Link to="/app/files" style={{ marginBottom: 8 }}>
-          Files
-        </Link>
-        <Link to="/app/archives" style={{ marginBottom: 8 }}>
-          Archives
-        </Link>
-        <Link to="/app/settings" style={{ marginBottom: 8 }}>
-          Settings
-        </Link>
-        <div style={{ marginTop: "auto" }}>
-          <p style={{ fontSize: "0.85em", color: "#666" }}>{user.email}</p>
-          <button onClick={handleLogout} disabled={logout.isPending}>
-            Log out
-          </button>
-        </div>
-      </nav>
+    <>
+      <div style={{ display: "flex", height: "100vh" }}>
+        {/* Sidebar */}
+        <nav
+          style={{
+            width: 220,
+            background: "#f8f9fa",
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <h2 style={{ margin: "0 0 16px" }}>Datara</h2>
+          <Link to="/app/chat" style={{ marginBottom: 8 }}>
+            Chat
+          </Link>
+          <Link to="/app/files" style={{ marginBottom: 8 }}>
+            Files
+          </Link>
+          <Link to="/app/archives" style={{ marginBottom: 8 }}>
+            Archives
+          </Link>
+          <Link to="/app/settings" style={{ marginBottom: 8 }}>
+            Settings
+          </Link>
+          <div style={{ marginTop: "auto" }}>
+            <p style={{ fontSize: "0.85em", color: "#666" }}>{user.email}</p>
+            <button onClick={handleLogout} disabled={logout.isPending}>
+              Log out
+            </button>
+          </div>
+        </nav>
 
-      {/* Main content */}
-      <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
-        <Suspense fallback={<Loading />}>
-          <Routes>
-            <Route
-              path="/chat/:sessionId?"
-              element={withErrorBoundary("Chat", ChatView)}
-            />
-            <Route
-              path="/files"
-              element={withErrorBoundary("Files", FilesView)}
-            />
-            <Route
-              path="/settings"
-              element={withErrorBoundary("Settings", SettingsView)}
-            />
-            <Route
-              path="/archives"
-              element={withErrorBoundary("Archives", ArchiveList)}
-            />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </main>
-    </div>
+        {/* Main content */}
+        <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
+          <Suspense fallback={<Loading />}>
+            <Routes>
+              <Route
+                path="/chat/:sessionId?"
+                element={withErrorBoundary("Chat", ChatView)}
+              />
+              <Route
+                path="/files"
+                element={withErrorBoundary("Files", FilesView)}
+              />
+              <Route
+                path="/settings"
+                element={withErrorBoundary("Settings", SettingsView)}
+              />
+              <Route
+                path="/archives"
+                element={withErrorBoundary("Archives", ArchiveList)}
+              />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </main>
+
+        {/* Wizard overlay - mounted inside root flex div after main */}
+        {wizardOpen && <WizardOverlay />}
+      </div>
+    </>
   );
 }
