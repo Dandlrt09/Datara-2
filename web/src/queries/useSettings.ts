@@ -9,6 +9,8 @@ export interface UserSettings {
   default_model?: string | null;
   /** Models the server accepts for default_model (drives the UI dropdown). */
   allowed_models?: string[];
+  provider_type?: "openrouter" | "ollama" | "lmstudio" | "groq" | "custom" | null;
+  base_url?: string | null;
 }
 
 export function useSettings() {
@@ -21,7 +23,12 @@ export function useSettings() {
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { api_key?: string; default_model?: string }) =>
+    mutationFn: (data: { 
+      api_key?: string; 
+      default_model?: string;
+      provider_type?: "openrouter" | "ollama" | "lmstudio" | "groq" | "custom" | null;
+      base_url?: string | null;
+    }) =>
       api.put<UserSettings>("/api/settings", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
