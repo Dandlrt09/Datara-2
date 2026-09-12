@@ -48,6 +48,8 @@ from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
 from server.services.sqlite_store import SqliteStore
+from server.services.provider_registry import build_provider, ProviderType
+from server.api.routers.settings import ALLOWED_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -98,27 +100,62 @@ class MessageResponse(BaseModel):
 # ── Provider resolution ────────────────────────────────────────────────────────
 
 
+async def _resolve_model(
+    store: SqliteStore,
+    user_id: int,
+) -> str:
+    """Resolve the model for a user, checking against whitelist.
+    
+    Returns the resolved model name.
+    """
+    settings = await store.get_user_settings(user_id)
+    model = _DEFAULT_MODEL
+    
+    if settings and settings.get("default_model"):
+        model = settings["default_model"]
+    
+    return model
+
+
 async def _resolve_provider(
     store: SqliteStore,
     user_id: int,
 ) -> OpenAIProvider:
     """Resolve the LLM provider for a user.
 
-    Uses ``user_settings.api_key_enc`` as the API key if set, otherwise
-    falls back to the ``OPENAI_API_KEY`` env var.
-    Uses ``user_settings.default_model`` if set, otherwise the default model.
+    Uses saved provider_type, api_key_enc, base_url if available.
+    Resolution order for base_url: saved → OPENAI_BASE_URL env → default.
+    provider_type=custom with empty base_url → env fallback without error.
     """
     settings = await store.get_user_settings(user_id)
     api_key = None
     model = _DEFAULT_MODEL
-
+    provider_type: ProviderType | None = None
+    base_url: str | None = None
+    
     if settings:
         if settings.get("api_key_enc"):
             api_key = settings["api_key_enc"]
         if settings.get("default_model"):
             model = settings["default_model"]
-
-    return OpenAIProvider(api_key=api_key, model=model)
+        if settings.get("provider_type"):
+            provider_type = settings["provider_type"]  # type: ignore
+        if settings.get("base_url"):
+            base_url = settings["base_url"]
+    
+    # provider_type=custom with empty base_url → env fallback without error
+    # (mirrors api_key fallback)
+    if provider_type == "custom" and not base_url:
+        # Let build_provider handle env fallback (base_url=None)
+        base_url = None
+    
+    return build_provider(
+        provider_type=provider_type,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout=120.0,
+    )
 
 
 # ── SSE helpers ────────────────────────────────────────────────────────────────
@@ -275,6 +312,19 @@ async def chat_stream(
     session = await store.get_chat_session(session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    # Chat-time model whitelist enforcement (design D8)
+    # Must happen BEFORE user message persistence and BEFORE SSE stream starts
+    model = await _resolve_model(store, user_id)
+    if model not in ALLOWED_MODELS:
+        allowed_list = ", ".join(sorted(ALLOWED_MODELS))
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "model_not_allowed",
+                "message": f"El modelo '{model}' no está permitido. Modelos permitidos: {allowed_list}."
+            }
+        )
 
     # Step 2: Persist user message (skipped on retry — the failed turn's
     # question is already in history; re-persisting would duplicate it)
