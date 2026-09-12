@@ -9,11 +9,13 @@ current one, via the store's COALESCE upsert).
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from server.api.deps import current_user, get_store
+from server.services.base_url_guard import BaseUrlRejected, validate_base_url
 from server.services.sqlite_store import SqliteStore
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -51,11 +53,15 @@ class SettingsResponse(BaseModel):
     has_api_key: bool = False
     default_model: str | None = None
     allowed_models: list[str] = []
+    provider_type: Literal["openrouter", "ollama", "lmstudio", "groq", "custom"] | None = None
+    base_url: str | None = None
 
 
 class SettingsUpdateRequest(BaseModel):
     api_key: str | None = None
     default_model: str | None = None
+    provider_type: Literal["openrouter", "ollama", "lmstudio", "groq", "custom"] | None = None
+    base_url: str | None = Field(default=None, min_length=0)  # empty string allowed → clear
 
     @field_validator("default_model")
     @classmethod
@@ -65,6 +71,14 @@ class SettingsUpdateRequest(BaseModel):
         # stored value is visible — re-saving an unchanged model that is no
         # longer whitelisted (e.g. server rebooted without
         # DATARA_ALLOWED_MODELS) must not block unrelated updates.
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
+
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_base_url(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = v.strip()
@@ -86,6 +100,8 @@ async def get_settings(
         user_id=settings["user_id"],
         has_api_key=bool(settings.get("api_key_enc")),
         default_model=settings["default_model"],
+        provider_type=settings["provider_type"],
+        base_url=settings["base_url"],
         allowed_models=sorted(ALLOWED_MODELS),
     )
 
@@ -99,13 +115,15 @@ async def update_settings(
     """Update the current user's settings.
 
     Only provided fields are updated; omitted/empty fields keep their
-    current value (the store upsert uses COALESCE).
+    current value (the store upsert uses COALESCE for api_key/default_model,
+    CASE flags for provider_type/base_url).
 
     An unknown ``default_model`` is rejected with 422 — unless it equals
     the value already stored for this user, which is treated as "keep"
     (a stale whitelist must not brick unrelated updates such as saving
     a new API key).
     """
+    # Keep the save-time default_model whitelist check (removed in Work Unit 4)
     if body.default_model is not None:
         current = await store.get_user_settings(user["id"])
         stored_model = current["default_model"] if current else None
@@ -117,14 +135,57 @@ async def update_settings(
                     f"Allowed: {', '.join(sorted(ALLOWED_MODELS))}"
                 ),
             )
+
+    # Determine effective provider_type for SSRF guard: use provided value if
+    # present, otherwise fetch current settings to know what's already stored.
+    # Also need to preserve stored value for the upsert when omitted.
+    effective_provider_type = body.provider_type
+    stored_provider_type = None
+    if "provider_type" not in body.model_fields_set:
+        # provider_type omitted → need stored value for SSRF guard AND to keep it
+        current = await store.get_user_settings(user["id"])
+        stored_provider_type = current["provider_type"] if current else None
+        effective_provider_type = stored_provider_type
+    elif effective_provider_type is None and "provider_type" in body.model_fields_set:
+        # provider_type was explicitly set to null → clear
+        effective_provider_type = None
+        stored_provider_type = None  # will be cleared
+
+    # SSRF guard for base_url if provided (including empty string to clear)
+    if "base_url" in body.model_fields_set:
+        if body.base_url is not None and body.base_url != "":
+            try:
+                await validate_base_url(
+                    body.base_url, provider_type=effective_provider_type
+                )
+            except BaseUrlRejected as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": e.code, "message": e.reason},
+                )
+        # empty string "" is normalized to None by the validator → clear
+
+    # Determine which fields were provided for the CASE-flag upsert
+    provider_type_provided = "provider_type" in body.model_fields_set
+    base_url_provided = "base_url" in body.model_fields_set
+
+    # Use stored_provider_type when omitted, otherwise body.provider_type
+    upsert_provider_type = stored_provider_type if stored_provider_type is not None else body.provider_type
+
     result = await store.upsert_user_settings(
         user["id"],
         api_key_enc=body.api_key or None,
         default_model=body.default_model,
+        provider_type=upsert_provider_type,
+        base_url=body.base_url,  # None or normalized value
+        provider_type_provided=provider_type_provided,
+        base_url_provided=base_url_provided,
     )
     return SettingsResponse(
         user_id=result["user_id"],
         has_api_key=bool(result.get("api_key_enc")),
         default_model=result["default_model"],
+        provider_type=result["provider_type"],
+        base_url=result["base_url"],
         allowed_models=sorted(ALLOWED_MODELS),
     )

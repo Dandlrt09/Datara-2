@@ -232,3 +232,261 @@ class TestEnvExtendedWhitelist:
             headers={"Cookie": cookie},
         )
         assert resp.status_code == 422
+
+
+class TestProviderSettings:
+    """Tests for provider_type and base_url fields (Work Unit 2)."""
+
+    @pytest.fixture(autouse=True)
+    def mock_dns(self, monkeypatch):
+        """Mock DNS resolution to avoid network calls in tests."""
+        async def mock_resolve_hostname(hostname):
+            import ipaddress
+            # Map test hostnames to IPs
+            if hostname == "api.example.com":
+                return [ipaddress.ip_address("93.184.216.34")]  # example.com
+            elif hostname == "openrouter.ai":
+                return [ipaddress.ip_address("172.67.74.16")]  # real-ish
+            elif hostname == "api.groq.com":
+                return [ipaddress.ip_address("104.21.22.207")]  # cloudflare
+            elif hostname == "localhost":
+                return [ipaddress.ip_address("127.0.0.1")]
+            elif hostname == "192.168.1.50":
+                return [ipaddress.ip_address("192.168.1.50")]
+            else:
+                # Default public IP for any other hostname
+                return [ipaddress.ip_address("93.184.216.34")]
+        
+        monkeypatch.setattr(
+            "server.services.base_url_guard._resolve_hostname",
+            mock_resolve_hostname
+        )
+
+    def test_update_provider_type_and_base_url(self, client, auth_client):
+        """Basic update of provider_type and base_url."""
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1"
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider_type"] == "openrouter"
+        assert data["base_url"] == "https://openrouter.ai/api/v1"
+
+        # Verify GET returns the same values
+        get_resp = client.get("/api/settings", headers={"Cookie": cookie})
+        get_data = get_resp.json()
+        assert get_data["provider_type"] == "openrouter"
+        assert get_data["base_url"] == "https://openrouter.ai/api/v1"
+
+    def test_update_partial_keeps_other_fields(self, client, auth_client):
+        """Updating only provider_type should keep existing base_url."""
+        cookie = auth_client
+        # Set both fields
+        client.put(
+            "/api/settings",
+            json={
+                "provider_type": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "default_model": "gpt-4o",
+            },
+            headers={"Cookie": cookie},
+        )
+        # Update only provider_type
+        resp = client.put(
+            "/api/settings",
+            json={"provider_type": "custom"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider_type"] == "custom"
+        assert data["base_url"] == "https://openrouter.ai/api/v1"  # unchanged
+        assert data["default_model"] == "gpt-4o"
+
+    def test_clear_base_url_with_empty_string(self, client, auth_client):
+        """Empty string for base_url should clear it to null."""
+        cookie = auth_client
+        # Set base_url
+        client.put(
+            "/api/settings",
+            json={
+                "provider_type": "custom",
+                "base_url": "https://api.example.com/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        # Clear with empty string
+        resp = client.put(
+            "/api/settings",
+            json={"base_url": ""},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["base_url"] is None
+        assert data["provider_type"] == "custom"  # unchanged
+
+    def test_clear_provider_type_with_null(self, client, auth_client):
+        """null for provider_type should clear it."""
+        cookie = auth_client
+        # Set provider_type
+        client.put(
+            "/api/settings",
+            json={
+                "provider_type": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        # Clear with null
+        resp = client.put(
+            "/api/settings",
+            json={"provider_type": None},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider_type"] is None
+        assert data["base_url"] == "https://openrouter.ai/api/v1"  # unchanged
+
+    def test_omit_fields_keeps_current_values(self, client, auth_client):
+        """Omitted fields (not in JSON) should keep current values."""
+        cookie = auth_client
+        # Set initial values - use a whitelisted model
+        resp1 = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "ollama",
+                "base_url": "http://localhost:11434/v1",
+                "default_model": "gpt-4o",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp1.status_code == 200, f"First PUT failed: {resp1.text}"
+        # Update only api_key, provider fields omitted
+        resp = client.put(
+            "/api/settings",
+            json={"api_key": "sk-new-key"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["has_api_key"] is True
+        assert data["provider_type"] == "ollama"  # unchanged
+        assert data["base_url"] == "http://localhost:11434/v1"  # unchanged
+        assert data["default_model"] == "gpt-4o"  # unchanged
+
+    def test_rejects_http_for_custom_provider(self, client, auth_client):
+        """Custom provider requires HTTPS."""
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "custom",
+                "base_url": "http://api.example.com/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+        data = resp.json()
+        assert "detail" in data
+        assert "code" in data["detail"]
+        assert data["detail"]["code"] == "invalid_base_url"
+        assert "HTTPS" in data["detail"]["message"]
+
+    def test_allows_http_for_ollama_localhost(self, client, auth_client):
+        """Ollama permits HTTP localhost (loopback exemption)."""
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "ollama",
+                "base_url": "http://localhost:11434/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider_type"] == "ollama"
+        assert data["base_url"] == "http://localhost:11434/v1"
+
+    def test_rejects_localhost_for_custom_provider(self, client, auth_client):
+        """Custom provider cannot use localhost."""
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "custom",
+                "base_url": "https://localhost:8000/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+        data = resp.json()
+        assert data["detail"]["code"] == "invalid_base_url"
+
+    def test_rejects_lan_for_ollama(self, client, auth_client):
+        """Ollama on LAN IP (192.168.x.x) is rejected (only loopback exempt)."""
+        cookie = auth_client
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "ollama",
+                "base_url": "http://192.168.1.50:11434/v1",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+        data = resp.json()
+        assert data["detail"]["code"] == "invalid_base_url"
+
+    def test_concurrent_updates_atomic(self, client, auth_client):
+        """Concurrent PUTs should produce a merged row, not corruption."""
+        import threading
+        import queue
+        
+        cookie = auth_client
+        results = queue.Queue()
+        
+        def put_provider_type():
+            resp = client.put(
+                "/api/settings",
+                json={"provider_type": "openrouter"},
+                headers={"Cookie": cookie},
+            )
+            results.put(("provider_type", resp.status_code))
+        
+        def put_base_url():
+            resp = client.put(
+                "/api/settings",
+                json={"base_url": "https://openrouter.ai/api/v1"},
+                headers={"Cookie": cookie},
+            )
+            results.put(("base_url", resp.status_code))
+        
+        t1 = threading.Thread(target=put_provider_type)
+        t2 = threading.Thread(target=put_base_url)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        
+        # Collect results
+        status_codes = {}
+        while not results.empty():
+            field, code = results.get()
+            status_codes[field] = code
+        
+        assert status_codes.get("provider_type") == 200
+        assert status_codes.get("base_url") == 200
+        
+        # Final state should have both fields
+        final = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert final["provider_type"] == "openrouter"
+        assert final["base_url"] == "https://openrouter.ai/api/v1"
