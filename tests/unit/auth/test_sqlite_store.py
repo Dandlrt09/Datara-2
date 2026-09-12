@@ -20,6 +20,11 @@ async def store():
     # Apply schema directly on the aiosqlite connection
     init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
     await s.conn.executescript(init_sql)
+    # Apply migration 0002 if it exists
+    migration_0002_path = MIGRATIONS_DIR / "0002_provider_settings.sql"
+    if migration_0002_path.exists():
+        migration_sql = migration_0002_path.read_text(encoding="utf-8")
+        await s.conn.executescript(migration_sql)
     await s.conn.commit()
     yield s
     await s.close()
@@ -196,6 +201,9 @@ class TestUserSettings:
         assert result["user_id"] == user["id"]
         assert result["api_key_enc"] == "enc_key_123"
         assert result["default_model"] == "gpt-4o"
+        # New fields should be None by default
+        assert result["provider_type"] is None
+        assert result["base_url"] is None
 
     async def test_upsert_update_partial(self, store):
         user = await store.create_user("alice@example.com", "hash")
@@ -212,6 +220,9 @@ class TestUserSettings:
         assert result["default_model"] == "gpt-4o-mini"
         # api_key_enc should be unchanged from original
         assert result["api_key_enc"] == "enc_orig"
+        # provider fields should be None
+        assert result["provider_type"] is None
+        assert result["base_url"] is None
 
     async def test_upsert_multiple_users(self, store):
         user_a = await store.create_user("a@example.com", "hash1")
@@ -222,3 +233,77 @@ class TestUserSettings:
         b_settings = await store.get_user_settings(user_b["id"])
         assert a_settings["default_model"] == "model_a"
         assert b_settings["default_model"] == "model_b"
+        # provider fields should be None
+        assert a_settings["provider_type"] is None
+        assert a_settings["base_url"] is None
+
+    async def test_upsert_with_provider_fields(self, store):
+        """Test upsert with provider_type and base_url."""
+        user = await store.create_user("alice@example.com", "hash")
+        result = await store.upsert_user_settings(
+            user["id"],
+            provider_type="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            provider_type_provided=True,
+            base_url_provided=True,
+        )
+        assert result["provider_type"] == "openrouter"
+        assert result["base_url"] == "https://openrouter.ai/api/v1"
+
+    async def test_provider_fields_partial_update_keep(self, store):
+        """Test that provider_type/base_url are kept when not provided."""
+        user = await store.create_user("alice@example.com", "hash")
+        # Set initial values
+        await store.upsert_user_settings(
+            user["id"],
+            provider_type="ollama",
+            base_url="http://localhost:11434/v1",
+            provider_type_provided=True,
+            base_url_provided=True,
+        )
+        # Update only api_key_enc, provider fields should stay unchanged
+        result = await store.upsert_user_settings(
+            user["id"],
+            api_key_enc="new_key",
+        )
+        assert result["api_key_enc"] == "new_key"
+        assert result["provider_type"] == "ollama"
+        assert result["base_url"] == "http://localhost:11434/v1"
+
+    async def test_provider_fields_clear_when_provided_null(self, store):
+        """Test that provider_type/base_url can be cleared when provided as null."""
+        user = await store.create_user("alice@example.com", "hash")
+        # Set initial values
+        await store.upsert_user_settings(
+            user["id"],
+            provider_type="custom",
+            base_url="https://api.example.com/v1",
+            provider_type_provided=True,
+            base_url_provided=True,
+        )
+        # Clear base_url by providing None with base_url_provided=True
+        result = await store.upsert_user_settings(
+            user["id"],
+            base_url=None,
+            base_url_provided=True,
+        )
+        assert result["base_url"] is None
+        assert result["provider_type"] == "custom"  # unchanged
+
+    async def test_concurrent_style_partial_updates(self, store):
+        """Test that two overlapping PUTs (one api_key only, one default_model only)
+        produce a merged row (spec: Concurrent settings updates)."""
+        user = await store.create_user("alice@example.com", "hash")
+        # Simulate concurrent updates
+        result1 = await store.upsert_user_settings(
+            user["id"],
+            api_key_enc="key_123",
+        )
+        result2 = await store.upsert_user_settings(
+            user["id"],
+            default_model="gpt-4o",
+        )
+        # Get final state
+        final = await store.get_user_settings(user["id"])
+        assert final["api_key_enc"] == "key_123"
+        assert final["default_model"] == "gpt-4o"

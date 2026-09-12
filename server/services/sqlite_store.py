@@ -202,7 +202,7 @@ class SqliteStore:
 
     async def get_user_settings(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
-            "SELECT user_id, api_key_enc, default_model, updated_at "
+            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, updated_at "
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
@@ -214,19 +214,30 @@ class SqliteStore:
         *,
         api_key_enc: str | None = None,
         default_model: str | None = None,
+        provider_type: str | None = None,
+        base_url: str | None = None,
+        provider_type_provided: bool = False,
+        base_url_provided: bool = False,
     ) -> dict[str, Any]:
         await self.conn.execute(
-            "INSERT INTO user_settings (user_id, api_key_enc, default_model, updated_at) "
-            "VALUES (?, ?, ?, datetime('now')) "
+            "INSERT INTO user_settings (user_id, api_key_enc, default_model, provider_type, base_url, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now')) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "  api_key_enc = COALESCE(?, api_key_enc),"
             "  default_model = COALESCE(?, default_model),"
+            "  provider_type = CASE WHEN ? THEN ? ELSE provider_type END,"
+            "  base_url = CASE WHEN ? THEN ? ELSE base_url END,"
             "  updated_at = datetime('now')",
-            (user_id, api_key_enc, default_model, api_key_enc, default_model),
+            (
+                user_id, api_key_enc, default_model, provider_type, base_url,
+                api_key_enc, default_model,
+                int(provider_type_provided), provider_type,
+                int(base_url_provided), base_url,
+            ),
         )
         await self.conn.commit()
         rows = await self.conn.execute_fetchall(
-            "SELECT user_id, api_key_enc, default_model, updated_at "
+            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, updated_at "
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
