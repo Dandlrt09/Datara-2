@@ -1,23 +1,17 @@
 """Tests for session cleanup service."""
 
-from pathlib import Path
-
 import pytest
 
 from server.services.session_cleanup import sweep_expired
 from server.services.sqlite_store import SqliteStore
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+from tests.test_helpers import apply_all_migrations
 
 
 @pytest.fixture
 async def store():
     s = SqliteStore(db_path=":memory:")
     await s.connect()
-    init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-    await s.conn.executescript(init_sql)
-    await s.conn.commit()
+    await apply_all_migrations(s)
     yield s
     await s.close()
 
