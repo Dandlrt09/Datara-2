@@ -15,6 +15,7 @@ const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
+const Setup = lazy(() => import("./Setup"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -191,6 +192,10 @@ export default function AppShell() {
               <Route
                 path="/settings"
                 element={withErrorBoundary("Settings", SettingsView)}
+              />
+              <Route
+                path="/setup"
+                element={withErrorBoundary("Setup", Setup)}
               />
               <Route
                 path="/archives"

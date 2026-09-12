@@ -56,6 +56,11 @@ export default function SettingsView() {
   return (
     <div style={{ maxWidth: 500 }}>
       <h1>Settings</h1>
+      <div style={{ marginBottom: 16 }}>
+        <a href="/app/setup" style={{ display: "inline-block", padding: "8px 16px", backgroundColor: "#007acc", color: "white", borderRadius: 4, textDecoration: "none" }}>
+          Configurar proveedor
+        </a>
+      </div>
       <QueryError error={error as Error | null} onRetry={refetch}>
         <form onSubmit={handleSubmit(onSubmit)}>
           <div style={{ marginBottom: 16 }}>
