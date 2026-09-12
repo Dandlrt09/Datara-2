@@ -31,6 +31,7 @@ _BASE_MODELS = frozenset(
         "gpt-4.1",
         "gpt-4.1-mini",
         "gpt-4.1-nano",
+        "gpt-4o-2024-08-06",  # Default model in chat.py
     }
 )
 
@@ -137,23 +138,11 @@ async def update_settings(
     current value (the store upsert uses COALESCE for api_key/default_model,
     CASE flags for provider_type/base_url).
 
-    An unknown ``default_model`` is rejected with 422 — unless it equals
-    the value already stored for this user, which is treated as "keep"
-    (a stale whitelist must not brick unrelated updates such as saving
-    a new API key).
+    Whitelist validation for default_model is now at chat time (Work Unit 4).
+    This endpoint accepts any non-empty default_model string.
     """
-    # Keep the save-time default_model whitelist check (removed in Work Unit 4)
-    if body.default_model is not None:
-        current = await store.get_user_settings(user["id"])
-        stored_model = current["default_model"] if current else None
-        if body.default_model != stored_model and body.default_model not in ALLOWED_MODELS:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"unknown model '{body.default_model}'. "
-                    f"Allowed: {', '.join(sorted(ALLOWED_MODELS))}"
-                ),
-            )
+    # Whitelist validation moved to chat time (Work Unit 4)
+    # Any non-empty default_model is accepted here
 
     # Determine effective provider_type for SSRF guard: use provided value if
     # present, otherwise fetch current settings to know what's already stored.

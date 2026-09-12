@@ -132,7 +132,10 @@ class TestUpdateSettings:
         assert settings_b["default_model"] == "gpt-4o-mini"
 
     def test_update_rejects_unknown_model(self, client, auth_client):
-        """Unknown default_model must 422 and leave the stored value intact."""
+        """Unknown default_model is now accepted at save time (whitelist moves to chat).
+        
+        Previously: 422 for unknown model. Now: 200 accepted.
+        """
         cookie = auth_client
         client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie})
 
@@ -141,13 +144,10 @@ class TestUpdateSettings:
             json={"default_model": "gpt-inventado-9000"},
             headers={"Cookie": cookie},
         )
-        assert resp.status_code == 422
-        assert "unknown model" in resp.text
-        assert "gpt-4o" in resp.text  # allowed models listed in the error
-
-        # Stored value unchanged after the rejected update.
+        # Whitelist moved to chat time, so PUT accepts any non-empty model
+        assert resp.status_code == 200
         data = client.get("/api/settings", headers={"Cookie": cookie}).json()
-        assert data["default_model"] == "gpt-4o"
+        assert data["default_model"] == "gpt-inventado-9000"
 
     def test_update_empty_model_treated_as_unset(self, client, auth_client):
         cookie = auth_client
@@ -159,9 +159,11 @@ class TestUpdateSettings:
         assert data["default_model"] == "gpt-4o"
 
     def test_update_keeps_stored_model_even_if_not_whitelisted(self, client, auth_client, monkeypatch):
-        """Re-saving an unchanged default_model must not 422 when the
-        whitelist shrank (e.g. reboot without DATARA_ALLOWED_MODELS) —
-        otherwise saving a new API key becomes impossible."""
+        """Re-saving an unchanged default_model when the whitelist shrank.
+        
+        With whitelist moved to chat time, PUT accepts any model, so this
+        test verifies the unchanged model is still accepted.
+        """
         from server.api.routers import settings as settings_module
 
         cookie = auth_client
@@ -194,18 +196,24 @@ class TestUpdateSettings:
         assert data["default_model"] == "z-ai/glm-5.3-flash"
         assert data["has_api_key"] is True
 
-        # A genuinely different unknown model is still rejected.
+        # A genuinely different unknown model is also accepted (whitelist at chat time)
         resp = client.put(
             "/api/settings",
             json={"default_model": "gpt-inventado-9000"},
             headers={"Cookie": cookie},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "gpt-inventado-9000"
 
 
 class TestEnvExtendedWhitelist:
     def test_env_extension_accepts_custom_backend_model(self, client, auth_client, monkeypatch):
-        """DATARA_ALLOWED_MODELS extends the whitelist (OpenRouter slugs etc.)."""
+        """DATARA_ALLOWED_MODELS extends the whitelist (OpenRouter slugs etc.).
+        
+        With whitelist moved to chat time, PUT accepts any model, but GET
+        response's allowed_models still shows the extended list.
+        """
         from server.api.routers import settings as settings_module
 
         monkeypatch.setattr(
@@ -225,13 +233,15 @@ class TestEnvExtendedWhitelist:
         assert data["default_model"] == "z-ai/glm-4.7-flash"
         assert set(data["allowed_models"]) == {"gpt-4o", "z-ai/glm-4.7-flash"}
 
-        # Whitelist still enforced for anything outside the extension.
+        # Whitelist enforcement moved to chat time, so PUT accepts any model
         resp = client.put(
             "/api/settings",
             json={"default_model": "gpt-inventado-9000"},
             headers={"Cookie": cookie},
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        data = client.get("/api/settings", headers={"Cookie": cookie}).json()
+        assert data["default_model"] == "gpt-inventado-9000"
 
 
 class TestProviderSettings:
