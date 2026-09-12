@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from server.api.deps import current_user, get_store
 from server.services.base_url_guard import BaseUrlRejected, validate_base_url
+from server.services.provider_registry import fetch_models
 from server.services.sqlite_store import SqliteStore
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -83,6 +84,24 @@ class SettingsUpdateRequest(BaseModel):
             return None
         v = v.strip()
         return v or None
+
+
+class ModelInfo(BaseModel):
+    """Model information returned by POST /api/settings/models."""
+    id: str
+    name: str
+
+
+class FetchModelsError(BaseModel):
+    """Error information returned by POST /api/settings/models on failure."""
+    code: Literal["no_provider", "provider_error", "timeout", "network"]
+    message: str
+
+
+class ModelsResponse(BaseModel):
+    """Response for POST /api/settings/models."""
+    models: list[ModelInfo]
+    error: FetchModelsError | None
 
 
 @router.get("", response_model=SettingsResponse)
@@ -188,4 +207,43 @@ async def update_settings(
         provider_type=result["provider_type"],
         base_url=result["base_url"],
         allowed_models=sorted(ALLOWED_MODELS),
+    )
+
+
+@router.post("/models", response_model=ModelsResponse)
+async def fetch_available_models(
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Fetch available models from the configured provider.
+    
+    Uses saved provider settings (provider_type, base_url, api_key) to
+    query the provider's model list endpoint. Always returns HTTP 200
+    with {models: [...], error: null|{code, message}} shape.
+    
+    The returned models are NOT filtered by DATARA_ALLOWED_MODELS.
+    """
+    settings = await store.get_user_settings(user["id"])
+    if not settings:
+        return ModelsResponse(
+            models=[],
+            error=FetchModelsError(
+                code="no_provider",
+                message="No provider configured",
+            ),
+        )
+    
+    provider_type = settings.get("provider_type")
+    api_key = settings.get("api_key_enc")
+    base_url = settings.get("base_url")
+    
+    result = await fetch_models(
+        provider_type=provider_type,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    
+    return ModelsResponse(
+        models=result["models"],
+        error=FetchModelsError(**result["error"]) if result["error"] else None,
     )
