@@ -60,6 +60,8 @@ class OpenAIProvider:
             ``OPENAI_API_KEY`` environment variable.
         model: Model name (default: ``gpt-4o-2024-08-06``).
         timeout: Request timeout in seconds (default: 60).
+        base_url: Custom base URL. If ``None``, falls back to the
+            ``OPENAI_BASE_URL`` environment variable, then OpenAI default.
     """
 
     def __init__(
@@ -67,10 +69,11 @@ class OpenAIProvider:
         api_key: str | None = None,
         model: str = "gpt-4o-2024-08-06",
         timeout: float = _DEFAULT_TIMEOUT,
+        base_url: str | None = None,
     ) -> None:
         self._model = model
         self._timeout = timeout
-        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout)
+        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout, base_url=base_url)
 
     # ── LLMProvider protocol ─────────────────────────────────────────────────
 
