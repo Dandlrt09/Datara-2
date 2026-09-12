@@ -3,29 +3,17 @@
 All tests use an in-memory SQLite database with the init schema applied.
 """
 
-from pathlib import Path
-
 import pytest
 
 from server.services.sqlite_store import SqliteStore
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+from tests.test_helpers import apply_all_migrations
 
 
 @pytest.fixture
 async def store():
     s = SqliteStore(db_path=":memory:")
     await s.connect()
-    # Apply schema directly on the aiosqlite connection
-    init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-    await s.conn.executescript(init_sql)
-    # Apply migration 0002 if it exists
-    migration_0002_path = MIGRATIONS_DIR / "0002_provider_settings.sql"
-    if migration_0002_path.exists():
-        migration_sql = migration_0002_path.read_text(encoding="utf-8")
-        await s.conn.executescript(migration_sql)
-    await s.conn.commit()
+    await apply_all_migrations(s)
     yield s
     await s.close()
 

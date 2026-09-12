@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,9 +20,7 @@ from server.api.routers import chat as chat_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+from tests.test_helpers import apply_all_migrations
 
 
 @pytest.fixture
@@ -44,9 +41,7 @@ def app():
 
     async def _setup():
         await s.connect()
-        init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-        await s.conn.executescript(init_sql)
-        await s.conn.commit()
+        await apply_all_migrations(s)
 
     asyncio.run(_setup())
     api_store._store = s

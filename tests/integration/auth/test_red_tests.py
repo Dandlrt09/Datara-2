@@ -4,8 +4,6 @@ Tests cover: cross-user access blocked, expired session, missing cookie,
 duplicate email, and consistent 401 for bad credentials.
 """
 
-from pathlib import Path
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -16,9 +14,7 @@ from server.api.routers.sessions import router as sessions_router
 from server.api.routers.settings import router as settings_router
 from server.services.auth_service import generate_raw_token, hash_token, build_set_cookie_header
 from server.services.sqlite_store import SqliteStore
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+from tests.test_helpers import apply_all_migrations
 
 
 @pytest.fixture
@@ -34,9 +30,7 @@ def app():
 
     async def _setup():
         await s.connect()
-        init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-        await s.conn.executescript(init_sql)
-        await s.conn.commit()
+        await apply_all_migrations(s)
 
     asyncio.run(_setup())
     api_store._store = s
