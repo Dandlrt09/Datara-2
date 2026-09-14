@@ -34,6 +34,8 @@ export default function Setup() {
   const [step, setStep] = useState(0);
   const [connectionTestPassed, setConnectionTestPassed] = useState(false);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
+  // Live model list search: case-insensitive substring over id + name.
+  const [modelQuery, setModelQuery] = useState("");
 
   const {
     register,
@@ -60,6 +62,17 @@ export default function Setup() {
 
   const formValues = watch();
   const selectedPreset = PRESETS.find((p) => p.id === formValues.providerType);
+
+  // Filtered model list for the search box (empty query → full list).
+  const normalizedQuery = modelQuery.trim().toLowerCase();
+  const filteredModels =
+    normalizedQuery === ""
+      ? models
+      : models.filter(
+          (m) =>
+            m.id.toLowerCase().includes(normalizedQuery) ||
+            m.name.toLowerCase().includes(normalizedQuery)
+        );
 
   // Prefill from saved settings on load (re-entry always starts at the provider
   // step pre-filled from current settings; there is no server-side wizard state).
@@ -90,6 +103,7 @@ export default function Setup() {
     setValue("baseUrl", preset ? preset.defaultBaseUrl : "");
     setValue("model", "");
     setConnectionTestPassed(false);
+    setModelQuery("");
   }, [formValues.providerType, setValue]);
 
   // Named presets fetch the live model list on entering the model step;
@@ -290,17 +304,30 @@ export default function Setup() {
                 <label style={{ display: "block", marginBottom: 4 }}>
                   Selecciona un modelo
                 </label>
-                <select
-                  {...register("model", { required: true })}
-                  style={{ width: "100%", padding: 8 }}
-                >
-                  <option value="">{COPY.MODEL_REQUIRED}</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  type="text"
+                  value={modelQuery}
+                  onChange={(e) => setModelQuery(e.target.value)}
+                  placeholder={COPY.MODEL_SEARCH_PLACEHOLDER}
+                  style={{ width: "100%", padding: 8, marginBottom: 8 }}
+                />
+                {filteredModels.length === 0 ? (
+                  <p style={{ fontSize: "0.9em", color: "#666" }}>
+                    {COPY.MODEL_SEARCH_NO_RESULTS} "{modelQuery.trim()}".
+                  </p>
+                ) : (
+                  <select
+                    {...register("model", { required: true })}
+                    style={{ width: "100%", padding: 8 }}
+                  >
+                    <option value="">{COPY.MODEL_REQUIRED}</option>
+                    {filteredModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             )}
 

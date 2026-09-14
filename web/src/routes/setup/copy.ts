@@ -24,5 +24,7 @@ export const COPY = {
   MODEL_LIST_FALLBACK:
     "No se pudo obtener la lista de modelos. Escribe el identificador del modelo manualmente.",
   MODEL_REQUIRED: "Selecciona un modelo o escribe su identificador.",
+  MODEL_SEARCH_PLACEHOLDER: "Buscar modelo (nombre o id)...",
+  MODEL_SEARCH_NO_RESULTS: "Sin resultados para",
   DONE_CONFIRMATION: "Configuración guardada correctamente.",
 } as const;

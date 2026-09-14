@@ -195,6 +195,65 @@ describe("Setup", () => {
     expect(options).toContain("GPT-4o Mini");
   });
 
+  it("filters the model dropdown with the search box and recovers after clearing", async () => {
+    mockModelsState(
+      [
+        { id: "gpt-4o", name: "GPT-4o" },
+        { id: "gpt-4o-mini", name: "GPT-4o Mini" },
+        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
+      ],
+      null
+    );
+    renderWizard();
+
+    await reachModelStep();
+
+    const search = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
+    fireEvent.change(search, { target: { value: "GLM" } });
+
+    const select = screen.getByRole("combobox");
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("GLM 5.3 Flash");
+    expect(options).not.toContain("GPT-4o");
+
+    // No matches: the dropdown disappears and a hint is shown.
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(await screen.findByText(`${COPY.MODEL_SEARCH_NO_RESULTS} "zzz".`)).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+
+    // Clearing the query restores the full list.
+    fireEvent.change(search, { target: { value: "" } });
+    const restored = screen.getByRole("combobox");
+    expect(Array.from(restored.querySelectorAll("option")).length).toBe(4); // placeholder + 3 models
+  });
+
+  it("clears the model search when switching presets", async () => {
+    mockModelsState(
+      [
+        { id: "gpt-4o", name: "GPT-4o" },
+        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
+      ],
+      null
+    );
+    renderWizard();
+
+    await reachModelStep();
+    const search = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
+    fireEvent.change(search, { target: { value: "glm" } });
+    expect(screen.queryByRole("combobox")).toBeTruthy();
+
+    fireEvent.click(screen.getByText(COPY.BUTTONS.PREVIOUS));
+    fireEvent.click(screen.getByText(COPY.BUTTONS.PREVIOUS));
+    selectPreset("Groq (clave de API requerida)");
+    clickNext();
+    const keyInput = await screen.findByPlaceholderText("sk-...");
+    fireEvent.change(keyInput, { target: { value: "sk-test" } });
+    clickNext();
+
+    const searchAfter = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
+    expect((searchAfter as HTMLInputElement).value).toBe("");
+  });
+
   it("shows the free-text fallback when the model fetch fails", async () => {
     mockModelsState([], { code: "timeout", message: "timed out" });
     renderWizard();
