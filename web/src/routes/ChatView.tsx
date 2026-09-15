@@ -17,8 +17,15 @@ export default function ChatView() {
     error: sessionsError,
     refetch: refetchSessions,
   } = useSessions();
-  const { data: messages, refetch: refetchMessages, error: messagesError } =
-    useMessages(sessionId ?? null);
+  const {
+    messages,
+    refetch: refetchMessages,
+    error: messagesError,
+    hasMore,
+    loadOlder,
+    isLoadingOlder,
+    loadOlderError,
+  } = useMessages(sessionId ?? null);
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
 
@@ -34,6 +41,13 @@ export default function ChatView() {
   const isPinnedRef = useRef(true);
   // Ref to track if we've consumed the suggested question from location.state
   const consumedSuggestedQuestionRef = useRef(false);
+  // Viewport restore after "load older": captured before the fetch, applied
+  // once the prepended messages commit (see the effect below).
+  const pendingScrollRestoreRef = useRef<{
+    sessionId: string | undefined;
+    prevHeight: number;
+    prevTop: number;
+  } | null>(null);
 
   // Set active session
   useEffect(() => {
@@ -66,6 +80,20 @@ export default function ChatView() {
     observer.observe(content);
     return () => observer.disconnect();
   }, []);
+
+  // "Load older" grows the content ABOVE the viewport. After the prepended
+  // messages commit, compensate the scroll position by the height delta so
+  // the user keeps reading exactly where they were; the bottom pin was
+  // released when the button was clicked, so the ResizeObserver cannot yank
+  // the viewport to the bottom during this window.
+  useEffect(() => {
+    const pending = pendingScrollRestoreRef.current;
+    if (!pending || pending.sessionId !== sessionId) return;
+    pendingScrollRestoreRef.current = null;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight - pending.prevHeight + pending.prevTop;
+  }, [messages, sessionId]);
 
   const handleNewSession = async () => {
     const session = await createSession.mutateAsync();
@@ -166,6 +194,21 @@ export default function ChatView() {
     abortRef.current?.abort();
   }, []);
 
+  const handleLoadOlder = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) {
+      pendingScrollRestoreRef.current = {
+        sessionId,
+        prevHeight: el.scrollHeight,
+        prevTop: el.scrollTop,
+      };
+      // Loading prepends content above the viewport: release the bottom pin
+      // so it cannot fight the position restore while the DOM grows.
+      isPinnedRef.current = false;
+    }
+    void loadOlder();
+  }, [sessionId, loadOlder]);
+
   // Abort any in-flight turn when leaving the session — on unmount or when
   // navigating to another chat — so the stream never keeps running in the
   // background and the global streaming state cannot bleed into the next
@@ -179,7 +222,7 @@ export default function ChatView() {
   // A trailing user message (no assistant reply after it) is a persisted
   // failed/aborted turn — keep the Retry affordance available across
   // navigation and reloads instead of tying it to ephemeral error state.
-  const lastMessage = messages?.[messages.length - 1];
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const retryAvailable =
     !!sessionId && !store.isStreaming && lastMessage?.role === "user";
 
@@ -283,6 +326,7 @@ export default function ChatView() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <div
           ref={scrollRef}
+          data-testid="chat-scroll"
           onScroll={() => {
             const el = scrollRef.current;
             if (!el) return;
@@ -316,7 +360,26 @@ export default function ChatView() {
             error={messagesError as Error | null}
             onRetry={refetchMessages}
           >
-            {messages?.map((m) => (
+            {hasMore && (
+              <div style={{ textAlign: "center", marginBottom: 12 }}>
+                {loadOlderError && (
+                  <p
+                    role="alert"
+                    style={{ color: "#c62828", margin: "0 0 8px", fontSize: "0.9em" }}
+                  >
+                    No se pudieron cargar los mensajes anteriores.
+                  </p>
+                )}
+                <button
+                  onClick={handleLoadOlder}
+                  disabled={isLoadingOlder}
+                  style={{ padding: "6px 14px" }}
+                >
+                  {isLoadingOlder ? "Cargando..." : "Cargar mensajes anteriores"}
+                </button>
+              </div>
+            )}
+            {messages.map((m) => (
               <ChatMessage
                 key={m.id}
                 role={m.role}

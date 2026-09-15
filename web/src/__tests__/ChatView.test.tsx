@@ -3,6 +3,23 @@ import { renderHook, act, screen, fireEvent, waitFor } from "@testing-library/re
 import { useChatStore } from "../stores/useChatStore";
 import { renderWithProviders } from "./test-utils";
 import ChatView from "../routes/ChatView";
+import type { UseMessagesResult } from "../queries/useMessages";
+
+/** Default useMessages mock in the hook's real return shape. */
+function makeMessagesMock(
+  overrides: Partial<UseMessagesResult> = {},
+): UseMessagesResult {
+  return {
+    messages: [],
+    hasMore: false,
+    isLoadingOlder: false,
+    loadOlderError: null,
+    error: null,
+    refetch: vi.fn(),
+    loadOlder: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
 
 // ── Hook tests (existing) ────────────────────────────────────────────────────
 
@@ -118,12 +135,7 @@ describe("ChatView component", () => {
       error: null,
       refetch: vi.fn(),
     });
-    useMessagesMock.mockReturnValue({
-      data: [],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    });
+    useMessagesMock.mockReturnValue(makeMessagesMock());
     useCreateSessionMock.mockReturnValue({
       mutateAsync: vi.fn().mockResolvedValue({ id: "ses-new", title: "New" }),
     });
@@ -154,12 +166,9 @@ describe("ChatView component", () => {
   });
 
   it("shows messages error with retry (R-ErrorUI-3)", () => {
-    useMessagesMock.mockReturnValue({
-      data: undefined,
-      isLoading: false,
-      error: new Error("Failed to load chat messages"),
-      refetch: vi.fn(),
-    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ error: new Error("Failed to load chat messages") }),
+    );
     renderWithProviders(<ChatView />, { route: "/app/chat/ses-1" });
     const alerts = screen.getAllByRole("alert");
     expect(alerts.length).toBeGreaterThanOrEqual(1);
@@ -190,12 +199,11 @@ describe("ChatView component", () => {
   it("offers Retry from persisted history when last message is an unanswered user turn", () => {
     // Simulates returning to the chat after a failed turn: no in-memory
     // error state, just the orphaned question in the reloaded history.
-    useMessagesMock.mockReturnValue({
-      data: [{ id: 1, role: "user", content_text: "pregunta huérfana" }],
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta huérfana" }],
+      }),
+    );
     renderWithProviders(<ChatView />, {
       route: "/app/chat/ses-1",
       path: "/app/chat/:sessionId",
@@ -251,12 +259,7 @@ describe("ChatView component", () => {
 
   it("shows Detener only while streaming; clicking it aborts the in-flight stream", async () => {
     const refetchMessages = vi.fn();
-    useMessagesMock.mockReturnValue({
-      data: [],
-      isLoading: false,
-      error: null,
-      refetch: refetchMessages,
-    });
+    useMessagesMock.mockReturnValue(makeMessagesMock({ refetch: refetchMessages }));
     const captured: { signal?: AbortSignal } = {};
     mockInFlightStream(captured);
 
@@ -357,5 +360,119 @@ describe("ChatView component", () => {
     await waitFor(() => {
       expect(useChatStore.getState().isStreaming).toBe(false);
     });
+  });
+
+  // ── Message history pagination (Cargar mensajes anteriores) ───────────────
+
+  const OLD_MSGS = [
+    { id: 1, role: "user", content_text: "viejo-1" },
+    { id: 2, role: "assistant", content_text: "viejo-2" },
+  ];
+  const NEW_MSGS = [
+    { id: 3, role: "user", content_text: "nuevo-1" },
+    { id: 4, role: "assistant", content_text: "nuevo-2" },
+  ];
+
+  function renderedMessageTexts(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll("[data-testid^='msg-']")).map(
+      (el) => el.textContent ?? "",
+    );
+  }
+
+  it("hides 'Cargar mensajes anteriores' when the loaded batch is not full", () => {
+    // beforeEach default: hasMore false (batch below the page size).
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(screen.queryByText("Cargar mensajes anteriores")).toBeNull();
+  });
+
+  it("shows 'Cargar mensajes anteriores' when more history may exist and loads it on click", async () => {
+    const loadOlder = vi.fn().mockResolvedValue(undefined);
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ messages: NEW_MSGS, hasMore: true, loadOlder }),
+    );
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(screen.getByText("Cargar mensajes anteriores"));
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+
+    // The hook merged the prepended older page; ChatView renders the merged
+    // list oldest→newest (dedupe of overlapping windows is the hook's job
+    // and is covered in useMessages.test.tsx).
+    await act(async () => {
+      await Promise.resolve();
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [...OLD_MSGS, ...NEW_MSGS],
+        hasMore: false,
+        loadOlder,
+      }),
+    );
+    view.rerender(<ChatView />);
+
+    expect(renderedMessageTexts(view.container)).toEqual([
+      "viejo-1",
+      "viejo-2",
+      "nuevo-1",
+      "nuevo-2",
+    ]);
+    // History exhausted: the affordance disappears.
+    expect(screen.queryByText("Cargar mensajes anteriores")).toBeNull();
+  });
+
+  it("preserves the viewport position when older messages load (no bottom yank)", async () => {
+    const dims = { scrollHeight: 1000, clientHeight: 400, scrollTop: 100 };
+    const loadOlder = vi.fn().mockImplementation(async () => {
+      // Content grew 500px ABOVE the viewport while loading.
+      dims.scrollHeight = 1500;
+      useMessagesMock.mockReturnValue(
+        makeMessagesMock({
+          messages: [...OLD_MSGS, ...NEW_MSGS],
+          hasMore: false,
+          loadOlder,
+        }),
+      );
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ messages: NEW_MSGS, hasMore: true, loadOlder }),
+    );
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    const scroller = view.container.querySelector(
+      '[data-testid="chat-scroll"]',
+    ) as HTMLElement;
+    expect(scroller).toBeTruthy();
+    // jsdom has no layout: drive scroll geometry through instance accessors.
+    for (const key of ["scrollHeight", "clientHeight", "scrollTop"] as const) {
+      Object.defineProperty(scroller, key, {
+        get: () => dims[key],
+        set: (value: number) => {
+          dims[key] = value;
+        },
+        configurable: true,
+      });
+    }
+    // The user scrolled up to reach the top button — the bottom pin is
+    // released (the scroll handler sees 500px of distance from the bottom).
+    fireEvent.scroll(scroller);
+
+    fireEvent.click(screen.getByText("Cargar mensajes anteriores"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    view.rerender(<ChatView />);
+
+    // Viewport compensated by the height delta: 1500 - 1000 + 100 = 600.
+    // A bottom yank would have forced scrollTop to 1500 instead.
+    await waitFor(() => expect(dims.scrollTop).toBe(600));
+    expect(dims.scrollTop).not.toBe(dims.scrollHeight);
   });
 });
