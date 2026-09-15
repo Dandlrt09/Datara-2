@@ -321,6 +321,7 @@ export default function ChatView() {
                 key={m.id}
                 role={m.role}
                 content={m.content_text}
+                code={m.code}
                 artifacts={
                   m.artifacts
                     ? (m.artifacts as {
@@ -332,7 +333,10 @@ export default function ChatView() {
                 }
               />
             ))}
-            {/* Streaming message — only while a turn is actually streaming */}
+            {/* Streaming message — only while a turn is actually streaming.
+                No code prop on purpose: the executed Python is only persisted
+                with the finished message (persist-then-emit); the refetched
+                list renders it right after done. */}
             {store.isStreaming && (store.streamingText || store.pendingArtifacts) && (
               <ChatMessage
                 role="assistant"
