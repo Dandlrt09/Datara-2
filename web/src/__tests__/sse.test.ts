@@ -92,4 +92,27 @@ describe("streamChat SSE parser", () => {
 
     expect(handlers.onError).toHaveBeenCalledWith("connection_error", "HTTP 401");
   });
+
+  it("aborts silently during the fetch window (before headers arrive)", async () => {
+    // Regression: the AbortError swallow used to wrap only the reader loop;
+    // a Detener click while fetch was still pending (server pre-stream DB
+    // writes + RTT) rejected streamChat and surfaced a spurious error
+    // banner. Abort must be silent across the ENTIRE streamChat lifecycle.
+    const controller = new AbortController();
+    globalThis.fetch = (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+
+    const handlers = {
+      onError: vi.fn(),
+    };
+
+    const pending = streamChat("ses-1", "hello", handlers, controller.signal);
+    controller.abort();
+    await expect(pending).resolves.toBeUndefined();
+    expect(handlers.onError).not.toHaveBeenCalled();
+  });
 });

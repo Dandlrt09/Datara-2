@@ -114,6 +114,21 @@ async def run_code(
                 "tables": [],
                 "text": "",
             }
+        except asyncio.CancelledError:
+            # The awaiting task was cancelled — the client aborted the turn
+            # or disconnected mid-stream. Without this, the sandbox
+            # subprocess lingers as an orphan until its full timeout budget
+            # elapses. Cancellation is delivered once, so short awaits are
+            # still legal here: kill, reap with a bounded wait, then
+            # re-raise (the outer finally removes the tmpdir).
+            proc.kill()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Sandbox subprocess did not die within 5s of cancellation"
+                )
+            raise
 
         raw = stdout.decode("utf-8") or ""
         if not raw:

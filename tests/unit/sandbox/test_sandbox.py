@@ -402,3 +402,60 @@ class TestSandboxLocal:
         # OR it catches MemoryError → memory_limit_exceeded
         assert result["status"] == "error"
         assert result["error"]["type"] in ("memory_limit_exceeded", "runtime_error")
+
+
+@pytest.mark.asyncio
+class TestSandboxCancellation:
+    async def test_run_code_cancelled_kills_subprocess_and_cleans_tmpdir(self):
+        """Cancelling run_code must kill the sandbox subprocess — no orphans.
+
+        Regression: the SSE task is cancelled when the client aborts the
+        turn or disconnects mid-sandbox. run_code only handled TimeoutError,
+        so the spawned subprocess survived as an orphan for up to ~35s
+        (timeout+5). It must be killed and reaped promptly, and the tmpdir
+        must still be removed by the finally block on the cancel path.
+        """
+        import asyncio  # noqa: PLC0415
+        import glob  # noqa: PLC0415
+        import unittest.mock  # noqa: PLC0415
+
+        created: list[asyncio.subprocess.Process] = []
+        real_create = asyncio.create_subprocess_exec
+
+        async def spy_create_subprocess(*args, **kwargs):
+            proc = await real_create(*args, **kwargs)
+            created.append(proc)
+            return proc
+
+        tmp_parent = tempfile.gettempdir()
+        before = set(glob.glob(os.path.join(tmp_parent, "datara-sandbox-*")))
+
+        with unittest.mock.patch("asyncio.create_subprocess_exec", spy_create_subprocess):
+            task = asyncio.create_task(
+                run_code(
+                    "import time\ntime.sleep(60)",
+                    limits={"cpu_seconds": 30, "memory_mb": 512, "timeout_seconds": 30},
+                )
+            )
+            # Wait until the subprocess is actually spawned (bounded wait).
+            for _ in range(250):
+                if created:
+                    break
+                await asyncio.sleep(0.02)
+            assert created, "sandbox subprocess was not spawned within 5s"
+            assert created[0].returncode is None  # runner alive (sleeping)
+
+            task.cancel()
+            # Must settle promptly through the kill+reap path — bounded by
+            # the 5s reaper wait, NOT the ~35s timeout budget. A broken
+            # implementation surfaces as TimeoutError here, not a hung test.
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=10)
+
+        # The subprocess was killed and reaped (negative returncode = signal).
+        assert created[0].returncode is not None
+        assert created[0].returncode < 0
+
+        # finally-block tmpdir cleanup also ran on the cancellation path.
+        after = set(glob.glob(os.path.join(tmp_parent, "datara-sandbox-*")))
+        assert not (after - before)

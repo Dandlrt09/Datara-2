@@ -85,6 +85,13 @@ export default function ChatView() {
 
       abortRef.current = new AbortController();
 
+      // Set true only by terminal SSE events (done/error). Any other way
+      // the stream ends — user abort via Detener, dropped connection,
+      // thrown fetch — leaves it false, so the finally block resyncs the
+      // history from the DB (persist-then-emit) and drops streaming
+      // residue from the global store.
+      let turnSettled = false;
+
       try {
         await streamChat(
           sessionId,
@@ -99,6 +106,7 @@ export default function ChatView() {
             onArtifact: (figures, tables, texts) =>
               store.setPendingArtifacts({ figures, tables, texts }),
             onDone: () => {
+              turnSettled = true;
               store.setStreaming(false);
               // The turn's message is persisted server-side; drop the live
               // streaming state so the refetched list is the single source of
@@ -113,6 +121,7 @@ export default function ChatView() {
               // sandbox error...) instead of silently stopping. Failed turns
               // persist nothing server-side, so the history keeps just the
               // question and the Retry button re-runs it.
+              turnSettled = true;
               store.setStreaming(false);
               store.clearStreamingText();
               store.setPendingArtifacts(null);
@@ -130,6 +139,15 @@ export default function ChatView() {
       } finally {
         store.setStreaming(false);
         abortRef.current = null;
+        if (!turnSettled) {
+          // Aborted or silently-ended stream: the server only persisted the
+          // question (before the stream started), so resync the history and
+          // clear the live streaming residue. The Retry affordance lights up
+          // from the trailing user message in the refetched list.
+          store.clearStreamingText();
+          store.setPendingArtifacts(null);
+          void refetchMessages();
+        }
       }
     },
     [sessionId, store.isStreaming, refetchMessages]
@@ -140,6 +158,23 @@ export default function ChatView() {
     if (!q) return;
     void runTurn(q, false);
   }, [question, runTurn]);
+
+  const handleStop = useCallback(() => {
+    // Aborting makes streamChat return without surfacing an error
+    // (AbortError is swallowed there); runTurn's finally then drops the
+    // streaming residue and resyncs the persisted history.
+    abortRef.current?.abort();
+  }, []);
+
+  // Abort any in-flight turn when leaving the session — on unmount or when
+  // navigating to another chat — so the stream never keeps running in the
+  // background and the global streaming state cannot bleed into the next
+  // session's view. runTurn's finally clears the store state afterwards.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [sessionId]);
 
   // A trailing user message (no assistant reply after it) is a persisted
   // failed/aborted turn — keep the Retry affordance available across
@@ -377,13 +412,25 @@ export default function ChatView() {
             style={{ flex: 1, padding: 8, resize: "none", minHeight: 40 }}
             rows={2}
           />
-          <button
-            onClick={handleSend}
-            disabled={!sessionId || !question.trim() || store.isStreaming}
-            style={{ padding: "8px 16px" }}
-          >
-            {store.isStreaming ? "..." : "Send"}
-          </button>
+          {/* While a turn is streaming the send slot becomes the stop
+              button — they can never act at the same time. */}
+          {store.isStreaming ? (
+            <button
+              onClick={handleStop}
+              style={{ padding: "8px 16px" }}
+              title="Detener la respuesta en curso"
+            >
+              Detener
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!sessionId || !question.trim()}
+              style={{ padding: "8px 16px" }}
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>

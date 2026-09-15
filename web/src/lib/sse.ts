@@ -27,13 +27,23 @@ export async function streamChat(
   signal?: AbortSignal,
   retry = false
 ): Promise<void> {
-  const response = await fetch(`/api/sessions/${sessionId}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, retry }),
-    credentials: "include",
-    signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`/api/sessions/${sessionId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, retry }),
+      credentials: "include",
+      signal,
+    });
+  } catch (err) {
+    // Abort before the response headers arrive (Detener clicked while the
+    // server is still doing its pre-stream DB writes) must be silent,
+    // exactly like an abort mid-stream. Genuine network failures still
+    // throw so the caller can surface them.
+    if ((err as Error).name === "AbortError") return;
+    throw err;
+  }
 
   if (!response.ok) {
     handlers.onError?.("connection_error", `HTTP ${response.status}`);
