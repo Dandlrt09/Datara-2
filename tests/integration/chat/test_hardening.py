@@ -266,6 +266,12 @@ class TestLLMContextGuardrails:
         assert "30,95.5" not in captured_system_prompt, \
             "Raw data values should not be in system prompt as bare CSV"
 
+        # Regression (sandbox locale): the prompt must declare the C/POSIX-only
+        # environment — without it the model generates locale.setlocale for
+        # localized names and the sandbox crashes with locale.Error.
+        assert "locale" in captured_system_prompt.lower(), \
+            "System prompt should declare the locale restriction"
+
     async def test_context_includes_authoritative_row_count(
         self, client, auth_cookie, session_id, store
     ):
