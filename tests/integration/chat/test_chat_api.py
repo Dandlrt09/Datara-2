@@ -95,6 +95,13 @@ def other_cookie(client):
     return resp.headers["set-cookie"]
 
 
+@pytest.fixture
+def store():
+    """The same in-memory store the app fixture wired into the API."""
+    from server.api import store as api_store
+    return api_store._store
+
+
 # ── Mock LLM provider ─────────────────────────────────────────────────────
 
 
@@ -455,6 +462,96 @@ class TestMessages:
         """No auth → 401."""
         resp = client.get("/api/sessions/fake-session/messages")
         assert resp.status_code == 401
+
+
+# ── Message token usage exposure ───────────────────────────────────────────
+
+
+class TestMessageTokens:
+    """MessageResponse exposes the LLM token usage persisted with each
+    assistant message; user messages and legacy rows stay null."""
+
+    def test_assistant_message_exposes_token_usage(self, client, auth_cookie, session_id, mock_llm):
+        """A completed turn persists usage and GET /messages exposes it.
+
+        Empty code → sandbox and the grounding second pass are skipped, so
+        exactly ONE LLM call happened with the fixture usage (prompt 50 /
+        completion 100). The gpt-4o price map yields
+        50 * 0.0025 + 100 * 0.01 = 1.125 USD.
+        """
+        no_code = {"code": "", "explanation": "Descriptive answer."}
+        mock_llm.return_value = _make_openai_fake(json.dumps(no_code))
+
+        client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "explain the dataset"},
+            headers={"Cookie": auth_cookie},
+        )
+
+        resp = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        messages = resp.json()
+        user_msgs = [m for m in messages if m["role"] == "user"]
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_msgs
+
+        assistant = assistant_msgs[0]
+        assert assistant["tokens_in"] == 50
+        assert assistant["tokens_out"] == 100
+        assert assistant["cost_usd"] == pytest.approx(1.125)
+
+        # User messages carry no usage: the fields are null, not missing.
+        assert user_msgs
+        for field in ("tokens_in", "tokens_out", "cost_usd"):
+            assert user_msgs[0][field] is None
+
+    def test_usage_sums_grounding_second_pass(self, client, auth_cookie, session_id, mock_llm):
+        """Code that prints output triggers the grounding pass; the persisted
+        usage sums BOTH LLM calls (main + grounding), which share the same
+        mocked usage (50/100) and price map (1.125 each)."""
+        client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "analyze the data"},
+            headers={"Cookie": auth_cookie},
+        )
+
+        resp = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        assistant_msgs = [m for m in resp.json() if m["role"] == "assistant"]
+        assert assistant_msgs
+        assert assistant_msgs[0]["tokens_in"] == 100  # 50 (main) + 50 (grounding)
+        assert assistant_msgs[0]["tokens_out"] == 200
+        assert assistant_msgs[0]["cost_usd"] == pytest.approx(2.25)
+
+    def test_legacy_message_rows_are_null_safe(self, client, auth_cookie, session_id, store):
+        """Rows persisted before usage capture (token columns NULL) list with
+        null usage — no 500, no missing keys."""
+        user_id = asyncio.run(store.get_user_by_email("chat@example.com"))["id"]
+        asyncio.run(
+            store.create_message(
+                user_id=user_id,
+                chat_session=session_id,
+                role="assistant",
+                content_text="legacy row",
+            )
+        )
+
+        resp = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        legacy = [m for m in resp.json() if m["content_text"] == "legacy row"]
+        assert legacy
+        assert legacy[0]["tokens_in"] is None
+        assert legacy[0]["tokens_out"] is None
+        assert legacy[0]["cost_usd"] is None
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────

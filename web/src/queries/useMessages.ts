@@ -9,6 +9,10 @@ export interface Message {
   code?: string | null;
   artifacts?: unknown[] | null;
   model?: string | null;
+  /** LLM token usage (assistant turns; null for user and legacy rows). */
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  cost_usd?: number | null;
   created_at?: string | null;
 }
 

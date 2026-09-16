@@ -139,7 +139,7 @@ class TestLLMContextGuardrails:
             assert resp.status_code == 200
 
         # Check persisted message has cost_usd > 0 (query store directly,
-        # since MessageResponse model does not expose cost_usd)
+        # to test the persisted value itself rather than the API projection)
         user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
         messages = await store.list_messages(user_id, session_id)
 

@@ -94,6 +94,12 @@ class MessageResponse(BaseModel):
     code: str | None = None
     artifacts: list[dict] | None = None
     model: str | None = None
+    # LLM token usage (assistant turns). NULL for user messages and for
+    # rows persisted before usage capture existed — the UI hides the meta
+    # line when these are null.
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cost_usd: float | None = None
     created_at: str | None = None
 
 
@@ -676,6 +682,9 @@ async def list_messages(
             code=m.get("code"),
             artifacts=json.loads(m["artifacts_json"]) if m.get("artifacts_json") else None,
             model=m.get("model"),
+            tokens_in=m.get("tokens_in"),
+            tokens_out=m.get("tokens_out"),
+            cost_usd=m.get("cost_usd"),
             created_at=m.get("created_at"),
         )
         for m in messages

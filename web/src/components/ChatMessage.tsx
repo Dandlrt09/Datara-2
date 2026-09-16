@@ -8,9 +8,27 @@ interface ChatMessageProps {
   /** Exact Python the sandbox executed for this turn (assistant messages only). */
   code?: string | null;
   artifacts?: { kind: string; name: string; payload: unknown }[] | null;
+  /** LLM token usage for this turn (assistant messages only; null for user
+   * messages and rows persisted before usage capture existed). */
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  costUsd?: number | null;
 }
 
 const CODE_FONT = '"JetBrains Mono", ui-monospace, monospace';
+
+/** Group an integer with Spanish-style dot thousands separators (1234567 →
+ * "1.234.567"). Regex-based so the output is identical across runtimes,
+ * independent of their ICU data. */
+function formatThousands(n: number): string {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+/** Format an estimated USD cost with a Spanish decimal comma (0.125 →
+ * "0,1250"). Four decimals keep tiny per-turn costs readable. */
+function formatCost(usd: number): string {
+  return usd.toFixed(4).replace(".", ",");
+}
 
 type CopyState = "idle" | "copied" | "error";
 
@@ -109,8 +127,28 @@ function renderBold(text: string) {
   );
 }
 
-export default function ChatMessage({ role, content, code, artifacts }: ChatMessageProps) {
+export default function ChatMessage({
+  role,
+  content,
+  code,
+  artifacts,
+  tokensIn,
+  tokensOut,
+  costUsd,
+}: ChatMessageProps) {
   const isUser = role === "user";
+  // Usage meta line (assistant turns only): total tokens plus the estimated
+  // cost when one was computed. Absent (null) fields render nothing at all —
+  // user messages and pre-usage rows stay clean.
+  const showTokenMeta = !isUser && (tokensIn != null || tokensOut != null);
+  const tokenMeta = showTokenMeta
+    ? [
+        `${formatThousands((tokensIn ?? 0) + (tokensOut ?? 0))} tokens`,
+        costUsd != null && costUsd > 0 ? `US$ ${formatCost(costUsd)}` : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(" · ")
+    : null;
   return (
     <div
       style={{
@@ -129,6 +167,11 @@ export default function ChatMessage({ role, content, code, artifacts }: ChatMess
         }}
       >
         <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{renderBold(content)}</p>
+        {tokenMeta !== null && (
+          <p style={{ margin: "4px 0 0", color: "#888", fontSize: "0.75em" }}>
+            {tokenMeta}
+          </p>
+        )}
         {/* Executed Python, only for assistant messages with a non-empty
             payload; whitespace-only column values render nothing. */}
         {!isUser && typeof code === "string" && code.trim().length > 0 && (

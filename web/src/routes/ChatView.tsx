@@ -460,6 +460,9 @@ export default function ChatView() {
                 role={m.role}
                 content={m.content_text}
                 code={m.code}
+                tokensIn={m.tokens_in}
+                tokensOut={m.tokens_out}
+                costUsd={m.cost_usd}
                 artifacts={
                   m.artifacts
                     ? (m.artifacts as {

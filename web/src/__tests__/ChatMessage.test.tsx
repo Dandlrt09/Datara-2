@@ -97,3 +97,54 @@ describe("ChatMessage code block", () => {
     expect(screen.getByText("Copiar")).toBeTruthy();
   });
 });
+
+describe("ChatMessage token meta line", () => {
+  it("renders total tokens with Spanish thousands separators plus estimated cost", () => {
+    render(
+      <ChatMessage
+        role="assistant"
+        content="respuesta"
+        tokensIn={1234}
+        tokensOut={234}
+        costUsd={0.125}
+      />,
+    );
+    // 1234 + 234 = 1468 → dot thousands separator; cost with decimal comma.
+    expect(screen.getByText("1.468 tokens · US$ 0,1250")).toBeTruthy();
+  });
+
+  it("hides the meta line entirely when usage is null (legacy rows)", () => {
+    render(
+      <ChatMessage
+        role="assistant"
+        content="respuesta"
+        tokensIn={null}
+        tokensOut={null}
+        costUsd={null}
+      />,
+    );
+    expect(screen.queryByText(/tokens/)).toBeNull();
+    expect(screen.queryByText(/US\$/)).toBeNull();
+  });
+
+  it("omits the cost segment when no cost was computed", () => {
+    render(
+      <ChatMessage
+        role="assistant"
+        content="respuesta"
+        tokensIn={50}
+        tokensOut={100}
+        costUsd={null}
+      />,
+    );
+    expect(screen.getByText("150 tokens")).toBeTruthy();
+    expect(screen.queryByText(/US\$/)).toBeNull();
+  });
+
+  it("never renders the meta line for user messages", () => {
+    render(
+      <ChatMessage role="user" content="pregunta" tokensIn={50} tokensOut={100} />,
+    );
+    expect(screen.queryByText(/tokens/)).toBeNull();
+  });
+});
