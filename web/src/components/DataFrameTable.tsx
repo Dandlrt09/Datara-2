@@ -5,6 +5,42 @@ interface DataFrameTableProps {
   rows: unknown[][];
 }
 
+/** Escape a single CSV field: quote and double-quote fields that contain
+ * commas, quotes or newlines (RFC 4180 subset). Null/undefined → empty. */
+function escapeCsvField(value: unknown): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/**
+ * Build the CSV text for a table artifact. Pure function, exported for tests.
+ * Prepend a UTF-8 BOM so Excel renders Spanish accents correctly; rows are
+ * LF-joined (fine for modern tools). Exports exactly the captured head-20
+ * rows that are visible — full-dataset export is a separate future task.
+ */
+export function buildCsv(columns: string[], rows: unknown[][]): string {
+  const header = columns.map(escapeCsvField).join(",");
+  const body = rows.map((row) =>
+    columns.map((_, i) => escapeCsvField(row[i])).join(","),
+  );
+  return "\uFEFF" + [header, ...body].join("\n") + "\n";
+}
+
+/** Trigger a client-side download for a data URL. Extracted so tests can
+ * stub the anchor click without touching the DOM. */
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 export default function DataFrameTable({ columns, rows }: DataFrameTableProps) {
   const [sortKey, setSortKey] = useState<number | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
@@ -30,8 +66,41 @@ export default function DataFrameTable({ columns, rows }: DataFrameTableProps) {
     }
   }
 
+  /** Export the currently visible (sorted) rows as CSV. */
+  function handleDownloadCsv() {
+    const csv = buildCsv(columns, sortedRows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    downloadDataUrl(url, "datara-tabla.csv");
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginBottom: 4,
+        }}
+      >
+        <button
+          onClick={handleDownloadCsv}
+          style={{
+            background: "#fff",
+            color: "#555",
+            border: "1px solid #ccc",
+            borderRadius: 4,
+            cursor: "pointer",
+            fontSize: "0.75em",
+            padding: "2px 8px",
+          }}
+          title="Descarga las filas visibles como archivo CSV"
+        >
+          Descargar CSV
+        </button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
       <table style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
@@ -71,6 +140,7 @@ export default function DataFrameTable({ columns, rows }: DataFrameTableProps) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

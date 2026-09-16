@@ -8,9 +8,17 @@ declare module "plotly.js-dist-min" {
   export type Layout = Record<string, unknown>;
   export type Config = Record<string, unknown>;
 
+  export interface ToImageOptions {
+    format: "png" | "jpeg" | "webp" | "svg";
+    width?: number;
+    height?: number;
+    scale?: number;
+  }
+
   export interface PlotlyStatic {
     react(...args: unknown[]): unknown;
     newPlot(...args: unknown[]): unknown;
+    toImage(gd: HTMLElement, options: Partial<ToImageOptions>): Promise<string>;
     [key: string]: unknown;
   }
 
