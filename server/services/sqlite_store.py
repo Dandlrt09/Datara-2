@@ -353,6 +353,33 @@ class SqliteStore:
         )
         await self.conn.commit()
 
+    async def rename_chat_session(
+        self,
+        session_id: str,
+        user_id: int,
+        title: str,
+    ) -> dict[str, Any] | None:
+        """Rename a chat session owned by *user_id*.
+
+        Ownership is enforced in the WHERE clause (same pattern as
+        ``delete_chat_session``). Returns the updated row, or ``None`` when
+        the session does not exist or belongs to another user — the caller
+        maps that to 404 without leaking existence.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE chat_sessions SET title = ? WHERE id = ? AND user_id = ?",
+            (title, session_id, user_id),
+        )
+        await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, title, created_at, updated_at "
+            "FROM chat_sessions WHERE id = ?",
+            (session_id,),
+        )
+        return dict(rows[0])
+
     # ── Archives ─────────────────────────────────────────────────────────────
 
     async def create_archive(

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
-import { useSessions, useCreateSession, useDeleteSession } from "../queries/useSessions";
+import { useSessions, useCreateSession, useDeleteSession, useRenameSession } from "../queries/useSessions";
 import { useMessages } from "../queries/useMessages";
 import { useChatStore } from "../stores/useChatStore";
 import { useWizardStore } from "../stores/useWizardStore";
@@ -28,6 +28,12 @@ export default function ChatView() {
   } = useMessages(sessionId ?? null);
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
+  const renameSession = useRenameSession();
+
+  // Inline rename editor state: which sidebar row is being renamed and the
+  // value currently in its input. Null renamingId = no row in edit mode.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
 
   const store = useChatStore();
   const wizardStore = useWizardStore();
@@ -98,6 +104,28 @@ export default function ChatView() {
   const handleNewSession = async () => {
     const session = await createSession.mutateAsync();
     navigate(`/app/chat/${session.id}`);
+  };
+
+  const startRename = (id: string, title: string) => {
+    setRenamingId(id);
+    setRenameTitle(title);
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameTitle("");
+  };
+
+  const submitRename = () => {
+    if (!renamingId) return;
+    // The server trims and rejects empty titles (422); guard here so the
+    // button never fires a doomed request.
+    const title = renameTitle.trim();
+    if (!title) return;
+    renameSession.mutate(
+      { id: renamingId, title },
+      { onSuccess: () => cancelRename() },
+    );
   };
 
   const runTurn = useCallback(
@@ -275,48 +303,95 @@ export default function ChatView() {
                 alignItems: "center",
               }}
             >
-              <Link
-                to={`/app/chat/${s.id}`}
-                style={{ textDecoration: "none", color: "inherit", flex: 1, display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <span style={{ flex: 1 }}>{s.title}</span>
-                {s.is_streaming && (
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: "#4caf50",
-                      display: "inline-block",
-                      animation: "pulse 1.5s ease-in-out infinite",
-                      flexShrink: 0,
+              {renamingId === s.id ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitRename();
+                  }}
+                  style={{ display: "flex", gap: 4, flex: 1, alignItems: "center" }}
+                >
+                  <input
+                    value={renameTitle}
+                    onChange={(e) => setRenameTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") cancelRename();
                     }}
-                    title="Streaming in progress"
+                    autoFocus
+                    maxLength={200}
+                    aria-label="Nuevo nombre de la sesión"
+                    style={{ flex: 1, minWidth: 0, padding: "2px 6px", fontSize: "inherit" }}
                   />
-                )}
-              </Link>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteSession.mutate(s.id, {
-                    onSuccess: () => {
-                      // If we just deleted the open session, leave cleanly
-                      // instead of staying on a ghost chat.
-                      if (s.id === sessionId) navigate("/app/chat");
-                    },
-                  });
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "#999",
-                  fontSize: "1.1em",
-                }}
-                title="Delete"
-              >
-                ×
-              </button>
+                  <button type="submit" disabled={!renameTitle.trim() || renameSession.isPending}>
+                    Guardar
+                  </button>
+                  <button type="button" onClick={cancelRename}>
+                    Cancelar
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <Link
+                    to={`/app/chat/${s.id}`}
+                    style={{ textDecoration: "none", color: "inherit", flex: 1, display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span style={{ flex: 1 }}>{s.title}</span>
+                    {s.is_streaming && (
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: "#4caf50",
+                          display: "inline-block",
+                          animation: "pulse 1.5s ease-in-out infinite",
+                          flexShrink: 0,
+                        }}
+                        title="Streaming in progress"
+                      />
+                    )}
+                  </Link>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(s.id, s.title);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#999",
+                      fontSize: "1.1em",
+                    }}
+                    title="Renombrar"
+                    aria-label="Renombrar"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSession.mutate(s.id, {
+                        onSuccess: () => {
+                          // If we just deleted the open session, leave cleanly
+                          // instead of staying on a ghost chat.
+                          if (s.id === sessionId) navigate("/app/chat");
+                        },
+                      });
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#999",
+                      fontSize: "1.1em",
+                    }}
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </QueryError>

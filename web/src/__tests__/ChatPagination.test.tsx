@@ -92,6 +92,7 @@ vi.mock("../queries/useSessions", () => ({
   }),
   useCreateSession: () => ({ mutateAsync: vi.fn() }),
   useDeleteSession: () => ({ mutate: vi.fn() }),
+  useRenameSession: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("../stores/useWizardStore", () => ({

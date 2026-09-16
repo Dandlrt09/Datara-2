@@ -39,3 +39,12 @@ export function useDeleteSession() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
 }
+
+export function useRenameSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      api.patch<ChatSession>(`/api/sessions/${id}`, { title }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+}

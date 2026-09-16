@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, renderHook, waitFor, act, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useSessions, useCreateSession, useDeleteSession } from "../queries/useSessions";
+import { useSessions, useCreateSession, useDeleteSession, useRenameSession } from "../queries/useSessions";
 import { useSseStore } from "../stores/useSseStore";
 import type { ReactNode } from "react";
 import { api } from "../lib/api";
@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
   api: {
     get: vi.fn(),
     post: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn(),
   },
 }));
@@ -196,6 +197,33 @@ describe("useDeleteSession", () => {
       await result.current.mutateAsync("s1");
     });
 
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
+  });
+});
+
+describe("useRenameSession", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = createTestQueryClient();
+    vi.clearAllMocks();
+    (api.patch as Mock).mockResolvedValue(MOCK_SESSIONS[0]);
+  });
+
+  it("PATCHes the session title and invalidates sessions on success", async () => {
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    const { result } = renderHook(() => useRenameSession(), {
+      wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper>,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "s1", title: "Nuevo título" });
+    });
+
+    expect(api.patch).toHaveBeenCalledWith("/api/sessions/s1", {
+      title: "Nuevo título",
+    });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
   });
 });

@@ -81,12 +81,13 @@ describe("useChatStore", () => {
 
 // ── Component tests (new: failure paths) ─────────────────────────────────────
 
-const { useSessionsMock, useMessagesMock, useCreateSessionMock, useDeleteSessionMock } =
+const { useSessionsMock, useMessagesMock, useCreateSessionMock, useDeleteSessionMock, useRenameSessionMock } =
   vi.hoisted(() => ({
     useSessionsMock: vi.fn(),
     useMessagesMock: vi.fn(),
     useCreateSessionMock: vi.fn(),
     useDeleteSessionMock: vi.fn(),
+    useRenameSessionMock: vi.fn(),
   }));
 
 const { useWizardStoreMock } = vi.hoisted(() => ({
@@ -101,6 +102,7 @@ vi.mock("../queries/useSessions", () => ({
   useSessions: () => useSessionsMock(),
   useCreateSession: () => useCreateSessionMock(),
   useDeleteSession: () => useDeleteSessionMock(),
+  useRenameSession: () => useRenameSessionMock(),
 }));
 
 vi.mock("../queries/useMessages", () => ({
@@ -140,6 +142,7 @@ describe("ChatView component", () => {
       mutateAsync: vi.fn().mockResolvedValue({ id: "ses-new", title: "New" }),
     });
     useDeleteSessionMock.mockReturnValue({ mutate: vi.fn() });
+    useRenameSessionMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
     
     // Wizard store mock
     useWizardStoreMock.mockReturnValue({
@@ -474,5 +477,83 @@ describe("ChatView component", () => {
     // A bottom yank would have forced scrollTop to 1500 instead.
     await waitFor(() => expect(dims.scrollTop).toBe(600));
     expect(dims.scrollTop).not.toBe(dims.scrollHeight);
+  });
+
+  // ── Session rename (sidebar) ────────────────────────────────────────────────
+
+  it("renames a session: opens the editor, submits the trimmed title via the mutation", async () => {
+    const mutate = vi.fn();
+    useRenameSessionMock.mockReturnValue({ mutate, isPending: false });
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1" }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<ChatView />, { route: "/app/chat/ses-1", path: "/app/chat/:sessionId" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+
+    const input = screen.getByLabelText("Nuevo nombre de la sesión") as HTMLInputElement;
+    expect(input.value).toBe("Chat 1");
+
+    fireEvent.change(input, { target: { value: "  Ventas Q3  " } });
+    fireEvent.click(screen.getByText("Guardar"));
+
+    await waitFor(() => {
+      expect(mutate).toHaveBeenCalledWith(
+        { id: "ses-1", title: "Ventas Q3" },
+        expect.anything(),
+      );
+    });
+  });
+
+  it("closes the rename editor on success callback (Guardar)", async () => {
+    let onSuccess: (() => void) | undefined;
+    const mutate = vi.fn((_vars, opts) => {
+      onSuccess = opts?.onSuccess;
+    });
+    useRenameSessionMock.mockReturnValue({ mutate, isPending: false });
+
+    renderWithProviders(<ChatView />, { route: "/app/chat/ses-1", path: "/app/chat/:sessionId" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    expect(screen.getByLabelText("Nuevo nombre de la sesión")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Guardar"));
+    await act(async () => {
+      onSuccess?.();
+    });
+
+    // Editor closed after the mutation reported success.
+    expect(screen.queryByLabelText("Nuevo nombre de la sesión")).toBeNull();
+  });
+
+  it("Cancelar closes the editor without calling the mutation", () => {
+    const mutate = vi.fn();
+    useRenameSessionMock.mockReturnValue({ mutate, isPending: false });
+
+    renderWithProviders(<ChatView />, { route: "/app/chat/ses-1", path: "/app/chat/:sessionId" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    fireEvent.click(screen.getByText("Cancelar"));
+
+    expect(screen.queryByLabelText("Nuevo nombre de la sesión")).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("Guardar is disabled for a whitespace-only title (no doomed 422 request)", () => {
+    const mutate = vi.fn();
+    useRenameSessionMock.mockReturnValue({ mutate, isPending: false });
+
+    renderWithProviders(<ChatView />, { route: "/app/chat/ses-1", path: "/app/chat/:sessionId" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    const input = screen.getByLabelText("Nuevo nombre de la sesión");
+    fireEvent.change(input, { target: { value: "   " } });
+
+    expect((screen.getByText("Guardar") as HTMLButtonElement).disabled).toBe(true);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

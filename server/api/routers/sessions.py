@@ -1,4 +1,4 @@
-"""Chat sessions router (v1: GET list / POST create / DELETE only, per Decision #16)."""
+"""Chat sessions router (GET list / POST create / PATCH rename / DELETE)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import asyncio
 import json
 import logging
 import secrets
+import time
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -22,9 +23,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
+# Rename validation bound (plain titles; the auto-title path truncates to 48).
+SESSION_TITLE_MAX_LENGTH = 200
+
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
+
+
+class RenameSessionRequest(BaseModel):
+    title: str
 
 
 class SessionResponse(BaseModel):
@@ -95,6 +103,71 @@ async def delete_session(
             exc_info=True,
         )
     return None
+
+
+@router.patch("/{session_id}", response_model=SessionResponse)
+async def rename_session(
+    session_id: str,
+    body: RenameSessionRequest,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Rename a chat session owned by the current user.
+
+    Validation: the title is trimmed and must be non-empty and at most
+    ``SESSION_TITLE_MAX_LENGTH`` characters (422 otherwise, same shape as the
+    chat router's domain-validation errors). A missing or foreign session
+    returns 404 (no existence leak — same convention as the other routers).
+
+    Persist-then-emit: the rename is committed before the ``TITLED`` event is
+    published on the sessions SSE stream, so subscribers never observe an
+    event for a write that could still fail.
+    """
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_title",
+                "message": "El título no puede estar vacío.",
+            },
+        )
+    if len(title) > SESSION_TITLE_MAX_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_title",
+                "message": (
+                    "El título no puede superar los "
+                    f"{SESSION_TITLE_MAX_LENGTH} caracteres."
+                ),
+            },
+        )
+
+    renamed = await store.rename_chat_session(session_id, user["id"], title)
+    if renamed is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    # TITLED is the established title-change vocabulary: the frontend patches
+    # the cached sidebar title from ``payload.title`` (see AppShell onEvent).
+    bus = _event_bus_module.bus
+    if bus is not None:
+        bus.publish(
+            user["id"],
+            SessionEvent(
+                type=SessionEventType.TITLED,
+                session_id=session_id,
+                timestamp=time.time(),
+                payload={"title": title},
+            ),
+        )
+
+    return SessionResponse(
+        id=renamed["id"],
+        title=renamed["title"],
+        created_at=renamed["created_at"],
+        updated_at=renamed["updated_at"],
+    )
 
 
 def _serialize_sse(event: SessionEvent) -> str:
