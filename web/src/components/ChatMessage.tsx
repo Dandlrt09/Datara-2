@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { colors, radii, spacing, typography } from "../design/tokens";
 import PlotlyChart from "./PlotlyChart";
 import DataFrameTable from "./DataFrameTable";
 
@@ -14,8 +15,6 @@ interface ChatMessageProps {
   tokensOut?: number | null;
   costUsd?: number | null;
 }
-
-const CODE_FONT = '"JetBrains Mono", ui-monospace, monospace';
 
 /** Group an integer with Spanish-style dot thousands separators (1234567 →
  * "1.234.567"). Regex-based so the output is identical across runtimes,
@@ -63,10 +62,10 @@ function CodeBlock({ code }: { code: string }) {
   return (
     <div
       style={{
-        marginTop: 8,
-        borderRadius: 8,
+        marginTop: spacing.md,
+        borderRadius: radii.lg,
         overflow: "hidden",
-        border: "1px solid #444",
+        border: `1px solid ${colors.codeBorder}`,
       }}
     >
       <div
@@ -74,23 +73,32 @@ function CodeBlock({ code }: { code: string }) {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          background: "#2d2d2d",
-          padding: "4px 10px",
+          background: colors.codeHeaderSurface,
+          padding: `${spacing.sm}px ${spacing.lg}px`,
         }}
       >
-        <span style={{ color: "#bbb", fontSize: "0.75em", fontFamily: CODE_FONT }}>
+        <span
+          style={{
+            color: colors.codeHeaderText,
+            fontSize: typography.fontSize.xs,
+            fontFamily: typography.fontMono,
+          }}
+        >
           Python
         </span>
         <button
           onClick={handleCopy}
           style={{
-            background: copyState === "error" ? "#5a2d2d" : "#3a3a3a",
-            color: "#ddd",
+            background:
+              copyState === "error"
+                ? colors.codeButtonSurfaceError
+                : colors.codeButtonSurface,
+            color: colors.codeButtonText,
             border: "none",
-            borderRadius: 4,
+            borderRadius: radii.sm,
             cursor: "pointer",
-            fontSize: "0.75em",
-            padding: "2px 8px",
+            fontSize: typography.fontSize.xs,
+            padding: `${spacing.xs}px ${spacing.md}px`,
           }}
           title={
             copyState === "error"
@@ -104,14 +112,21 @@ function CodeBlock({ code }: { code: string }) {
       <pre
         style={{
           margin: 0,
-          padding: "10px 12px",
-          background: "#1e1e1e",
-          color: "#e8e8e8",
+          padding: `${spacing.lg}px ${spacing.xl}px`,
+          background: colors.codeSurface,
+          color: colors.codeText,
           overflowX: "auto",
           whiteSpace: "pre",
         }}
       >
-        <code style={{ fontFamily: CODE_FONT, fontSize: "0.85em" }}>{code}</code>
+        <code
+          style={{
+            fontFamily: typography.fontMono,
+            fontSize: typography.fontSize.sm,
+          }}
+        >
+          {code}
+        </code>
       </pre>
     </div>
   );
@@ -154,21 +169,27 @@ export default function ChatMessage({
       style={{
         display: "flex",
         justifyContent: isUser ? "flex-end" : "flex-start",
-        marginBottom: 16,
+        marginBottom: spacing.xxl,
       }}
     >
       <div
         style={{
           maxWidth: "80%",
-          background: isUser ? "#007bff" : "#f0f0f0",
-          color: isUser ? "#fff" : "#333",
-          borderRadius: 12,
-          padding: "12px 16px",
+          background: isUser ? colors.accent : colors.surfaceBubble,
+          color: isUser ? colors.onAccent : colors.textPrimary,
+          borderRadius: radii.xl,
+          padding: `${spacing.xl}px ${spacing.xxl}px`,
         }}
       >
         <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{renderBold(content)}</p>
         {tokenMeta !== null && (
-          <p style={{ margin: "4px 0 0", color: "#888", fontSize: "0.75em" }}>
+          <p
+            style={{
+              margin: `${spacing.sm}px 0 0`,
+              color: colors.textMuted,
+              fontSize: typography.fontSize.xs,
+            }}
+          >
             {tokenMeta}
           </p>
         )}
@@ -187,14 +208,14 @@ export default function ChatMessage({
               <pre
                 key={i}
                 style={{
-                  marginTop: 8,
-                  padding: "8px 10px",
-                  background: "#fafafa",
-                  border: "1px solid #e0e0e0",
-                  borderRadius: 6,
+                  marginTop: spacing.md,
+                  padding: `${spacing.md}px ${spacing.lg}px`,
+                  background: colors.surfaceSubtle,
+                  border: `1px solid ${colors.borderLight}`,
+                  borderRadius: radii.md,
                   whiteSpace: "pre-wrap",
                   fontFamily: "inherit",
-                  fontSize: "0.85em",
+                  fontSize: typography.fontSize.sm,
                   overflowX: "auto",
                 }}
               >
