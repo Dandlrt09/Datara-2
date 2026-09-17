@@ -15,9 +15,32 @@ from scripts.bench import (
     _cache_key,
     _mape_check,
     _normalize_number,
+    _parse_args,
+    _DEFAULT_MODEL,
     BenchQuestion,
     _QUESTIONS,
 )
+
+
+class TestParseArgs:
+    def test_model_defaults_to_default_model(self):
+        args = _parse_args([])
+        assert args.model == _DEFAULT_MODEL == "z-ai/glm-5.3-flash"
+
+    def test_model_override(self):
+        args = _parse_args(["--model", "gpt-4o-mini"])
+        assert args.model == "gpt-4o-mini"
+
+    def test_limit_default_unchanged(self):
+        args = _parse_args([])
+        assert args.limit == 10
+
+    def test_existing_flags_unchanged(self):
+        args = _parse_args(["--limit", "3", "--cache", "--seed-experiment"])
+        assert args.limit == 3
+        assert args.cache is True
+        assert args.seed_experiment is True
+        assert args.model == _DEFAULT_MODEL
 
 
 class TestNormalizeNumber:

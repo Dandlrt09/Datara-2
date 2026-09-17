@@ -766,6 +766,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=10, help="Max questions to run (default: 10)")
     p.add_argument("--questions", type=str, default=None, help="Comma-separated question IDs to run (e.g. 1,3,5)")
     p.add_argument("--seed-experiment", action="store_true", help="Run determinism experiment (Q1 × 5, temp=0, seed=0)")
+    p.add_argument("--model", type=str, default=_DEFAULT_MODEL,
+                   help=f"Model slug to benchmark (default: {_DEFAULT_MODEL})")
     p.add_argument("--cache", action="store_true", help="Enable record-replay cache (.bench/cache/)")
     p.add_argument("--interactive", action="store_true", help="Prompt before spending tokens")
     return p.parse_args(argv)
@@ -812,6 +814,10 @@ async def main(argv: list[str] | None = None) -> int:
     # raise UnboundLocalError at _estimate_cost (found by smoke test 4.2).
     from server.services.llm_openai import OpenAIProvider, _estimate_cost
 
+    # Effective model: --model overrides the default; everything downstream
+    # (cost estimate, banner, provider, report, per-question entries) uses it.
+    model = args.model
+
     # Pre-flight cost estimate
     total_estimate = 0.0
     for q in questions:
@@ -822,11 +828,11 @@ async def main(argv: list[str] | None = None) -> int:
         else:
             input_tokens = 100 + 800
         out_tokens = 2000
-        total_estimate += _estimate_cost(input_tokens, out_tokens, _DEFAULT_MODEL)
+        total_estimate += _estimate_cost(input_tokens, out_tokens, model)
 
     print(f"\n{'=' * 60}")
     print(f"  Datara Regression Bench")
-    print(f"  Model: {_DEFAULT_MODEL}")
+    print(f"  Model: {model}")
     print(f"  Questions: {len(questions)} ({[q.id for q in questions]})")
     print(f"  Cache: {'ON' if args.cache else 'OFF'}")
     print(f"  Estimated cost: ${total_estimate:.6f}")
@@ -839,7 +845,7 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
 
     # Create provider
-    provider = OpenAIProvider(api_key=api_key, model=_DEFAULT_MODEL)
+    provider = OpenAIProvider(api_key=api_key, model=model)
 
     # Seed experiment mode
     if args.seed_experiment:
@@ -879,7 +885,7 @@ async def main(argv: list[str] | None = None) -> int:
     report = {
         "schema_version": 1,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "model": _DEFAULT_MODEL,
+        "model": model,
         "provider": "openai",
         "base_url": os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
         "limit": limit,
