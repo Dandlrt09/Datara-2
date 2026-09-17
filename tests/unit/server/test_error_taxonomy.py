@@ -20,6 +20,7 @@ from core.errors import (
 )
 from server.services.error_taxonomy import (
     INTERNAL_ERROR_CODE,
+    NO_DATASET_CODE,
     SANDBOX_CODE_MAP,
     llm_code,
     sandbox_code,
@@ -99,3 +100,9 @@ class TestReservedCode:
             AuthNoCreditsError("x"),
         ):
             assert llm_code(exc) != "model/inadequate"
+
+
+class TestNoDatasetCode:
+    def test_no_dataset_code_value(self):
+        """The chat no-dataset guard emits this exact code."""
+        assert NO_DATASET_CODE == "session/no_dataset"

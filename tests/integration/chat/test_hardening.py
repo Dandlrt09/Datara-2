@@ -24,7 +24,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.chat_context import build_chat_context, DEFAULT_MESSAGE_WINDOW
 from server.services.sqlite_store import SqliteStore
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, upload_csv
 
 
 @pytest.fixture
@@ -82,13 +82,21 @@ def auth_cookie(client):
 
 @pytest.fixture
 def session_id(client, auth_cookie):
+    """Session with an attached dataset.
+
+    The chat router refuses to run the sandbox in a session with no files
+    (no-dataset guard), so every sandbox-exercising test here needs a
+    dataset; tests that assert on profiles still upload their own file.
+    """
     resp = client.post(
         "/api/sessions",
         json={"title": "Cost guard test"},
         headers={"Cookie": auth_cookie},
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    sid = resp.json()["id"]
+    upload_csv(client, auth_cookie, sid)
+    return sid
 
 
 def _make_openai_fake(content: str) -> MagicMock:

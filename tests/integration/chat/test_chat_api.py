@@ -17,14 +17,15 @@ from fastapi.testclient import TestClient
 from server.api.routers import archive as archive_router
 from server.api.routers import auth as auth_router
 from server.api.routers import chat as chat_router
+from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, upload_csv
 
 
 @pytest.fixture
-def app():
+def app(tmp_path, monkeypatch):
     from server.api import event_bus as api_event_bus
     from server.api import store as api_store
     from server.services.events import EventBus
@@ -34,6 +35,11 @@ def app():
     application.include_router(sessions_router.router)
     application.include_router(chat_router.router)
     application.include_router(archive_router.router)
+    application.include_router(files_router.router)
+
+    # Isolation: uploads must land in a per-test tmp dir, never the real
+    # server/uploads/ used by the live server.
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
 
     import asyncio
 
@@ -74,14 +80,20 @@ def auth_cookie(client):
 
 @pytest.fixture
 def session_id(client, auth_cookie):
-    """Create a chat session and return its id."""
+    """Create a chat session with an attached dataset and return its id.
+
+    The chat router refuses to run the sandbox in a session with no files
+    (no-dataset guard), so sandbox-exercising tests need a dataset.
+    """
     resp = client.post(
         "/api/sessions",
         json={"title": "Chat test"},
         headers={"Cookie": auth_cookie},
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    sid = resp.json()["id"]
+    upload_csv(client, auth_cookie, sid)
+    return sid
 
 
 @pytest.fixture
@@ -489,6 +501,65 @@ class TestTypedErrorCodes:
         assert payload["type"] == "runtime_error"
         assert payload["code"] == "internal/error"
         assert "forced catch-all" in payload["message"]
+
+
+# ── No-dataset guard (session/no_dataset) ──────────────────────────────────
+
+
+class TestNoDatasetGuard:
+    """Deterministic safety net for a session with no attached files.
+
+    The prompt asks the model to answer in text, but a model that still
+    emits code must never reach the sandbox: the router refuses, emits the
+    typed ``session/no_dataset`` error, terminates with the standard
+    (stage done, state error) status, and persists nothing.
+    """
+
+    def test_nonempty_code_without_files_refuses_sandbox(
+        self, client, auth_cookie, mock_llm, monkeypatch
+    ):
+        # The shared session_id fixture carries a dataset now, so build a
+        # bare session with no attachments.
+        resp = client.post(
+            "/api/sessions",
+            json={"title": "Sin datos"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+        bare_session = resp.json()["id"]
+
+        run_code_mock = AsyncMock()
+        monkeypatch.setattr(chat_router, "run_code", run_code_mock)
+
+        resp = client.post(
+            f"/api/sessions/{bare_session}/chat",
+            json={"question": "¿cuál es el promedio de ventas?"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+
+        errors = [e for e in events if e["event"] == "error"]
+        assert len(errors) == 1, f"Expected one terminal error: {events}"
+        payload = errors[0]["data"]
+        assert payload["type"] == "session"
+        assert payload["code"] == "session/no_dataset"
+        assert "datos adjuntos" in payload["message"]
+
+        terminal = [e for e in events if e["event"] == "status"][-1]
+        assert terminal["data"] == {"stage": "done", "state": "error"}
+        # No done, no artifacts, no sandbox run, no repair LLM call.
+        assert "done" not in [e["event"] for e in events]
+        assert "artifact" not in [e["event"] for e in events]
+        run_code_mock.assert_not_awaited()
+        assert mock_llm.await_count == 1, "no repair pass may run"
+
+        # Failed turns persist nothing: only the user question remains.
+        msgs = client.get(
+            f"/api/sessions/{bare_session}/messages",
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [m["role"] for m in msgs] == ["user"]
 
 
 # ── Messages pagination tests ──────────────────────────────────────────────
