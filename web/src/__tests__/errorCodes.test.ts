@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  NO_DATASET_CODE,
   resolveErrorPresentation,
   isKnownErrorCode,
 } from "../lib/errorCodes";
@@ -61,6 +62,15 @@ describe("resolveErrorPresentation", () => {
     });
   });
 
+  it("maps session/no_dataset to the info retry presentation", () => {
+    expect(resolveErrorPresentation(NO_DATASET_CODE)).toEqual({
+      variant: "info",
+      title: "Esta sesión no tiene datos",
+      action: "retry-turn",
+      actionLabel: "Reintentar",
+    });
+  });
+
   it.each(["model/inadequate", "weird/unrecognized", null, undefined])(
     "degrades unknown/missing code %s to the generic danger fallback",
     (code) => {
@@ -80,6 +90,7 @@ describe("isKnownErrorCode", () => {
     "sandbox/timeout",
     "llm/rate_limit",
     "internal/error",
+    "session/no_dataset",
   ])("recognizes taxonomy code %s", (code) => {
     expect(isKnownErrorCode(code)).toBe(true);
   });
