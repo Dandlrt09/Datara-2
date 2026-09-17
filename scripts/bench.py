@@ -758,6 +758,67 @@ async def _run_question(
     )
 
 
+# ── Report builder (pure, unit-testable) ───────────────────────────────────────
+
+
+def _build_report(
+    results: list[QuestionResult],
+    *,
+    model: str,
+    cache_enabled: bool,
+    limit: int,
+    executed_ids: list[int],
+    total_suite: int,
+    total_cost: float,
+    total_duration: float,
+) -> dict:
+    """Build the ``.bench/last-run.json`` report dict without side effects.
+
+    Coverage honesty: exposes exactly which suite questions were executed
+    and which were skipped, so an all-pass subset run (e.g. ``--limit 10``
+    silently omitting Q11) cannot be mistaken for full-suite evidence when
+    a human decides whitelist inclusion.
+    """
+    executed_set = set(executed_ids)
+    skipped_ids = [q.id for q in _QUESTIONS if q.id not in executed_set]
+    return {
+        "schema_version": 1,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "model": model,
+        "provider": "openai",
+        "base_url": os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+        "limit": limit,
+        "cache_enabled": cache_enabled,
+        "total_cost_usd": total_cost,
+        "total_duration_seconds": total_duration,
+        "total_suite_questions": total_suite,
+        "executed_ids": executed_ids,
+        "skipped_ids": skipped_ids,
+        "questions": [
+            {
+                "id": r.id,
+                "question": r.question,
+                "csv": r.csv,
+                "status": r.status,
+                "reason": r.reason,
+                "flaky": r.status == "flaky",
+                "artifacts_expected": r.artifacts_expected,
+                "artifacts_found": r.artifacts_found,
+                "numbers_total": r.numbers_total,
+                "numbers_matched": r.numbers_matched,
+                "numbers_failed": r.numbers_failed,
+                "cost_usd": r.cost_usd,
+                "duration_seconds": r.duration_seconds,
+                "tokens_in": r.tokens_in,
+                "tokens_out": r.tokens_out,
+                "llm_explanation": r.llm_explanation,
+                "sandbox_text": r.sandbox_text,
+            }
+            for r in results
+        ],
+    }
+
+
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 
@@ -882,48 +943,34 @@ async def main(argv: list[str] | None = None) -> int:
 
     # Write JSON artifact
     _BENCH_DIR.mkdir(parents=True, exist_ok=True)
-    report = {
-        "schema_version": 1,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "model": model,
-        "provider": "openai",
-        "base_url": os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-        "limit": limit,
-        "cache_enabled": args.cache,
-        "total_cost_usd": total_cost,
-        "total_duration_seconds": total_dur,
-        "questions": [
-            {
-                "id": r.id,
-                "question": r.question,
-                "csv": r.csv,
-                "status": r.status,
-                "reason": r.reason,
-                "flaky": r.status == "flaky",
-                "artifacts_expected": r.artifacts_expected,
-                "artifacts_found": r.artifacts_found,
-                "numbers_total": r.numbers_total,
-                "numbers_matched": r.numbers_matched,
-                "numbers_failed": r.numbers_failed,
-                "cost_usd": r.cost_usd,
-                "duration_seconds": r.duration_seconds,
-                "tokens_in": r.tokens_in,
-                "tokens_out": r.tokens_out,
-                "llm_explanation": r.llm_explanation,
-                "sandbox_text": r.sandbox_text,
-            }
-            for r in results
-        ],
-    }
+    executed_ids = [r.id for r in results]
+    report = _build_report(
+        results,
+        model=model,
+        cache_enabled=args.cache,
+        limit=limit,
+        executed_ids=executed_ids,
+        total_suite=len(_QUESTIONS),
+        total_cost=total_cost,
+        total_duration=total_dur,
+    )
     with open(_BENCH_DIR / "last-run.json", "w") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
     # Determine exit code
     hard_fails = [r for r in results if r.status == "fail"]
+    skipped_ids = [q.id for q in _QUESTIONS if q.id not in set(executed_ids)]
     if hard_fails:
         print(f"FAIL: {len(hard_fails)} question(s) hard-failed")
+    else:
+        print("PASS: all questions passed")
+    # Coverage honesty: a subset run must never read as full coverage.
+    print(
+        f"Executed {executed_ids} of {len(_QUESTIONS)} suite questions — "
+        f"skipped: {skipped_ids}"
+    )
+    if hard_fails:
         return 1
-    print("PASS: all questions passed")
     return 0
 
 

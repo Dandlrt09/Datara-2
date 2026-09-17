@@ -12,12 +12,14 @@ import pytest
 
 sys.path.insert(0, ".")
 from scripts.bench import (
+    _build_report,
     _cache_key,
     _mape_check,
     _normalize_number,
     _parse_args,
     _DEFAULT_MODEL,
     BenchQuestion,
+    QuestionResult,
     _QUESTIONS,
 )
 
@@ -197,3 +199,131 @@ class TestQuestionSuite:
     def test_q2_to_q10_have_compute_expected(self, qid):
         q = next(qq for qq in _QUESTIONS if qq.id == qid)
         assert q.compute_expected is not None, f"Q{qid} missing compute_expected"
+
+
+def _qr(qid: int, status: str = "pass", **overrides) -> QuestionResult:
+    """Build a QuestionResult with required fields and optional overrides."""
+    base = dict(
+        id=qid,
+        question=f"question {qid}",
+        csv=f"q{qid}.csv",
+        status=status,
+        reason="ok" if status == "pass" else "something failed",
+        artifacts_expected=["table"],
+        artifacts_found=["table"],
+    )
+    base.update(overrides)
+    return QuestionResult(**base)
+
+
+def _build(results, **kwargs) -> dict:
+    """Call _build_report with standard defaults overridable per test."""
+    defaults = dict(
+        model="z-ai/glm-5.3-flash",
+        cache_enabled=False,
+        limit=10,
+        executed_ids=[r.id for r in results],
+        total_suite=len(_QUESTIONS),
+        total_cost=0.5,
+        total_duration=12.0,
+    )
+    defaults.update(kwargs)
+    return _build_report(results, **defaults)
+
+
+class TestBuildReport:
+    def test_model_field_is_effective_model(self):
+        report = _build([_qr(1)], model="gpt-4o-mini")
+        assert report["model"] == "gpt-4o-mini"
+
+    def test_cache_and_limit_propagated(self):
+        report = _build([_qr(1)], cache_enabled=True, limit=5)
+        assert report["cache_enabled"] is True
+        assert report["limit"] == 5
+
+    def test_totals_propagated(self):
+        report = _build([_qr(1)], total_cost=1.25, total_duration=30.5)
+        assert report["total_cost_usd"] == 1.25
+        assert report["total_duration_seconds"] == 30.5
+
+    def test_total_suite_questions(self):
+        report = _build([_qr(1)])
+        assert report["total_suite_questions"] == len(_QUESTIONS) == 11
+
+    def test_executed_ids_match_results(self):
+        results = [_qr(i) for i in (1, 3, 5)]
+        report = _build(results)
+        assert report["executed_ids"] == [1, 3, 5]
+
+    def test_full_suite_has_no_skipped(self):
+        results = [_qr(q.id) for q in _QUESTIONS]
+        report = _build(results)
+        assert report["skipped_ids"] == []
+
+    def test_subset_run_lists_skipped_ids(self):
+        """Default --limit 10 run must visibly omit Q11 (AGENTS.md gotcha)."""
+        results = [_qr(q.id) for q in _QUESTIONS if q.id != 11]
+        report = _build(results)
+        assert report["executed_ids"] == [q.id for q in _QUESTIONS if q.id != 11]
+        assert report["skipped_ids"] == [11]
+
+    def test_skipped_ids_exclude_executed_subset(self):
+        results = [_qr(i) for i in (2, 5)]
+        report = _build(results)
+        assert report["skipped_ids"] == [1, 3, 4, 6, 7, 8, 9, 10, 11]
+
+    def test_executed_ids_argument_is_authoritative(self):
+        """executed_ids is passed in, not derived — a caller may pass ids
+        for questions whose results were filtered elsewhere."""
+        report = _build([_qr(1)], executed_ids=[1, 2])
+        assert report["executed_ids"] == [1, 2]
+        assert report["skipped_ids"] == [3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+    def test_per_question_fields_preserved(self):
+        r = _qr(
+            7,
+            status="fail",
+            reason="Sandbox error: runtime_error: boom",
+            artifacts_found=[],
+            cost_usd=0.01,
+            duration_seconds=3.5,
+            tokens_in=100,
+            tokens_out=200,
+            llm_explanation="explanation text",
+            sandbox_text="sandbox text",
+        )
+        report = _build([r])
+        entry = report["questions"][0]
+        assert entry["id"] == 7
+        assert entry["question"] == "question 7"
+        assert entry["csv"] == "q7.csv"
+        assert entry["status"] == "fail"
+        assert entry["reason"] == "Sandbox error: runtime_error: boom"
+        assert entry["flaky"] is False
+        assert entry["artifacts_expected"] == ["table"]
+        assert entry["artifacts_found"] == []
+        assert entry["cost_usd"] == 0.01
+        assert entry["duration_seconds"] == 3.5
+        assert entry["tokens_in"] == 100
+        assert entry["tokens_out"] == 200
+        assert entry["llm_explanation"] == "explanation text"
+        assert entry["sandbox_text"] == "sandbox text"
+
+    def test_flaky_flag_true_on_flaky_status(self):
+        report = _build([_qr(2, status="flaky")])
+        assert report["questions"][0]["flaky"] is True
+
+    def test_numbers_failed_serialized(self):
+        failed = [{"metric": "sum", "expected": 100.0}]
+        report = _build(
+            [_qr(1, numbers_total=1, numbers_matched=0, numbers_failed=failed)]
+        )
+        entry = report["questions"][0]
+        assert entry["numbers_total"] == 1
+        assert entry["numbers_matched"] == 0
+        assert entry["numbers_failed"] == failed
+
+    def test_timestamp_is_iso_utc(self):
+        report = _build([_qr(1)])
+        assert report["timestamp"].endswith("Z")
+        assert "T" in report["timestamp"]
