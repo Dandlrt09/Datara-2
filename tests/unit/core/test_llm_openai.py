@@ -2,9 +2,13 @@
 
 Tests cover:
 - Valid structured JSON response
-- Invalid JSON → exactly one retry → LLMInvalidJSONError
+- Invalid JSON → parse-feedback retry → LLMInvalidJSONError (bound
+  independent of the rate-limit retry counter)
 - Timeout → LLMTimeoutError
 - 429 rate limit → backoff sequence → LLMRateLimitError
+- 401 → AuthInvalidKeyError; 402 → AuthNoCreditsError; other API status
+  errors → plain LLMError
+- Plain LLMError (empty-choices path) → internal/error taxonomy code
 """
 
 from __future__ import annotations
@@ -16,8 +20,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 
-from core.errors import LLMError, LLMInvalidJSONError, LLMRateLimitError, LLMTimeoutError
+from core.errors import (
+    AuthError,
+    AuthInvalidKeyError,
+    AuthNoCreditsError,
+    LLMError,
+    LLMInvalidJSONError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+)
 from core.protocols.llm_provider import LLMUsage
+from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code
 from server.services.llm_openai import OpenAIProvider, _estimate_cost
 
 
@@ -272,6 +285,118 @@ class TestErrorHandling:
                     )
         assert mock.call_count == 4  # initial + 3 retries
 
+    async def test_empty_choices_maps_to_internal_error_code(self, provider):
+        """Enmienda 1: plain LLMError from the empty-choices path maps to
+        internal/error at the emission boundary (chat.py calls llm_code)."""
+        assert (
+            llm_code(LLMError("Provider returned an empty response"))
+            == INTERNAL_ERROR_CODE
+        )
+
+    async def test_auth_error_maps_to_auth_invalid_key_error(self, provider):
+        """401 AuthenticationError raises the typed auth exception.
+
+        AuthInvalidKeyError subclasses AuthError AND LLMError, so existing
+        ``except LLMError`` boundaries (and this module's tests) keep
+        catching it.
+        """
+        auth_error = openai.AuthenticationError(
+            "Error code: 401 - Missing Authentication Header",
+            response=MagicMock(),
+            body={"error": {"message": "Missing Authentication Header", "code": 401}},
+        )
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock:
+            mock.side_effect = auth_error
+            with pytest.raises(AuthInvalidKeyError, match="Authentication failed") as exc_info:
+                await provider.complete(
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+            assert isinstance(exc_info.value, AuthError)
+            assert isinstance(exc_info.value, LLMError)
+        assert mock.call_count == 1, "Auth errors must not be retried"
+
+    async def test_402_maps_to_auth_no_credits_error(self, provider):
+        """HTTP 402 (Payment Required) maps to AuthNoCreditsError by
+        status-code inspection on the typed exception — no text parsing."""
+        response = MagicMock()
+        response.status_code = 402
+        payment_error = openai.APIStatusError(
+            "Payment required", response=response, body=None
+        )
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock:
+            mock.side_effect = payment_error
+            with pytest.raises(AuthNoCreditsError, match="Payment required") as exc_info:
+                await provider.complete(
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+            assert isinstance(exc_info.value, AuthError)
+            assert isinstance(exc_info.value, LLMError)
+        assert mock.call_count == 1, "Auth errors must not be retried"
+
+    async def test_other_api_status_error_maps_to_llm_error(self, provider):
+        """APIStatusError with a non-402 status raises plain LLMError."""
+        response = MagicMock()
+        response.status_code = 500
+        status_error = openai.APIStatusError(
+            "internal provider error", response=response, body=None
+        )
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock:
+            mock.side_effect = status_error
+            with pytest.raises(LLMError, match="internal provider error") as exc_info:
+                await provider.complete(
+                    messages=[{"role": "user", "content": "hello"}],
+                )
+            assert not isinstance(exc_info.value, AuthError), (
+                "Only 402 maps to the auth family; other statuses stay plain LLMError"
+            )
+        assert mock.call_count == 1, "Unexpected status errors must not be retried"
+
+    async def test_stream_402_maps_to_auth_no_credits_error(self, provider):
+        """402 during streaming maps to AuthNoCreditsError."""
+
+        async def _fake_stream(**kwargs):
+            response = MagicMock()
+            response.status_code = 402
+            raise openai.APIStatusError(
+                "Payment required", response=response, body=None
+            )
+            yield  # pragma: no cover — makes this an async generator
+
+        with patch.object(provider._client.chat.completions, "create", AsyncMock(side_effect=_fake_stream)):
+            with pytest.raises(AuthNoCreditsError, match="Payment required"):
+                chunks = []
+                async for chunk in provider.stream(messages=[{"role": "user", "content": "hi"}]):
+                    chunks.append(chunk)
+
+    async def test_stream_other_api_status_error_maps_to_llm_error(self, provider):
+        """Non-402 APIStatusError during streaming maps to plain LLMError."""
+
+        async def _fake_stream(**kwargs):
+            response = MagicMock()
+            response.status_code = 503
+            raise openai.APIStatusError(
+                "upstream unavailable", response=response, body=None
+            )
+            yield  # pragma: no cover — makes this an async generator
+
+        with patch.object(provider._client.chat.completions, "create", AsyncMock(side_effect=_fake_stream)):
+            with pytest.raises(LLMError, match="upstream unavailable"):
+                chunks = []
+                async for chunk in provider.stream(messages=[{"role": "user", "content": "hi"}]):
+                    chunks.append(chunk)
+
     async def test_stream_auth_error_maps_to_llm_error(self, provider):
         """401 during streaming maps to a clean LLMError."""
 
@@ -288,6 +413,97 @@ class TestErrorHandling:
                 chunks = []
                 async for chunk in provider.stream(messages=[{"role": "user", "content": "hi"}]):
                     chunks.append(chunk)
+
+
+# ── JSON retry with parse feedback ──────────────────────────────────────────
+
+
+class TestJsonRetryFeedback:
+    async def test_first_invalid_json_second_call_carries_feedback(self, provider):
+        """1st invalid JSON → the 2nd call's messages include the parse-error
+        feedback user message; the caller's message list is NOT mutated
+        (copy-on-write)."""
+        first = _make_fake_response("bad json {{{")
+        second = _make_fake_response(json.dumps({"code": "x=1", "explanation": "ok"}))
+        captured: list[dict] = []
+
+        async def _side_effect(**kwargs):
+            captured.append(kwargs)
+            if _side_effect.calls == 0:
+                _side_effect.calls += 1
+                return first
+            return second
+        _side_effect.calls = 0
+
+        msgs = [{"role": "user", "content": "write code"}]
+        mock = AsyncMock(side_effect=_side_effect)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            result = await provider.complete(
+                messages=msgs,
+                response_format={"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}},
+            )
+        assert result.structured_data == {"code": "x=1", "explanation": "ok"}
+        assert len(captured) == 2
+
+        # Original messages intact + exactly one feedback user message
+        second_msgs = captured[1]["messages"]
+        assert second_msgs[:-1] == [{"role": "user", "content": "write code"}]
+        feedback = second_msgs[-1]
+        assert feedback["role"] == "user"
+        assert "not valid JSON" in feedback["content"]
+        # Parse error detail (msg/lineno/colno) is referenced
+        assert "Expecting value" in feedback["content"]
+        assert "line 1" in feedback["content"] and "column 1" in feedback["content"]
+        # The retry forbids fences and out-of-JSON text
+        assert "code fences" in feedback["content"]
+
+        # Copy-on-write: the caller's list is untouched
+        assert msgs == [{"role": "user", "content": "write code"}]
+
+    async def test_second_invalid_json_is_terminal(self, provider):
+        """2nd invalid JSON raises LLMInvalidJSONError (bound = 2 total
+        attempts for the JSON retry)."""
+        bad = _make_fake_response("still not json {{{")
+
+        async def _side_effect(**kwargs):
+            return bad
+
+        mock = AsyncMock(side_effect=_side_effect)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            with pytest.raises(LLMInvalidJSONError, match="invalid JSON"):
+                await provider.complete(
+                    messages=[{"role": "user", "content": "write code"}],
+                    response_format={"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}},
+                )
+        assert mock.call_count == 2, "Exactly one JSON retry (two total calls)"
+
+    async def test_json_retry_bound_independent_of_rate_limit_retry(self, provider):
+        """Regression for the latent shared-counter bug: a rate-limit retry
+        on attempt 1 must NOT skip the JSON retry. The old code shared the
+        `attempts` counter between both retry kinds, so rate-limit +
+        invalid-JSON raised after only 2 calls; the dedicated
+        `json_retried` flag makes the JSON bound independent."""
+        rate_errors = [_make_rate_limit_error()]
+
+        async def _side_effect(**kwargs):
+            _side_effect.calls += 1
+            if _side_effect.calls <= len(rate_errors):
+                raise rate_errors[_side_effect.calls - 1]
+            return _make_fake_response("invalid after rate limit {{{")
+        _side_effect.calls = 0
+
+        mock = AsyncMock(side_effect=_side_effect)
+        with patch.object(provider._client.chat.completions, "create", mock):
+            # Skip the 2s rate-limit backoff sleep
+            with patch("asyncio.sleep", AsyncMock()):
+                with pytest.raises(LLMInvalidJSONError, match="invalid JSON"):
+                    await provider.complete(
+                        messages=[{"role": "user", "content": "write code"}],
+                        response_format={"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}},
+                    )
+        # 3 calls: rate-limit fail (1), invalid JSON (2, retried), invalid
+        # JSON again (3, terminal). The old shared counter would stop at 2.
+        assert _side_effect.calls == 3
 
 
 # ── Cost estimation ──────────────────────────────────────────────────────────

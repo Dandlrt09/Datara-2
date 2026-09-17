@@ -44,6 +44,7 @@ from core.errors import (
 from server.api import event_bus as _event_bus_module
 from server.api.deps import current_user, get_store
 from server.services.chat_context import build_chat_context
+from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code
 from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
@@ -425,8 +426,13 @@ async def chat_stream(
                     temperature=0.1,
                 )
             except LLMError as e:
+                # Typed error emission: `code` carries the taxonomy code
+                # (llm/timeout, llm/invalid_json, llm/rate_limit,
+                # auth/invalid_key, auth/no_credits, or internal/error for
+                # the plain-LLMError empty-choices path — spec Enmienda 1).
                 yield _sse_event("error", {
-                    "type": e.__class__.__name__,
+                    "type": "llm",
+                    "code": llm_code(e),
                     "message": str(e),
                 })
                 yield _sse_event("status", {"stage": "error", "state": "error"})
@@ -627,8 +633,13 @@ async def chat_stream(
             # Emit STREAMING_ENDED on the error path too: other tabs rely on
             # the events stream to clear their streaming indicators [R7].
             _publish_streaming_ended()
+            # Defensive catch-all: no terminal error without a taxonomy
+            # code (spec Enmienda 1) — internal/error is the catch-all
+            # code; the frontend degrades safely via the unknown-code
+            # fallback.
             yield _sse_event("error", {
                 "type": "runtime_error",
+                "code": INTERNAL_ERROR_CODE,
                 "message": f"Internal server error: {e}",
             })
         else:

@@ -2,6 +2,8 @@
 
 from core.errors import (
     AuthError,
+    AuthInvalidKeyError,
+    AuthNoCreditsError,
     DataraError,
     DuplicateError,
     LLMError,
@@ -67,6 +69,29 @@ class TestSandboxErrors:
     def test_runtime(self):
         e = SandboxRuntimeError("ZeroDivisionError")
         assert isinstance(e, SandboxError)
+
+
+class TestAuthErrors:
+    def test_invalid_key_is_both_families(self):
+        """AuthInvalidKeyError extends the orphan AuthError AND keeps the
+        ``except LLMError`` catch boundary working (REQ-3)."""
+        e = AuthInvalidKeyError("401")
+        assert isinstance(e, AuthError)
+        assert isinstance(e, LLMError)
+        assert isinstance(e, DataraError)
+
+    def test_no_credits_is_both_families(self):
+        e = AuthNoCreditsError("402")
+        assert isinstance(e, AuthError)
+        assert isinstance(e, LLMError)
+        assert isinstance(e, DataraError)
+
+    def test_mro_orders_auth_before_llm(self):
+        """MRO: AuthInvalidKeyError → AuthError → LLMError → DataraError —
+        the auth family is checked first, no bases conflict."""
+        mro = [c.__name__ for c in AuthInvalidKeyError.__mro__]
+        assert mro.index("AuthError") < mro.index("LLMError")
+        assert mro.index("LLMError") < mro.index("DataraError")
 
 
 class TestStorageErrors:

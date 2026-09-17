@@ -19,6 +19,8 @@ import openai
 from openai import AsyncOpenAI
 
 from core.errors import (
+    AuthInvalidKeyError,
+    AuthNoCreditsError,
     LLMError,
     LLMInvalidJSONError,
     LLMRateLimitError,
@@ -48,6 +50,20 @@ _DEFAULT_TIMEOUT = float(os.environ.get("OPENAI_TIMEOUT", "120.0"))
 
 # Rate-limit backoff schedule (seconds)
 _RETRY_BACKOFFS = [2.0, 4.0, 8.0]
+
+# Feedback appended as a user message when the provider's json_schema
+# payload fails to parse (automatic-repair: "JSON repair with feedback,
+# bounded"). English: it is LLM-directed prompt content, not UI copy.
+# The 2-total-attempt bound is enforced by a dedicated json_retried flag,
+# independent of the rate-limit retry counter (the old shared counter let
+# a rate-limit retry on attempt 1 skip the JSON retry entirely).
+_JSON_RETRY_FEEDBACK = (
+    "Your previous response was not valid JSON and could not be parsed "
+    "(error: {msg} at line {lineno}, column {colno}). "
+    "Respond again with a single valid JSON object that matches the "
+    "required schema. Do not wrap it in Markdown code fences and do not "
+    "add any text outside the JSON."
+)
 
 
 class OpenAIProvider:
@@ -128,6 +144,7 @@ class OpenAIProvider:
 
         attempts = 0
         max_attempts = 3  # for rate-limit retries
+        json_retried = False  # JSON retry bound — independent of `attempts`
 
         while True:
             attempts += 1
@@ -154,9 +171,10 @@ class OpenAIProvider:
                 ) from None
             except openai.AuthenticationError as e:
                 # Invalid/expired API key (401): retrying cannot help.
-                # Surface a clean auth error instead of a generic
-                # runtime_error from the generic exception handler.
-                raise LLMError(f"Authentication failed: {e}") from None
+                # Surface a typed auth error (AuthError + LLMError) so
+                # the existing ``except LLMError`` boundaries catch it
+                # and the taxonomy emits auth/invalid_key.
+                raise AuthInvalidKeyError(f"Authentication failed: {e}") from None
             except openai.APITimeoutError:
                 raise LLMTimeoutError(
                     f"OpenAI call timed out after {self._timeout}s"
@@ -165,6 +183,17 @@ class OpenAIProvider:
                 raise LLMTimeoutError(
                     f"OpenAI call timed out after {self._timeout}s"
                 ) from None
+            except openai.APIStatusError as e:
+                # Trailing catch for unexpected provider HTTP statuses —
+                # AFTER the specific excepts (RateLimitError and
+                # AuthenticationError subclass APIStatusError, so order
+                # matters). The OpenAI SDK has no dedicated 402 class:
+                # status-code inspection on the typed exception object is
+                # the status-based mechanism the spec mandates (no
+                # exception-text parsing anywhere).
+                if getattr(e, "status_code", None) == 402:
+                    raise AuthNoCreditsError(f"Payment required: {e}") from None
+                raise LLMError(str(e)) from None
 
             # Parse the response
             choices = getattr(response, "choices", None) or []
@@ -204,10 +233,27 @@ class OpenAIProvider:
             if response_format is not None:
                 try:
                     structured_data = json.loads(_strip_json_fences(content))
-                except json.JSONDecodeError:
-                    if attempts < 2:  # one retry for invalid JSON
+                except json.JSONDecodeError as parse_error:
+                    if not json_retried:
+                        json_retried = True
+                        # Copy-on-write: append the parse-error feedback
+                        # as a new user message WITHOUT mutating the
+                        # caller's list (chat.py reuses nothing, but the
+                        # bench may).
+                        kwargs["messages"] = [
+                            *kwargs["messages"],
+                            {
+                                "role": "user",
+                                "content": _JSON_RETRY_FEEDBACK.format(
+                                    msg=parse_error.msg,
+                                    lineno=parse_error.lineno,
+                                    colno=parse_error.colno,
+                                ),
+                            },
+                        ]
                         logger.warning(
-                            "Invalid JSON from OpenAI (attempt %d), retrying",
+                            "Invalid JSON from provider (attempt %d), "
+                            "retrying with parse feedback",
                             attempts,
                         )
                         continue
@@ -281,11 +327,22 @@ class OpenAIProvider:
         except openai.RateLimitError:
             raise LLMRateLimitError("Rate-limited during streaming") from None
         except openai.AuthenticationError as e:
-            raise LLMError(f"Authentication failed: {e}") from None
+            # Invalid/expired API key (401): typed auth error (AuthError +
+            # LLMError) so ``except LLMError`` boundaries catch it and the
+            # taxonomy emits auth/invalid_key.
+            raise AuthInvalidKeyError(f"Authentication failed: {e}") from None
         except (openai.APITimeoutError, asyncio.TimeoutError):
             raise LLMTimeoutError(
                 f"Streaming call timed out after {self._timeout}s"
             ) from None
+        except openai.APIStatusError as e:
+            # Trailing catch AFTER the specific excepts (RateLimitError
+            # and AuthenticationError subclass APIStatusError). No
+            # dedicated 402 class in the SDK — status-code inspection on
+            # the typed exception object, no exception-text parsing.
+            if getattr(e, "status_code", None) == 402:
+                raise AuthNoCreditsError(f"Payment required: {e}") from None
+            raise LLMError(str(e)) from None
 
 
 # ── Cost estimation ──────────────────────────────────────────────────────────

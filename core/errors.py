@@ -73,6 +73,28 @@ class AuthError(DataraError):
     """Base error for authentication/authorization failures."""
 
 
+class AuthInvalidKeyError(AuthError, LLMError):
+    """Provider rejected the API key (HTTP 401). No retry can help.
+
+    Subclasses BOTH families (documented dual inheritance): AuthError was
+    previously orphaned (defined, never raised) — extending it gives the
+    auth family a live, semantic marker; LLMError keeps the existing
+    ``except LLMError`` catch boundaries (chat router, bench classifier)
+    catching provider auth failures with zero catch-site changes. MRO:
+    AuthInvalidKeyError → AuthError → LLMError → DataraError → Exception
+    (both bases derive from DataraError; no conflict).
+    """
+
+
+class AuthNoCreditsError(AuthError, LLMError):
+    """Provider account is out of credits (HTTP 402).
+
+    Same dual-family rationale as AuthInvalidKeyError: AuthError for the
+    auth semantics, LLMError so existing ``except LLMError`` boundaries
+    keep catching it.
+    """
+
+
 # ── Storage errors ──────────────────────────────────────────────────────────────
 
 
