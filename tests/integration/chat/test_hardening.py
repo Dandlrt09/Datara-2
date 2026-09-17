@@ -16,6 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.errors import LLMTimeoutError
 from server.api.routers import archive as archive_router
 from server.api.routers import auth as auth_router
 from server.api.routers import chat as chat_router
@@ -106,6 +107,24 @@ def _make_openai_fake(content: str) -> MagicMock:
     response.model = "gpt-4o-2024-08-06"
     response.to_dict = MagicMock(return_value={"id": "fake"})
     return response
+
+
+def _parse_sse_events(response_text: str) -> list[tuple[str, dict]]:
+    """Parse an SSE body into (event, data) tuples."""
+    events: list[tuple[str, dict]] = []
+    for frame in response_text.split("\n\n"):
+        frame = frame.strip()
+        if not frame:
+            continue
+        event_name = ""
+        data_lines: list[str] = []
+        for line in frame.split("\n"):
+            if line.startswith("event: "):
+                event_name = line[len("event: "):]
+            elif line.startswith("data: "):
+                data_lines.append(line[len("data: "):])
+        events.append((event_name, json.loads("\n".join(data_lines))))
+    return events
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────
@@ -500,3 +519,555 @@ class TestGroundingTableContext:
             f"Grounding context must include exact table values: {grounding_user_content!r}"
         )
         assert "Result table (exact values)" in grounding_user_content
+
+
+class TestBuildRepairFeedback:
+    """Task 3.1: unit tests on the repair feedback message structure.
+
+    The feedback is LLM-directed prompt content (English per repo
+    convention); it must carry the taxonomy code, the error message and
+    the traceback when present — and NEVER the failed attempt's
+    explanation or generated code (spec automatic-repair REQ-3/REQ-4).
+    """
+
+    def test_includes_code_message_and_trailing_instruction(self):
+        feedback = chat_router._build_repair_feedback(
+            {"type": "runtime_error", "message": "NameError: name 'df' is not defined"}
+        )
+        assert "sandbox/runtime_error" in feedback
+        assert "NameError: name 'df' is not defined" in feedback
+        assert "Generate corrected Python code" in feedback
+        assert "same JSON format" in feedback
+
+    def test_includes_traceback_when_present(self):
+        feedback = chat_router._build_repair_feedback(
+            {
+                "type": "runtime_error",
+                "message": "boom",
+                "traceback": "Traceback (most recent call last):\nValueError: boom",
+            }
+        )
+        assert "Traceback:" in feedback
+        assert "ValueError: boom" in feedback
+
+    def test_omits_traceback_section_when_absent(self):
+        feedback = chat_router._build_repair_feedback(
+            {"type": "runtime_error", "message": "hard crash"}
+        )
+        assert "Traceback:" not in feedback
+        assert "hard crash" in feedback
+
+    def test_carries_no_failed_outputs(self):
+        feedback = chat_router._build_repair_feedback(
+            {"type": "runtime_error", "message": "boom"}
+        )
+        # The feedback template itself contains no slot for a failed
+        # explanation or code block — only error context.
+        assert "explanation" not in feedback.split("same JSON format")[0]
+
+
+class TestSandboxRepairPass:
+    """Task 3.2/3.3: bounded sandbox repair pass (WU3).
+
+    Spec coverage: automatic-repair REQ-1 (bounded to one), REQ-2 (only
+    runtime_error triggers), REQ-3 (fresh repair context), REQ-4
+    (persist-nothing on failure / successful repair indistinguishable),
+    chat-execution second-failure exact SSE sequence, Enmienda 1 (code
+    maps the second run's ACTUAL payload type).
+    """
+
+    @staticmethod
+    def _error_payload(error_type: str, message: str, traceback: str | None = None):
+        payload = {"status": "error", "figures": [], "tables": [], "text": ""}
+        error: dict = {"type": error_type, "message": message}
+        if traceback is not None:
+            error["traceback"] = traceback
+        payload["error"] = error
+        return payload
+
+    @staticmethod
+    def _ok_payload(text: str, table: bool = False):
+        payload = {
+            "status": "ok",
+            "figures": [],
+            "tables": [],
+            "text": text,
+        }
+        if table:
+            payload["tables"] = [
+                {
+                    "name": "df_result",
+                    "columns": ["categoria", "total"],
+                    "rows": [["A", 42]],
+                }
+            ]
+        return payload
+
+    @staticmethod
+    def _classify_llm_call(kwargs: dict) -> str:
+        """Distinguish main / repair / grounding provider calls."""
+        messages = kwargs.get("messages", [])
+        last = messages[-1]["content"] if messages else ""
+        if "response_format" in kwargs:
+            if "failed during execution" in last:
+                return "repair"
+            return "main"
+        return "grounding"
+
+    @pytest.mark.parametrize(
+        ("code", "question", "expected_code"),
+        [
+            ("def broken(:", "rompe la sintaxis", "sandbox/syntax_error"),
+            ("import os", "importa prohibido", "sandbox/import_error"),
+        ],
+    )
+    async def test_non_repairable_terminates_without_repair(
+        self, client, auth_cookie, session_id, store, code, question, expected_code
+    ):
+        """Spec REQ-2: non-runtime_error payloads (syntax_error,
+        blocked_import) terminate immediately with their typed code and
+        ZERO additional LLM calls."""
+        call_count = 0
+
+        def _main_only_fake(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return _make_openai_fake(json.dumps({
+                "code": code,
+                "explanation": "EXPLICACION INVENTADA",
+            }))
+
+        mock_create = AsyncMock(side_effect=_main_only_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": question},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        error_events = [d for name, d in events if name == "error"]
+        assert len(error_events) == 1
+        assert error_events[0]["type"] == "sandbox"
+        assert error_events[0]["code"] == expected_code
+        assert error_events[0]["traceback"], "sandbox payloads carry a traceback"
+        terminal = [d for name, d in events if name == "status"][-1]
+        assert terminal == {"stage": "done", "state": "error"}
+        assert call_count == 1, "non-repairable failure must not trigger repair"
+        # Nothing persisted: only the user question is in history.
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assert all(m["role"] != "assistant" for m in messages)
+
+    async def test_second_failure_terminal_exact_sse_order(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """Spec: second sandbox failure emits exactly one error event (code
+        from the SECOND run's payload per Enmienda 1) then status
+        done/error, then the stream ends; nothing is persisted."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            if len(run_calls) == 1:
+                return self._error_payload(
+                    "runtime_error",
+                    "primer fallo",
+                    traceback="Traceback (most recent call last):\nValueError: primer fallo",
+                )
+            return self._error_payload(
+                "runtime_error",
+                "segundo fallo",
+                traceback="Traceback (most recent call last):\nNameError: segundo fallo",
+            )
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        llm_calls: list[str] = []
+
+        def _two_attempt_fake(*args, **kwargs):
+            kind = self._classify_llm_call(kwargs)
+            llm_calls.append(kind)
+            if kind == "main":
+                return _make_openai_fake(json.dumps({
+                    "code": "raise ValueError('primer intento')",
+                    "explanation": "EXPLICACION INVENTADA",
+                }))
+            return _make_openai_fake(json.dumps({
+                "code": "raise ValueError('segundo intento')",
+                "explanation": "EXPLICACION REPARADA",
+            }))
+
+        mock_create = AsyncMock(side_effect=_two_attempt_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "falla dos veces"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert llm_calls == ["main", "repair"], llm_calls
+        assert len(run_calls) == 2, "exactly one repair sandbox run"
+
+        events = _parse_sse_events(resp.text)
+        names = [name for name, _ in events]
+        # Exact terminal sequence: one error, then one status done/error,
+        # then the stream ends (no further events).
+        assert names[-2:] == ["error", "status"], names
+        error_data = events[-2][1]
+        assert error_data == {
+            "type": "sandbox",
+            "code": "sandbox/runtime_error",
+            "message": "segundo fallo",
+            "traceback": "Traceback (most recent call last):\nNameError: segundo fallo",
+        }
+        assert events[-1][1] == {"stage": "done", "state": "error"}
+        # No artifact/done events after the failure.
+        assert "artifact" not in names and "done" not in names
+        # Failed repair persists NOTHING.
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assert all(m["role"] != "assistant" for m in messages)
+
+    async def test_repair_status_and_fresh_context(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """Spec REQ-3 + first-failure non-terminal: a repair/running status
+        sits between the first failure and the outcome; the repair call's
+        context is fresh (no failed explanation/code block)."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            if len(run_calls) == 1:
+                return self._error_payload(
+                    "runtime_error",
+                    "NameError: primer intento",
+                    traceback=(
+                        'Traceback (most recent call last):\n  File "<string>", '
+                        "line 2, in <module>\nNameError: primer intento"
+                    ),
+                )
+            return self._ok_payload("42", table=True)
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        captured: dict[str, list[list[dict]]] = {"main": [], "repair": [], "grounding": []}
+
+        def _three_phase_fake(*args, **kwargs):
+            kind = self._classify_llm_call(kwargs)
+            captured[kind].append(kwargs.get("messages", []))
+            if kind == "main":
+                return _make_openai_fake(json.dumps({
+                    "code": "import pandas as pd\nraise ValueError('primer intento')",
+                    "explanation": "EXPLICACION INVENTADA",
+                }))
+            if kind == "repair":
+                return _make_openai_fake(json.dumps({
+                    "code": "print('42')",
+                    "explanation": "EXPLICACION REPARADA",
+                }))
+            return _make_openai_fake("El resultado es 42.")
+
+        mock_create = AsyncMock(side_effect=_three_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "repara esto"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        # Exactly one non-terminal repair status, positioned after the
+        # sandbox-running status and before the outcome.
+        repair_statuses = [
+            (i, d) for i, (name, d) in enumerate(events)
+            if name == "status" and d.get("stage") == "repair"
+        ]
+        assert len(repair_statuses) == 1, events
+        repair_idx = repair_statuses[0][0]
+        assert events[repair_idx][1] == {"stage": "repair", "state": "running"}
+        prior_stages = [
+            d.get("stage") for name, d in events[:repair_idx] if name == "status"
+        ]
+        assert "sandbox" in prior_stages and "done" not in prior_stages
+        # No terminal error was emitted for the FIRST failure.
+        assert all(
+            d.get("code") != "sandbox/runtime_error"
+            for name, d in events
+            if name == "error"
+        )
+        # Stream completed normally.
+        assert events[-1][0] == "done"
+
+        # Fresh repair context: system prompt first, original question,
+        # feedback message last — and NO failed explanation/code block.
+        repair_msgs = captured["repair"][0]
+        assert repair_msgs[0]["role"] == "system"
+        assert repair_msgs[-1]["role"] == "user"
+        feedback = repair_msgs[-1]["content"]
+        assert "sandbox/runtime_error" in feedback
+        assert "NameError: primer intento" in feedback
+        assert "EXPLICACION INVENTADA" not in json.dumps(repair_msgs)
+        assert "import pandas as pd" not in json.dumps(repair_msgs)
+        # Repair messages end with the original user question + feedback —
+        # exactly one new message beyond the main call's list.
+        main_msgs = captured["main"][0]
+        assert len(repair_msgs) == len(main_msgs) + 1
+
+        # Successful repair: persisted exactly once, stream done.
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        done_events = [d for name, d in events if name == "done"]
+        assert len(done_events) == 1
+        assert done_events[0]["message_id"] == assistant_msgs[0]["id"]
+
+    async def test_repair_llm_failure_typed_code(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """A repair LLM failure terminates with the typed llm code and no
+        second sandbox run."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            return self._error_payload("runtime_error", "primer fallo")
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        def _repair_raises(*args, **kwargs):
+            if self._classify_llm_call(kwargs) == "repair":
+                raise LLMTimeoutError("Provider timed out after 120s")
+            return _make_openai_fake(json.dumps({
+                "code": "raise ValueError('x')",
+                "explanation": "EXPLICACION INVENTADA",
+            }))
+
+        mock_create = AsyncMock(side_effect=_repair_raises)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "reparacion que falla"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        error_data = [d for name, d in events if name == "error"]
+        assert error_data == [
+            {"type": "llm", "code": "llm/timeout", "message": "Provider timed out after 120s"}
+        ]
+        terminal = [d for name, d in events if name == "status"][-1]
+        assert terminal == {"stage": "done", "state": "error"}
+        assert len(run_calls) == 1, "no second sandbox run after repair LLM failure"
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assert all(m["role"] != "assistant" for m in messages)
+
+    async def test_repair_empty_code_terminal_with_first_failure(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """An empty code from the repair call terminates with the FIRST
+        failure's message+traceback (no second sandbox run to reflect)."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            return self._error_payload(
+                "runtime_error",
+                "primer fallo",
+                traceback="Traceback (most recent call last):\nValueError: primer fallo",
+            )
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        def _empty_repair(*args, **kwargs):
+            if self._classify_llm_call(kwargs) == "repair":
+                return _make_openai_fake(json.dumps({
+                    "code": "",
+                    "explanation": "No puedo repararlo.",
+                }))
+            return _make_openai_fake(json.dumps({
+                "code": "raise ValueError('x')",
+                "explanation": "EXPLICACION INVENTADA",
+            }))
+
+        mock_create = AsyncMock(side_effect=_empty_repair)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "sin codigo"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        events = _parse_sse_events(resp.text)
+        error_data = [d for name, d in events if name == "error"]
+        assert len(error_data) == 1
+        assert error_data[0]["code"] == "sandbox/runtime_error"
+        assert error_data[0]["message"] == "primer fallo"
+        assert error_data[0]["traceback"] == (
+            "Traceback (most recent call last):\nValueError: primer fallo"
+        )
+        assert len(run_calls) == 1, "empty repair code: no second sandbox run"
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assert all(m["role"] != "assistant" for m in messages)
+
+    async def test_hard_crash_without_traceback_repairs(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """Spec edge case: a hard crash (runtime_error, no traceback field)
+        still repairs — the feedback carries the message (stderr tail)."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            if len(run_calls) == 1:
+                return self._error_payload(
+                    "runtime_error",
+                    "Sandbox process produced no output (crashed or hard OOM) — segfault tail",
+                )
+            return self._ok_payload("ok")
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        captured_feedback: list[str] = []
+
+        def _three_phase_fake(*args, **kwargs):
+            kind = self._classify_llm_call(kwargs)
+            if kind == "repair":
+                captured_feedback.append(kwargs["messages"][-1]["content"])
+                return _make_openai_fake(json.dumps({
+                    "code": "print('ok')",
+                    "explanation": "EXPLICACION REPARADA",
+                }))
+            if kind == "main":
+                return _make_openai_fake(json.dumps({
+                    "code": "raise ValueError('crash')",
+                    "explanation": "EXPLICACION INVENTADA",
+                }))
+            return _make_openai_fake("Listo.")
+
+        mock_create = AsyncMock(side_effect=_three_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "hard crash"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert len(run_calls) == 2, "repair proceeds on a traceback-less crash"
+        assert captured_feedback, "repair LLM call was made"
+        assert "hard OOM" in captured_feedback[0]
+        assert "Traceback:" not in captured_feedback[0]
+        # Turn completes successfully.
+        events = _parse_sse_events(resp.text)
+        assert events[-1][0] == "done"
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assert any(m["role"] == "assistant" for m in messages)
+
+    async def test_successful_repair_indistinguishable_and_usage_sum(
+        self, client, auth_cookie, session_id, store, monkeypatch
+    ):
+        """Spec REQ-4: a successful repair persists exactly once with its
+        artifacts and receives done like any normal turn; the persisted
+        meta line sums usage across main + repair + grounding calls."""
+        run_calls: list[str] = []
+
+        async def _fake_run_code(code, limits=None, files=None):
+            run_calls.append(code)
+            if len(run_calls) == 1:
+                return self._error_payload(
+                    "runtime_error",
+                    "NameError: df_result is not defined",
+                    traceback="Traceback (most recent call last):\nNameError: df_result",
+                )
+            return self._ok_payload("42", table=True)
+
+        monkeypatch.setattr(chat_router, "run_code", _fake_run_code)
+
+        llm_kinds: list[str] = []
+
+        def _three_phase_fake(*args, **kwargs):
+            kind = self._classify_llm_call(kwargs)
+            llm_kinds.append(kind)
+            if kind == "main":
+                return _make_openai_fake(json.dumps({
+                    "code": "raise NameError('df_result')",
+                    "explanation": "EXPLICACION INVENTADA",
+                }))
+            if kind == "repair":
+                return _make_openai_fake(json.dumps({
+                    "code": (
+                        "import pandas as pd\n"
+                        "df_result = pd.DataFrame({'categoria': ['A'], 'total': [42]})\n"
+                        "print(df_result)"
+                    ),
+                    "explanation": "EXPLICACION REPARADA",
+                }))
+            return _make_openai_fake("El total es 42.")
+
+        mock_create = AsyncMock(side_effect=_three_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "reparacion exitosa"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert llm_kinds == ["main", "repair", "grounding"], llm_kinds
+        assert len(run_calls) == 2
+
+        events = _parse_sse_events(resp.text)
+        names = [name for name, _ in events]
+        # Normal-turn wire shape: artifacts emitted, narrative deltas, done.
+        assert "artifact" in names
+        assert names[-1] == "done"
+        done_events = [d for name, d in events if name == "done"]
+        assert len(done_events) == 1
+
+        user_id = (await store.get_user_by_email("costguard@example.com"))["id"]
+        messages = await store.list_messages(user_id, session_id)
+        assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1, "assistant persisted exactly once"
+        assert done_events[0]["message_id"] == assistant_msgs[0]["id"]
+        artifacts = json.loads(assistant_msgs[0]["artifacts_json"])
+        assert any(a["kind"] == "table" for a in artifacts)
+        # The persisted narrative is the grounded rewrite, not the failed
+        # first attempt's explanation.
+        assert assistant_msgs[0]["content_text"] == "El total es 42."
+        # Meta-line usage honesty: main (50/100) + repair (50/100) +
+        # grounding (50/100) — the fake returns identical usage per call.
+        assert assistant_msgs[0]["tokens_in"] == 150
+        assert assistant_msgs[0]["tokens_out"] == 300
+        assert assistant_msgs[0]["cost_usd"] > 0

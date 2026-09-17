@@ -10,7 +10,7 @@ Flow per design Chat Flow steps 1–9:
 3. Load context (profiles + message window)
 4. Call LLM (non-streamed, json_schema)
 5. Emit status(llm done) → token deltas
-6. Run sandbox (single-shot)
+6. Run sandbox (bounded auto-repair: runtime_error → 1 repair attempt)
 7. Second-pass grounded narrative (pre-persist rewrite: replaces the
    streamed approach in the persisted message so the refetched
    answer carries only real computed numbers)
@@ -44,7 +44,7 @@ from core.errors import (
 from server.api import event_bus as _event_bus_module
 from server.api.deps import current_user, get_store
 from server.services.chat_context import build_chat_context
-from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code
+from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code, sandbox_code
 from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
@@ -207,6 +207,32 @@ def _format_narrative_numbers(text: str) -> str:
         return f"{value:,.6f}".rstrip("0").rstrip(".")
 
     return _FULL_PRECISION_NUMBER.sub(_repl, text)
+
+
+def _build_repair_feedback(error: dict[str, Any]) -> str:
+    """Build the repair-pass feedback user message from a sandbox error.
+
+    Carries the taxonomy code, the error message and the traceback when
+    the payload provides one. It deliberately carries NO trace of the
+    failed attempt's explanation or generated code: the repair LLM call
+    regenerates from the fresh context (spec automatic-repair REQ-3).
+    The traceback embeds the failing source line, which is sufficient
+    for regeneration; on a hard crash (no traceback) the message embeds
+    the stderr tail.
+    """
+    lines = [
+        "The Python code you generated failed during execution.",
+        f"Error type: {sandbox_code(error.get('type', 'runtime_error'))}",
+        f"Error message: {error.get('message', '')}",
+    ]
+    if error.get("traceback"):
+        lines += ["Traceback:", error["traceback"]]
+    lines.append(
+        "Generate corrected Python code that fixes this failure and answers "
+        "the original question. Respond with the same JSON format "
+        "({'code': ..., 'explanation': ...})."
+    )
+    return "\n".join(lines)
 
 
 def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
@@ -439,6 +465,13 @@ async def chat_stream(
                 _publish_streaming_ended()
                 return
 
+            # Cost/token honesty across the chain (spec automatic-repair
+            # REQ-4): on the repair path the rebind below replaces
+            # llm_response with the repair response, so the FIRST call's
+            # usage travels as an extra term summed at the persist block
+            # (first + repair + grounding calls).
+            extra_usage = None
+
             structured = llm_response.structured_data or {}
             explanation = _format_narrative_numbers(
                 structured.get("explanation", llm_response.text) or ""
@@ -478,21 +511,140 @@ async def chat_stream(
                         "figures": [], "tables": [], "text": "",
                     }
 
-            # Handle sandbox errors
+            # Handle sandbox errors: a runtime_error payload with generated
+            # code enters the bounded repair pass (exactly one attempt);
+            # every other failure terminates immediately with its typed
+            # taxonomy code (spec automatic-repair REQ-2). The bound is
+            # enforced BY CONSTRUCTION: this branch is reachable only from
+            # the FIRST failure and every failure exit below returns
+            # unconditionally — no loop, no re-entry (a repair can never
+            # repair a repair).
             sandbox_error: dict | None = sandbox_result.get("error")
             if sandbox_result.get("status") == "error" and sandbox_error:
                 sandbox_type = sandbox_error.get("type", "runtime_error")
-                yield _sse_event("error", {
-                    "type": sandbox_type,
-                    "message": sandbox_error.get("message", "Sandbox execution failed"),
-                })
-                yield _sse_event("status", {"stage": "done", "state": "error"})
-                # Failed turns persist NOTHING: persisting here would render
-                # the model's unverified explanation as if it were an answer
-                # (the sandbox never computed it). History keeps the question;
-                # the client offers Retry to re-run the turn.
-                _publish_streaming_ended()
-                return
+                repairable = (
+                    sandbox_type == "runtime_error" and bool(code.strip())
+                )
+                if not repairable:
+                    error_payload = {
+                        "type": "sandbox",
+                        "code": sandbox_code(sandbox_type),
+                        "message": sandbox_error.get(
+                            "message", "Sandbox execution failed"
+                        ),
+                    }
+                    if sandbox_error.get("traceback"):
+                        error_payload["traceback"] = sandbox_error["traceback"]
+                    yield _sse_event("error", error_payload)
+                    yield _sse_event("status", {"stage": "done", "state": "error"})
+                    # Failed turns persist NOTHING: persisting here would render
+                    # the model's unverified explanation as if it were an answer
+                    # (the sandbox never computed it). History keeps the question;
+                    # the client offers Retry to re-run the turn.
+                    _publish_streaming_ended()
+                    return
+
+                # Exactly ONE non-terminal status between the first failure
+                # and the repair outcome: ChatView only clears streaming on
+                # state done/error, so the client stays in streaming state.
+                yield _sse_event("status", {"stage": "repair", "state": "running"})
+
+                # Fresh repair context by reuse: llm_messages already holds
+                # [system prompt, original history, original question] and is
+                # never mutated after construction — the failed attempt's
+                # explanation/code were streamed to SSE but never appended.
+                repair_messages = [
+                    *llm_messages,
+                    {"role": "user", "content": _build_repair_feedback(sandbox_error)},
+                ]
+                try:
+                    repair_response = await provider.complete(
+                        messages=repair_messages,
+                        response_format=_CHAT_JSON_SCHEMA,
+                        max_tokens=8192,
+                        temperature=0.1,
+                    )
+                except LLMError as e:
+                    yield _sse_event("error", {
+                        "type": "llm",
+                        "code": llm_code(e),
+                        "message": str(e),
+                    })
+                    yield _sse_event("status", {"stage": "done", "state": "error"})
+                    _publish_streaming_ended()
+                    return
+
+                repair_structured = repair_response.structured_data or {}
+                repair_code = repair_structured.get("code", "")
+                repair_explanation = _format_narrative_numbers(
+                    repair_structured.get("explanation", repair_response.text) or ""
+                )
+                if not repair_code.strip():
+                    # No code produced: terminate with the FIRST failure's
+                    # context — the chain's terminal cause (there was no
+                    # second sandbox run to reflect).
+                    error_payload = {
+                        "type": "sandbox",
+                        "code": sandbox_code(sandbox_type),
+                        "message": sandbox_error.get(
+                            "message", "Sandbox execution failed"
+                        ),
+                    }
+                    if sandbox_error.get("traceback"):
+                        error_payload["traceback"] = sandbox_error["traceback"]
+                    yield _sse_event("error", error_payload)
+                    yield _sse_event("status", {"stage": "done", "state": "error"})
+                    _publish_streaming_ended()
+                    return
+
+                # Second sandbox run (same limits/files as the first).
+                try:
+                    sandbox_result = await run_code(
+                        repair_code,
+                        limits=sandbox_limits,
+                        files=session_files or None,
+                    )
+                except Exception as e:
+                    sandbox_result = {
+                        "status": "error",
+                        "error": {"type": "runtime_error", "message": str(e)},
+                        "figures": [], "tables": [], "text": "",
+                    }
+
+                second_error = sandbox_result.get("error")
+                if sandbox_result.get("status") == "error" and second_error:
+                    # Surface the SECOND failure (it reflects the attempted
+                    # fix); per spec Enmienda 1 the code maps the second
+                    # run's ACTUAL payload type — reporting runtime_error
+                    # for a second-run timeout would misinform the user.
+                    second_type = second_error.get("type", "runtime_error")
+                    error_payload = {
+                        "type": "sandbox",
+                        "code": sandbox_code(second_type),
+                        "message": second_error.get(
+                            "message", "Sandbox execution failed"
+                        ),
+                    }
+                    if second_error.get("traceback"):
+                        error_payload["traceback"] = second_error["traceback"]
+                    yield _sse_event("error", error_payload)
+                    yield _sse_event("status", {"stage": "done", "state": "error"})
+                    _publish_streaming_ended()
+                    return
+
+                # Repair succeeded: rebind and fall through to the shared
+                # post-sandbox block (artifacts → grounding → persist →
+                # done), so a successful repair is indistinguishable from a
+                # normal turn by construction — same code path. The repair
+                # explanation is NOT streamed as token deltas (deliberate
+                # spec decision, no retraction needed); the client keeps
+                # the stale first-pass text until the done-refetch clears
+                # it and the persisted message carries the grounded
+                # narrative (rewrite semantics).
+                extra_usage = llm_response.usage  # first call's usage
+                llm_response = repair_response
+                code = repair_code
+                explanation = repair_explanation
 
             # Build artifacts JSON
             artifacts: list[dict] = []
@@ -600,9 +752,15 @@ async def chat_stream(
                 artifacts_json=json.dumps(artifacts, allow_nan=False) if artifacts else None,
                 model=llm_response.model,
                 provider=llm_response.provider,
-                tokens_in=llm_response.usage.tokens_in + (grounding_usage.tokens_in if grounding_usage else 0),
-                tokens_out=llm_response.usage.tokens_out + (grounding_usage.tokens_out if grounding_usage else 0),
-                cost_usd=llm_response.usage.cost_usd + (grounding_usage.cost_usd if grounding_usage else 0.0),
+                tokens_in=llm_response.usage.tokens_in
+                + (extra_usage.tokens_in if extra_usage else 0)
+                + (grounding_usage.tokens_in if grounding_usage else 0),
+                tokens_out=llm_response.usage.tokens_out
+                + (extra_usage.tokens_out if extra_usage else 0)
+                + (grounding_usage.tokens_out if grounding_usage else 0),
+                cost_usd=llm_response.usage.cost_usd
+                + (extra_usage.cost_usd if extra_usage else 0.0)
+                + (grounding_usage.cost_usd if grounding_usage else 0.0),
             )
 
             # Step 9: Emit — artifact → grounded narrative deltas → status(done) → done
