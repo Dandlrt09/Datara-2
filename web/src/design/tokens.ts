@@ -45,6 +45,33 @@ export const colors = {
   codeButtonSurfaceError: "#5a2d2d",
   /** Copy button label color. */
   codeButtonText: "#ddd",
+
+  // Error / status families ---------------------------------------------
+  // Danger — seeded from the literals previously hardcoded in ErrorCard.tsx
+  // (pixel-identical for existing consumers; spec-pinned).
+  /** Error card border, retry-able failure surfaces. */
+  danger: "#e74c3c",
+  /** Error card heading. */
+  dangerText: "#c0392b",
+  /** Error card background tint. */
+  dangerSurface: "#fdf0ef",
+  // Warning — flat-UI "Carrot" orange family, same palette that pairs
+  // #e74c3c with #c0392b; #d35400 is its dark counterpart; surface is a
+  // hand-mixed warm tint in the same ~6%-ink spirit as #fdf0ef.
+  /** Warning card border (non-retry-able notice). */
+  warning: "#e67e22",
+  /** Warning card heading. */
+  warningText: "#d35400",
+  /** Warning card background tint. */
+  warningSurface: "#fdf3ec",
+  // Info — flat-UI blue family; no current consumer, reserved for the
+  // variant union required by the spec.
+  /** Info card border (neutral notification). */
+  info: "#3498db",
+  /** Info card heading. */
+  infoText: "#2980b9",
+  /** Info card background tint. */
+  infoSurface: "#ebf5fb",
 } as const;
 
 /**

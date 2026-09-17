@@ -25,7 +25,35 @@ describe("design tokens (exact literals extracted from ChatMessage)", () => {
       codeButtonSurface: "#3a3a3a",
       codeButtonSurfaceError: "#5a2d2d",
       codeButtonText: "#ddd",
+      // Error / status families (chat-robustez WU4).
+      danger: "#e74c3c",
+      dangerText: "#c0392b",
+      dangerSurface: "#fdf0ef",
+      warning: "#e67e22",
+      warningText: "#d35400",
+      warningSurface: "#fdf3ec",
+      info: "#3498db",
+      infoText: "#2980b9",
+      infoSurface: "#ebf5fb",
     });
+  });
+
+  /**
+   * Receipt of the chat-robustez error-family tokens: the danger triple is
+   * seeded from the exact literals ErrorCard.tsx used to hardcode, so the
+   * default variant keeps existing consumers pixel-identical. Warning and
+   * info are new families with no previous literal (design-pinned hexes).
+   */
+  it("pins the error-family token triples (danger seeded from ErrorCard literals)", () => {
+    expect(colors.danger).toBe("#e74c3c");
+    expect(colors.dangerText).toBe("#c0392b");
+    expect(colors.dangerSurface).toBe("#fdf0ef");
+    expect(colors.warning).toBe("#e67e22");
+    expect(colors.warningText).toBe("#d35400");
+    expect(colors.warningSurface).toBe("#fdf3ec");
+    expect(colors.info).toBe("#3498db");
+    expect(colors.infoText).toBe("#2980b9");
+    expect(colors.infoSurface).toBe("#ebf5fb");
   });
 
   it("keeps the spacing scale identical to the replaced literals", () => {
