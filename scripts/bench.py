@@ -813,6 +813,8 @@ def _build_report(
                 "tokens_out": r.tokens_out,
                 "llm_explanation": r.llm_explanation,
                 "sandbox_text": r.sandbox_text,
+                "code": r.code,
+                "model": model,
             }
             for r in results
         ],

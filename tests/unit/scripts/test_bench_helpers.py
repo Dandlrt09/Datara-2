@@ -327,3 +327,36 @@ class TestBuildReport:
         report = _build([_qr(1)])
         assert report["timestamp"].endswith("Z")
         assert "T" in report["timestamp"]
+
+
+class TestPerQuestionCodeAndModel:
+    def test_every_entry_has_code_and_model(self):
+        results = [_qr(i, code=f"code-{i}") for i in (1, 2, 3)]
+        report = _build(results, model="gpt-4o-mini")
+        for i, entry in enumerate(report["questions"], start=1):
+            assert entry["code"] == f"code-{i}"
+            assert entry["model"] == "gpt-4o-mini"
+
+    def test_code_empty_on_llm_stage_failure(self):
+        """Early LLM-stage failures never populate QuestionResult.code."""
+        r = _qr(
+            4,
+            status="fail",
+            reason="LLM error: LLMTimeoutError: timed out",
+            artifacts_found=[],
+        )
+        assert r.code == ""
+        report = _build([r])
+        entry = report["questions"][0]
+        assert entry["code"] == ""
+        assert entry["model"] == "z-ai/glm-5.3-flash"
+
+    def test_code_serialized_when_present(self):
+        r = _qr(5, status="fail", code="df = pd.read_csv('x.csv')", llm_explanation="e")
+        report = _build([r])
+        assert report["questions"][0]["code"] == "df = pd.read_csv('x.csv')"
+
+    def test_model_matches_top_level_report_model(self):
+        report = _build([_qr(1)], model="some/other-model")
+        assert report["model"] == "some/other-model"
+        assert all(e["model"] == report["model"] for e in report["questions"])
