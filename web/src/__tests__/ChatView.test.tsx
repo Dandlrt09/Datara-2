@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  renderHook,
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useChatStore } from "../stores/useChatStore";
 import { renderWithProviders } from "./test-utils";
 import ChatView from "../routes/ChatView";
@@ -178,9 +187,9 @@ describe("ChatView component", () => {
     expect(screen.getByText("Retry")).toBeTruthy();
   });
 
-  it("failed turn shows chat error with a Retry-turn button", async () => {
+  it("failed turn shows the typed banner with a Reintentar button", async () => {
     vi.mocked(streamChat).mockImplementation(async (_sid, _q, handlers) => {
-      handlers.onError?.("LLMTimeoutError", "boom");
+      handlers.onError?.("llm", "llm/timeout", "boom");
     });
     renderWithProviders(<ChatView />, {
       route: "/app/chat/ses-1",
@@ -193,10 +202,125 @@ describe("ChatView component", () => {
     fireEvent.click(screen.getByText("Send"));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("LLMTimeoutError");
-    // The chat-error Retry button (distinct from ErrorCard retry buttons)
-    const retryButtons = await screen.findAllByText("Retry");
-    expect(retryButtons.length).toBeGreaterThanOrEqual(1);
+    expect(alert.textContent).toContain("Error del modelo");
+    expect(alert.textContent).toContain("boom");
+    // The banner's action button re-runs the failed turn.
+    expect(screen.getByText("Reintentar")).toBeTruthy();
+  });
+
+  it("auth error banner points to Ajustes and its button navigates to Settings", async () => {
+    vi.mocked(streamChat).mockImplementation(async (_sid, _q, handlers) => {
+      handlers.onError?.("llm", "auth/invalid_key", "Authentication failed: bad key");
+    });
+    // Own wrapper so the Settings route exists as a navigation target.
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+          })
+        }
+      >
+        <MemoryRouter initialEntries={["/app/chat/ses-1"]}>
+          <Routes>
+            <Route path="/app/chat/:sessionId" element={<ChatView />} />
+            <Route path="/app/settings" element={<div>ajustes-page-marker</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question/), {
+      target: { value: "pregunta" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Error de autenticación");
+    // The message itself instructs configuring the API key in Settings.
+    expect(alert.textContent).toContain(
+      "Configura tu API key en Ajustes y vuelve a intentarlo.",
+    );
+    fireEvent.click(screen.getByText("Ir a Ajustes"));
+    expect(screen.getByText("ajustes-page-marker")).toBeTruthy();
+  });
+
+  it("model_not_allowed renders the warning banner with NO retry button", async () => {
+    vi.mocked(streamChat).mockImplementation(async (_sid, _q, handlers) => {
+      handlers.onError?.("model", "model/not_allowed", "El modelo 'x' no está permitido.");
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question/), {
+      target: { value: "pregunta" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Modelo no disponible");
+    expect(alert.textContent).toContain("El modelo 'x' no está permitido.");
+    expect(screen.queryByText("Reintentar")).toBeNull();
+    // The composer stays usable so the user can continue with an allowed model.
+    expect(
+      (screen.getByPlaceholderText(/Ask a question/) as HTMLTextAreaElement).disabled,
+    ).toBe(false);
+  });
+
+  it("sandbox error banner's Reintentar re-runs the turn without duplicating the question", async () => {
+    const streamMock = vi
+      .mocked(streamChat)
+      .mockImplementation(async (_sid, _q, handlers) => {
+        handlers.onError?.("sandbox", "sandbox/runtime_error", "NameError: boom");
+      });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question/), {
+      target: { value: "mi pregunta" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Error de ejecución");
+    expect(alert.textContent).toContain("NameError: boom");
+
+    fireEvent.click(screen.getByText("Reintentar"));
+    await waitFor(() => {
+      expect(streamMock).toHaveBeenCalledTimes(2);
+    });
+    // Client-initiated retry: same question, retry=true (no duplicate ask).
+    expect(streamMock).toHaveBeenLastCalledWith(
+      "ses-1",
+      "mi pregunta",
+      expect.anything(),
+      expect.anything(),
+      true,
+    );
+  });
+
+  it("unknown code degrades to the verbatim type:message danger fallback", async () => {
+    vi.mocked(streamChat).mockImplementation(async (_sid, _q, handlers) => {
+      handlers.onError?.("SomeWeird", "SomeWeird/code", "mystery failure");
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question/), {
+      target: { value: "pregunta" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Error");
+    expect(alert.textContent).toContain("SomeWeird: mystery failure");
+    expect(screen.getByText("Reintentar")).toBeTruthy();
   });
 
   it("offers Retry from persisted history when last message is an unanswered user turn", () => {
