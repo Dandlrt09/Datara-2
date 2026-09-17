@@ -413,6 +413,11 @@ class TestTypedErrorCodes:
         assert payload["type"] == "llm"
         assert payload["code"] == "llm/timeout"
         assert "timed out" in payload["message"]
+        # Spec: the terminal status is (stage done, state error) — the stage
+        # label marks the terminal point, not the outcome.
+        status_events = [e for e in events if e["event"] == "status"]
+        assert status_events, f"Expected a terminal status event: {events}"
+        assert status_events[-1]["data"] == {"stage": "done", "state": "error"}
         # Stream ends at the error — nothing persisted
         assert "done" not in [e["event"] for e in events]
 

@@ -461,7 +461,11 @@ async def chat_stream(
                     "code": llm_code(e),
                     "message": str(e),
                 })
-                yield _sse_event("status", {"stage": "error", "state": "error"})
+                # Terminal status: stage "done" + state "error". The stage
+                # label marks the terminal point, not the outcome; every
+                # other terminal path in this router already emits "done"
+                # (spec: "...followed by status (stage done, state error)").
+                yield _sse_event("status", {"stage": "done", "state": "error"})
                 _publish_streaming_ended()
                 return
 
