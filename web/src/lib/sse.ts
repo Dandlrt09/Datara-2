@@ -99,7 +99,7 @@ export async function streamChat(
     }
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
-      handlers.onError?.("parse_error", String(err));
+      handlers.onError?.("parse_error", null, String(err));
     }
   }
 }
