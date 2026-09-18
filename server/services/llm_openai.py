@@ -347,14 +347,36 @@ class OpenAIProvider:
 
 # ── Cost estimation ──────────────────────────────────────────────────────────
 
-# Approximate cost per 1K tokens (USD) for common models
+# Published prices in USD per 1M tokens, as (input, output). Stored per-token
+# because _estimate_cost multiplies each rate by a token count.
+_PER_MILLION_TOKENS = 1_000_000
+
 _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
-    "gpt-4o-2024-08-06": (2.50 / 1000, 10.00 / 1000),       # input, output
-    "gpt-4o-mini-2024-07-18": (0.150 / 1000, 0.600 / 1000),
-    "gpt-4o": (2.50 / 1000, 10.00 / 1000),
-    "gpt-4o-mini": (0.150 / 1000, 0.600 / 1000),
-    "z-ai/glm-5.3-flash": (0.05 / 1_000_000, 0.30 / 1_000_000),
+    "gpt-4o-2024-08-06": (2.50 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS),
+    "gpt-4o-mini-2024-07-18": (0.15 / _PER_MILLION_TOKENS, 0.60 / _PER_MILLION_TOKENS),
+    "gpt-4o": (2.50 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS),
+    "gpt-4o-mini": (0.15 / _PER_MILLION_TOKENS, 0.60 / _PER_MILLION_TOKENS),
+    "gpt-4.1": (2.00 / _PER_MILLION_TOKENS, 8.00 / _PER_MILLION_TOKENS),
+    "gpt-4.1-mini": (0.40 / _PER_MILLION_TOKENS, 1.60 / _PER_MILLION_TOKENS),
+    "gpt-4.1-nano": (0.10 / _PER_MILLION_TOKENS, 0.40 / _PER_MILLION_TOKENS),
+    "z-ai/glm-5.3-flash": (0.05 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
 }
+
+# gpt-4o is the app default; used when a model id is not in the map.
+_FALLBACK_COST_RATES = (2.50 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS)
+
+
+def _cost_rates(model: str) -> tuple[float, float]:
+    """Resolve per-token (input, output) USD rates for a model id.
+
+    Accepts both bare ids ("gpt-4.1-mini") and provider-prefixed slugs
+    ("openai/gpt-4.1-mini") so OpenRouter-style names reuse one price entry.
+    Unknown models fall back to gpt-4o pricing.
+    """
+    rates = _MODEL_COST_MAP.get(model)
+    if rates is None and "/" in model:
+        rates = _MODEL_COST_MAP.get(model.rsplit("/", 1)[-1])
+    return rates if rates is not None else _FALLBACK_COST_RATES
 
 
 def _estimate_cost(
@@ -366,5 +388,5 @@ def _estimate_cost(
 
     Falls back to gpt-4o pricing if the model is not recognised.
     """
-    rates = _MODEL_COST_MAP.get(model, (2.50 / 1000, 10.00 / 1000))
+    rates = _cost_rates(model)
     return (tokens_in * rates[0]) + (tokens_out * rates[1])
