@@ -383,6 +383,109 @@ class TestChatSSE:
             f"TITLED should come before STREAMING_STARTED: {ordered_names}"
 
 
+# ── Typed error-code emission (error taxonomy, Enmienda 1) ────────────────
+
+
+class TestTypedErrorCodes:
+    """The chat flow's terminal error events carry taxonomy codes.
+
+    LLM errors emit ``{type: "llm", code: <llm_code(e)>, message}``; the
+    defensive catch-all emits ``code: "internal/error"`` — no terminal
+    error goes out without a code.
+    """
+
+    def test_llm_timeout_emits_typed_code(self, client, auth_cookie, session_id, mock_llm):
+        """LLMTimeoutError → error event code 'llm/timeout'."""
+        from core.errors import LLMTimeoutError
+
+        mock_llm.side_effect = LLMTimeoutError("OpenAI call timed out after 120s")
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "this will time out"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1, f"Expected exactly one error: {events}"
+        payload = error_events[0]["data"]
+        assert payload["type"] == "llm"
+        assert payload["code"] == "llm/timeout"
+        assert "timed out" in payload["message"]
+        # Stream ends at the error — nothing persisted
+        assert "done" not in [e["event"] for e in events]
+
+    def test_llm_invalid_json_emits_typed_code(self, client, auth_cookie, session_id, mock_llm):
+        """LLMInvalidJSONError → error event code 'llm/invalid_json'."""
+        from core.errors import LLMInvalidJSONError
+
+        mock_llm.side_effect = LLMInvalidJSONError("OpenAI returned invalid JSON")
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "bad json turn"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        payload = error_events[0]["data"]
+        assert payload["type"] == "llm"
+        assert payload["code"] == "llm/invalid_json"
+
+    def test_empty_choices_emits_internal_error_code(self, client, auth_cookie, session_id, mock_llm):
+        """Plain LLMError (empty-choices path) → code 'internal/error'
+        (spec Enmienda 1 — llm_code maps plain LLMError to the catch-all
+        code at the emission boundary)."""
+        from core.errors import LLMError
+
+        mock_llm.side_effect = LLMError(
+            "Provider returned an empty response (no choices). Please try again."
+        )
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "empty choices turn"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        payload = error_events[0]["data"]
+        assert payload["type"] == "llm"
+        assert payload["code"] == "internal/error"
+
+    def test_catch_all_emits_internal_error_code(self, app, client, auth_cookie, session_id, mock_llm, monkeypatch):
+        """The defensive ``except Exception`` catch-all (chat.py) emits
+        ``code: "internal/error"`` (spec Enmienda 1).
+
+        The monkeypatch targets build_chat_context — a point inside the
+        generator body — so the ValueError exercises the catch-all path.
+        """
+        monkeypatch.setattr(
+            chat_router,
+            "build_chat_context",
+            AsyncMock(side_effect=ValueError("forced catch-all")),
+        )
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "trigger the catch-all"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1, f"Expected one catch-all error: {events}"
+        payload = error_events[0]["data"]
+        assert payload["type"] == "runtime_error"
+        assert payload["code"] == "internal/error"
+        assert "forced catch-all" in payload["message"]
+
+
 # ── Messages pagination tests ──────────────────────────────────────────────
 
 
