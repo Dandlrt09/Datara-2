@@ -10,14 +10,19 @@ export type SSEEvent =
   | { event: "token"; data: string }
   | { event: "artifact"; data: { figures: unknown[]; tables: unknown[]; texts?: unknown[] } }
   | { event: "done"; data: { message_id: number } }
-  | { event: "error"; data: { type: string; message: string } };
+  | {
+      event: "error";
+      data: { type: string; code?: string; message: string; traceback?: string };
+    };
 
 export interface SSEHandlers {
   onStatus?: (stage: string, state: string) => void;
   onToken?: (delta: string) => void;
   onArtifact?: (figures: unknown[], tables: unknown[], texts: unknown[]) => void;
   onDone?: (messageId: number) => void;
-  onError?: (type: string, message: string) => void;
+  /** code is the typed taxonomy code (e.g. "llm/timeout"); null when the
+   * server did not send one (connection_error, legacy frames). */
+  onError?: (type: string, code: string | null, message: string) => void;
 }
 
 export async function streamChat(
@@ -46,13 +51,31 @@ export async function streamChat(
   }
 
   if (!response.ok) {
-    handlers.onError?.("connection_error", `HTTP ${response.status}`);
+    // The model-whitelist 422 carries a structured detail with the typed
+    // code; anything else (unparseable body, other codes, other statuses)
+    // keeps today's connection_error fallback.
+    try {
+      const body = (await response.json()) as {
+        detail?: { code?: string; message?: string };
+      };
+      if (body.detail?.code === "model_not_allowed") {
+        handlers.onError?.(
+          "model",
+          "model/not_allowed",
+          body.detail.message ?? `HTTP ${response.status}`,
+        );
+        return;
+      }
+    } catch {
+      // Non-JSON body → fall through to the generic handler.
+    }
+    handlers.onError?.("connection_error", null, `HTTP ${response.status}`);
     return;
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    handlers.onError?.("connection_error", "No response body");
+    handlers.onError?.("connection_error", null, "No response body");
     return;
   }
 
@@ -76,7 +99,7 @@ export async function streamChat(
     }
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
-      handlers.onError?.("parse_error", String(err));
+      handlers.onError?.("parse_error", null, String(err));
     }
   }
 }
@@ -163,8 +186,15 @@ function parseFrame(frame: string, handlers: SSEHandlers): void {
       break;
     }
     case "error": {
-      const d = data as { type: string; message: string };
-      handlers.onError?.(d.type, d.message);
+      const d = data as {
+        type: string;
+        code?: string;
+        message: string;
+        traceback?: string;
+      };
+      // traceback is accepted on the wire but not rendered (kept for
+      // future diagnostics); an absent code degrades to null.
+      handlers.onError?.(d.type, d.code ?? null, d.message);
       break;
     }
   }

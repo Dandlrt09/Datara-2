@@ -68,7 +68,7 @@ describe("streamChat SSE parser", () => {
     expect(handlers.onError).not.toHaveBeenCalled();
   });
 
-  it("parses error event", async () => {
+  it("parses error event without code (degrades to null)", async () => {
     const payload = '{"type":"blocked_import","message":"os is blocked"}';
     mockFetchStream([`event: error\ndata: ${payload}\n\n`]);
 
@@ -78,10 +78,32 @@ describe("streamChat SSE parser", () => {
 
     await streamChat("ses-1", "test", handlers);
 
-    expect(handlers.onError).toHaveBeenCalledWith("blocked_import", "os is blocked");
+    expect(handlers.onError).toHaveBeenCalledWith(
+      "blocked_import",
+      null,
+      "os is blocked",
+    );
   });
 
-  it("handles HTTP error response", async () => {
+  it("forwards the typed code on error frames that carry one", async () => {
+    const payload =
+      '{"type":"llm","code":"llm/timeout","message":"timed out","traceback":"..."}';
+    mockFetchStream([`event: error\ndata: ${payload}\n\n`]);
+
+    const handlers = {
+      onError: vi.fn(),
+    };
+
+    await streamChat("ses-1", "test", handlers);
+
+    expect(handlers.onError).toHaveBeenCalledWith(
+      "llm",
+      "llm/timeout",
+      "timed out",
+    );
+  });
+
+  it("handles HTTP error response without a JSON body", async () => {
     mockFetchStream([], 401);
 
     const handlers = {
@@ -90,7 +112,61 @@ describe("streamChat SSE parser", () => {
 
     await streamChat("ses-1", "test", handlers);
 
-    expect(handlers.onError).toHaveBeenCalledWith("connection_error", "HTTP 401");
+    expect(handlers.onError).toHaveBeenCalledWith(
+      "connection_error",
+      null,
+      "HTTP 401",
+    );
+  });
+
+  it("surfaces the model_not_allowed 422 detail with its typed code", async () => {
+    // The whitelist 422 arrives BEFORE any SSE event; its structured body
+    // must reach the banner as model/not_allowed, not connection_error.
+    const encoder = new TextEncoder();
+    globalThis.fetch = async () =>
+      new Response(
+        encoder.encode(
+          JSON.stringify({
+            detail: {
+              code: "model_not_allowed",
+              message: "El modelo 'x' no está permitido.",
+            },
+          }),
+        ),
+        { status: 422 },
+      );
+
+    const handlers = {
+      onError: vi.fn(),
+    };
+
+    await streamChat("ses-1", "test", handlers);
+
+    expect(handlers.onError).toHaveBeenCalledWith(
+      "model",
+      "model/not_allowed",
+      "El modelo 'x' no está permitido.",
+    );
+  });
+
+  it("falls back to connection_error on a non-JSON non-OK body", async () => {
+    const encoder = new TextEncoder();
+    globalThis.fetch = async () =>
+      new Response(encoder.encode("<html>Gateway error</html>"), {
+        status: 502,
+      });
+
+    const handlers = {
+      onError: vi.fn(),
+    };
+
+    await streamChat("ses-1", "test", handlers);
+
+    expect(handlers.onError).toHaveBeenCalledWith(
+      "connection_error",
+      null,
+      "HTTP 502",
+    );
   });
 
   it("aborts silently during the fetch window (before headers arrive)", async () => {

@@ -5,8 +5,9 @@ import { useMessages } from "../queries/useMessages";
 import { useChatStore } from "../stores/useChatStore";
 import { useWizardStore } from "../stores/useWizardStore";
 import { streamChat } from "../lib/sse";
+import { isKnownErrorCode, resolveErrorPresentation } from "../lib/errorCodes";
 import ChatMessage from "../components/ChatMessage";
-import { QueryError } from "../components/ErrorCard";
+import { ErrorCard, QueryError } from "../components/ErrorCard";
 
 export default function ChatView() {
   const { sessionId } = useParams();
@@ -38,7 +39,11 @@ export default function ChatView() {
   const store = useChatStore();
   const wizardStore = useWizardStore();
   const [question, setQuestion] = useState("");
-  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<{
+    type: string;
+    code: string | null;
+    message: string;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Last question sent in this session — the Retry button re-runs it.
   const lastQuestionRef = useRef("");
@@ -172,7 +177,7 @@ export default function ChatView() {
               store.setPendingArtifacts(null);
               refetchMessages();
             },
-            onError: (type, message) => {
+            onError: (type, code, message) => {
               // Surface WHY the turn failed (bad API key, unknown model,
               // sandbox error...) instead of silently stopping. Failed turns
               // persist nothing server-side, so the history keeps just the
@@ -182,7 +187,7 @@ export default function ChatView() {
               store.clearStreamingText();
               store.setPendingArtifacts(null);
               refetchMessages();
-              setChatError(message ? `${type}: ${message}` : type);
+              setChatError({ type, code, message });
             },
           },
           abortRef.current.signal,
@@ -191,7 +196,11 @@ export default function ChatView() {
       } catch (e) {
         // streamChat throws on network failures / non-SSE responses. Without
         // this catch, isStreaming stays true forever and the composer bricks.
-        setChatError(e instanceof Error ? e.message : "unexpected error sending message");
+        setChatError({
+          type: "connection_error",
+          code: null,
+          message: e instanceof Error ? e.message : "unexpected error sending message",
+        });
       } finally {
         store.setStreaming(false);
         abortRef.current = null;
@@ -270,6 +279,21 @@ export default function ChatView() {
       handleSend();
     }
   };
+
+  // Typed error presentation: the taxonomy code selects the ErrorCard
+  // variant and action. Missing/unknown codes degrade to today's verbatim
+  // `${type}: ${message}` banner format (safe fallback, never crashes).
+  const errorPresentation = chatError
+    ? resolveErrorPresentation(chatError.code)
+    : null;
+  const errorMessage = chatError
+    ? isKnownErrorCode(chatError.code)
+      ? errorPresentation?.action === "go-settings"
+        ? // Auth failures: point the user at the API-key configuration.
+          `${chatError.message} Configura tu API key en Ajustes y vuelve a intentarlo.`
+        : chatError.message
+      : `${chatError.type}: ${chatError.message}`
+    : undefined;
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
@@ -510,18 +534,20 @@ export default function ChatView() {
         </div>
 
         {/* Composer */}
-        {chatError && (
-          <p role="alert" style={{ color: "#c62828", margin: "0 0 8px" }}>
-            {chatError}{" "}
-            {!store.isStreaming && sessionId && (
-              <button
-                onClick={handleRetryTurn}
-                title="Re-run the failed turn (does not duplicate the question)"
-              >
-                Retry
-              </button>
-            )}
-          </p>
+        {chatError && errorPresentation && (
+          <ErrorCard
+            variant={errorPresentation.variant}
+            title={errorPresentation.title}
+            message={errorMessage}
+            actionLabel={errorPresentation.actionLabel}
+            onRetry={
+              errorPresentation.action === "retry-turn"
+                ? handleRetryTurn
+                : errorPresentation.action === "go-settings"
+                  ? () => navigate("/app/settings")
+                  : undefined
+            }
+          />
         )}
         {!chatError && retryAvailable && (
           <div style={{ marginBottom: 8 }}>
