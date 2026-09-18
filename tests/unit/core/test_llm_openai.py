@@ -510,14 +510,32 @@ class TestJsonRetryFeedback:
 
 
 class TestCostEstimate:
+    """Costs are published USD per 1M tokens, applied per-token.
+
+    Regression: the map used to divide gpt-4o prices by 1_000 instead of
+    1_000_000, inflating every persisted cost_usd by 1000x — plus a further
+    6.25x for provider-prefixed slugs like "openai/gpt-4.1-mini", which were
+    absent from the map and fell back to the pricier gpt-4o default.
+    """
+
     def test_known_model(self):
+        # 1000 * (2.50/1M) + 500 * (10.00/1M) = 0.0025 + 0.005
         cost = _estimate_cost(tokens_in=1000, tokens_out=500, model="gpt-4o-2024-08-06")
-        assert cost == pytest.approx(2.50 + 5.00, abs=0.01)
+        assert cost == pytest.approx(0.0075, rel=1e-9)
 
     def test_unknown_model_fallback(self):
         cost = _estimate_cost(tokens_in=1000, tokens_out=500, model="unknown-model")
         # Falls back to gpt-4o pricing
-        assert cost == pytest.approx(2.50 + 5.00, abs=0.01)
+        assert cost == pytest.approx(0.0075, rel=1e-9)
+
+    def test_provider_prefixed_slug_uses_bare_id_rates(self):
+        """OpenRouter-style slugs share the bare id's price instead of
+        falling back to gpt-4o."""
+        prefixed = _estimate_cost(tokens_in=3004, tokens_out=595, model="openai/gpt-4.1-mini")
+        bare = _estimate_cost(tokens_in=3004, tokens_out=595, model="gpt-4.1-mini")
+        assert prefixed == bare
+        # 3004 * (0.40/1M) + 595 * (1.60/1M) = 0.0012016 + 0.000952
+        assert prefixed == pytest.approx(0.0021536, rel=1e-9)
 
     def test_zero_tokens(self):
         cost = _estimate_cost(tokens_in=0, tokens_out=0, model="gpt-4o")

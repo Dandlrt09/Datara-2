@@ -656,7 +656,7 @@ class TestMessageTokens:
         Empty code → sandbox and the grounding second pass are skipped, so
         exactly ONE LLM call happened with the fixture usage (prompt 50 /
         completion 100). The gpt-4o price map yields
-        50 * 0.0025 + 100 * 0.01 = 1.125 USD.
+        50 * 0.0000025 + 100 * 0.00001 = 0.001125 USD.
         """
         no_code = {"code": "", "explanation": "Descriptive answer."}
         mock_llm.return_value = _make_openai_fake(json.dumps(no_code))
@@ -680,7 +680,7 @@ class TestMessageTokens:
         assistant = assistant_msgs[0]
         assert assistant["tokens_in"] == 50
         assert assistant["tokens_out"] == 100
-        assert assistant["cost_usd"] == pytest.approx(1.125)
+        assert assistant["cost_usd"] == pytest.approx(0.001125)
 
         # User messages carry no usage: the fields are null, not missing.
         assert user_msgs
@@ -690,7 +690,7 @@ class TestMessageTokens:
     def test_usage_sums_grounding_second_pass(self, client, auth_cookie, session_id, mock_llm):
         """Code that prints output triggers the grounding pass; the persisted
         usage sums BOTH LLM calls (main + grounding), which share the same
-        mocked usage (50/100) and price map (1.125 each)."""
+        mocked usage (50/100) and price map (0.001125 each)."""
         client.post(
             f"/api/sessions/{session_id}/chat",
             json={"question": "analyze the data"},
@@ -706,7 +706,7 @@ class TestMessageTokens:
         assert assistant_msgs
         assert assistant_msgs[0]["tokens_in"] == 100  # 50 (main) + 50 (grounding)
         assert assistant_msgs[0]["tokens_out"] == 200
-        assert assistant_msgs[0]["cost_usd"] == pytest.approx(2.25)
+        assert assistant_msgs[0]["cost_usd"] == pytest.approx(0.00225)
 
     def test_legacy_message_rows_are_null_safe(self, client, auth_cookie, session_id, store):
         """Rows persisted before usage capture (token columns NULL) list with
