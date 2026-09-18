@@ -758,6 +758,69 @@ async def _run_question(
     )
 
 
+# ── Report builder (pure, unit-testable) ───────────────────────────────────────
+
+
+def _build_report(
+    results: list[QuestionResult],
+    *,
+    model: str,
+    cache_enabled: bool,
+    limit: int,
+    executed_ids: list[int],
+    total_suite: int,
+    total_cost: float,
+    total_duration: float,
+) -> dict:
+    """Build the ``.bench/last-run.json`` report dict without side effects.
+
+    Coverage honesty: exposes exactly which suite questions were executed
+    and which were skipped, so an all-pass subset run (e.g. ``--limit 10``
+    silently omitting Q11) cannot be mistaken for full-suite evidence when
+    a human decides whitelist inclusion.
+    """
+    executed_set = set(executed_ids)
+    skipped_ids = [q.id for q in _QUESTIONS if q.id not in executed_set]
+    return {
+        "schema_version": 1,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "model": model,
+        "provider": "openai",
+        "base_url": os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+        "limit": limit,
+        "cache_enabled": cache_enabled,
+        "total_cost_usd": total_cost,
+        "total_duration_seconds": total_duration,
+        "total_suite_questions": total_suite,
+        "executed_ids": executed_ids,
+        "skipped_ids": skipped_ids,
+        "questions": [
+            {
+                "id": r.id,
+                "question": r.question,
+                "csv": r.csv,
+                "status": r.status,
+                "reason": r.reason,
+                "flaky": r.status == "flaky",
+                "artifacts_expected": r.artifacts_expected,
+                "artifacts_found": r.artifacts_found,
+                "numbers_total": r.numbers_total,
+                "numbers_matched": r.numbers_matched,
+                "numbers_failed": r.numbers_failed,
+                "cost_usd": r.cost_usd,
+                "duration_seconds": r.duration_seconds,
+                "tokens_in": r.tokens_in,
+                "tokens_out": r.tokens_out,
+                "llm_explanation": r.llm_explanation,
+                "sandbox_text": r.sandbox_text,
+                "code": r.code,
+                "model": model,
+            }
+            for r in results
+        ],
+    }
+
+
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 
@@ -766,6 +829,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=10, help="Max questions to run (default: 10)")
     p.add_argument("--questions", type=str, default=None, help="Comma-separated question IDs to run (e.g. 1,3,5)")
     p.add_argument("--seed-experiment", action="store_true", help="Run determinism experiment (Q1 × 5, temp=0, seed=0)")
+    p.add_argument("--model", type=str, default=_DEFAULT_MODEL,
+                   help=f"Model slug to benchmark (default: {_DEFAULT_MODEL})")
     p.add_argument("--cache", action="store_true", help="Enable record-replay cache (.bench/cache/)")
     p.add_argument("--interactive", action="store_true", help="Prompt before spending tokens")
     return p.parse_args(argv)
@@ -812,6 +877,10 @@ async def main(argv: list[str] | None = None) -> int:
     # raise UnboundLocalError at _estimate_cost (found by smoke test 4.2).
     from server.services.llm_openai import OpenAIProvider, _estimate_cost
 
+    # Effective model: --model overrides the default; everything downstream
+    # (cost estimate, banner, provider, report, per-question entries) uses it.
+    model = args.model
+
     # Pre-flight cost estimate
     total_estimate = 0.0
     for q in questions:
@@ -822,11 +891,11 @@ async def main(argv: list[str] | None = None) -> int:
         else:
             input_tokens = 100 + 800
         out_tokens = 2000
-        total_estimate += _estimate_cost(input_tokens, out_tokens, _DEFAULT_MODEL)
+        total_estimate += _estimate_cost(input_tokens, out_tokens, model)
 
     print(f"\n{'=' * 60}")
     print(f"  Datara Regression Bench")
-    print(f"  Model: {_DEFAULT_MODEL}")
+    print(f"  Model: {model}")
     print(f"  Questions: {len(questions)} ({[q.id for q in questions]})")
     print(f"  Cache: {'ON' if args.cache else 'OFF'}")
     print(f"  Estimated cost: ${total_estimate:.6f}")
@@ -839,7 +908,7 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
 
     # Create provider
-    provider = OpenAIProvider(api_key=api_key, model=_DEFAULT_MODEL)
+    provider = OpenAIProvider(api_key=api_key, model=model)
 
     # Seed experiment mode
     if args.seed_experiment:
@@ -876,48 +945,34 @@ async def main(argv: list[str] | None = None) -> int:
 
     # Write JSON artifact
     _BENCH_DIR.mkdir(parents=True, exist_ok=True)
-    report = {
-        "schema_version": 1,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "model": _DEFAULT_MODEL,
-        "provider": "openai",
-        "base_url": os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
-        "limit": limit,
-        "cache_enabled": args.cache,
-        "total_cost_usd": total_cost,
-        "total_duration_seconds": total_dur,
-        "questions": [
-            {
-                "id": r.id,
-                "question": r.question,
-                "csv": r.csv,
-                "status": r.status,
-                "reason": r.reason,
-                "flaky": r.status == "flaky",
-                "artifacts_expected": r.artifacts_expected,
-                "artifacts_found": r.artifacts_found,
-                "numbers_total": r.numbers_total,
-                "numbers_matched": r.numbers_matched,
-                "numbers_failed": r.numbers_failed,
-                "cost_usd": r.cost_usd,
-                "duration_seconds": r.duration_seconds,
-                "tokens_in": r.tokens_in,
-                "tokens_out": r.tokens_out,
-                "llm_explanation": r.llm_explanation,
-                "sandbox_text": r.sandbox_text,
-            }
-            for r in results
-        ],
-    }
+    executed_ids = [r.id for r in results]
+    report = _build_report(
+        results,
+        model=model,
+        cache_enabled=args.cache,
+        limit=limit,
+        executed_ids=executed_ids,
+        total_suite=len(_QUESTIONS),
+        total_cost=total_cost,
+        total_duration=total_dur,
+    )
     with open(_BENCH_DIR / "last-run.json", "w") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
     # Determine exit code
     hard_fails = [r for r in results if r.status == "fail"]
+    skipped_ids = [q.id for q in _QUESTIONS if q.id not in set(executed_ids)]
     if hard_fails:
         print(f"FAIL: {len(hard_fails)} question(s) hard-failed")
+    else:
+        print("PASS: all questions passed")
+    # Coverage honesty: a subset run must never read as full coverage.
+    print(
+        f"Executed {executed_ids} of {len(_QUESTIONS)} suite questions — "
+        f"skipped: {skipped_ids}"
+    )
+    if hard_fails:
         return 1
-    print("PASS: all questions passed")
     return 0
 
 
