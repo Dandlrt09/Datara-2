@@ -323,6 +323,45 @@ describe("ChatView component", () => {
     expect(screen.getByText("Reintentar")).toBeTruthy();
   });
 
+  it("renders the session/no_dataset info banner and clears it when switching sessions", async () => {
+    useSessionsMock.mockReturnValue({
+      data: [
+        { id: "ses-1", title: "Chat 1" },
+        { id: "ses-2", title: "Chat 2" },
+      ],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    vi.mocked(streamChat).mockImplementation(async (_sid, _q, handlers) => {
+      handlers.onError?.(
+        "session",
+        "session/no_dataset",
+        "Esta sesión no tiene datos adjuntos.",
+      );
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question/), {
+      target: { value: "mi pregunta" },
+    });
+    fireEvent.click(screen.getByText("Send"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Esta sesión no tiene datos");
+    expect(alert.textContent).toContain("Esta sesión no tiene datos adjuntos.");
+    expect(screen.getByText("Reintentar")).toBeTruthy();
+
+    // Switching sessions must not leak the banner into the other chat.
+    fireEvent.click(screen.getByText("Chat 2"));
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  });
+
   it("offers Retry from persisted history when last message is an unanswered user turn", () => {
     // Simulates returning to the chat after a failed turn: no in-memory
     // error state, just the orphaned question in the reloaded history.

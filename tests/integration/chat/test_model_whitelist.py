@@ -19,10 +19,11 @@ from fastapi.testclient import TestClient
 
 from server.api.routers import auth as auth_router
 from server.api.routers import chat as chat_router
+from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.routers import settings as settings_router
 from server.services.sqlite_store import SqliteStore
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, upload_csv
 
 
 @pytest.fixture
@@ -34,6 +35,11 @@ def app(tmp_path, monkeypatch):
     application.include_router(sessions_router.router)
     application.include_router(chat_router.router)
     application.include_router(settings_router.router)
+    application.include_router(files_router.router)
+
+    # Isolation: uploads must land in a per-test tmp dir, never the real
+    # server/uploads/ used by the live server.
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
 
     import asyncio
 
@@ -75,13 +81,20 @@ def auth_cookie(client):
 
 @pytest.fixture
 def session_id(client, auth_cookie):
+    """Session with an attached dataset.
+
+    Successful chat turns run the sandbox; without a file the no-dataset
+    guard would terminate them before the provider/sandbox assertions.
+    """
     resp = client.post(
         "/api/sessions",
         json={"title": "Whitelist test"},
         headers={"Cookie": auth_cookie},
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    sid = resp.json()["id"]
+    upload_csv(client, auth_cookie, sid)
+    return sid
 
 
 class TestModelWhitelist:

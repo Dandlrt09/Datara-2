@@ -27,6 +27,11 @@ Normative code table (spec error-taxonomy + Enmienda 1):
                               change (model adequacy is decided at
                               configuration time via the bench; no emitter
                               exists).
+    session/no_dataset        chat router no-dataset guard: the model
+                              generated code but the session has no
+                              attached files, so the sandbox is never
+                              invoked (deterministic refusal, nothing
+                              persisted).
 """
 
 from __future__ import annotations
@@ -41,6 +46,12 @@ from core.errors import (
 )
 
 INTERNAL_ERROR_CODE = "internal/error"
+
+# Emitted by the chat router when the model produces code for a session
+# with no attached files. The no-dataset guard refuses to run the sandbox
+# (and never repairs) instead of letting improvised code fail with a
+# cryptic import/runtime error.
+NO_DATASET_CODE = "session/no_dataset"
 
 # Actual sandbox payload type (server/services/sandbox_local.py run_code
 # docstring) → frontend taxonomy code.

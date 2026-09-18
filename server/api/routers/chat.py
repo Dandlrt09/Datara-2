@@ -44,7 +44,12 @@ from core.errors import (
 from server.api import event_bus as _event_bus_module
 from server.api.deps import current_user, get_store
 from server.services.chat_context import build_chat_context
-from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code, sandbox_code
+from server.services.error_taxonomy import (
+    INTERNAL_ERROR_CODE,
+    NO_DATASET_CODE,
+    llm_code,
+    sandbox_code,
+)
 from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
@@ -271,6 +276,17 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
             "the 5 sample values. Quote means/mins/maxes exactly as they "
             "appear in the profile; do not round or retype them."
         )
+    else:
+        system_prompt += (
+            "\n\nIMPORTANT — no datasets: no dataset file is attached to "
+            "this session. If the user's request needs data, do NOT write "
+            "or run code, and do NOT invent, synthesize, fabricate or "
+            "assume a dataframe. Reply in plain text asking the user to "
+            "attach a dataset file to this session first (CSV, TSV, XLSX "
+            "or JSON) and then ask again. General, non-data questions "
+            "(greetings, conceptual questions) may still be answered "
+            "normally in text."
+        )
     system_prompt += (
         "\n\nIMPORTANT — execution model: every turn runs in a completely "
         "fresh sandbox. NOTHING persists between turns: no variables, no "
@@ -482,19 +498,41 @@ async def chat_stream(
             )
             code = structured.get("code", "")
 
-            # Step 5: Emit SSE — status(llm done) → token deltas → status(sandbox running)
+            # Step 5: Emit SSE — status(llm done) → token deltas
             yield _sse_event("status", {"stage": "llm", "state": "done"})
             async for token_event in _emit_token_deltas(explanation):
                 yield token_event
-            yield _sse_event("status", {"stage": "sandbox", "state": "running"})
 
-            # Step 6: Run sandbox (single-shot). Stage the session's uploads
-            # into the sandbox cwd so generated code can read them by filename.
-            # Memory default 1024MB: plotly.express + pandas virtual memory
-            # exceeds the original 512MB budget (empirically verified).
+            # Stage the session's uploads into the sandbox cwd so generated
+            # code can read them by filename (empty when the session has no
+            # attached files).
             session_files = {
                 p["filename"]: p["path"] for p in context["profiles"] if p.get("path")
             }
+
+            # Deterministic no-dataset safety net: with no attached files
+            # there is nothing to read, so generated code can only fail or
+            # improvise an inline frame. Refuse to run the sandbox at all —
+            # no run_code, no repair attempt, nothing persisted — and tell
+            # the user to attach a file.
+            if code.strip() and not session_files:
+                yield _sse_event("error", {
+                    "type": "session",
+                    "code": NO_DATASET_CODE,
+                    "message": (
+                        "Esta sesión no tiene datos adjuntos. Adjunta un "
+                        "archivo (CSV, TSV, XLSX o JSON) y vuelve a preguntar."
+                    ),
+                })
+                yield _sse_event("status", {"stage": "done", "state": "error"})
+                _publish_streaming_ended()
+                return
+
+            yield _sse_event("status", {"stage": "sandbox", "state": "running"})
+
+            # Step 6: Run sandbox (single-shot).
+            # Memory default 2048MB: plotly.express + pandas virtual memory
+            # exceeds the original 512MB budget (empirically verified).
             sandbox_limits = {
                 "cpu_seconds": 30,
                 # 2048MB: RLIMIT_AS counts VIRTUAL memory; plotly.express +

@@ -24,11 +24,11 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEventType
 from server.services.sqlite_store import SqliteStore
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, upload_csv
 
 
 @pytest.fixture
-def app():
+def app(tmp_path, monkeypatch):
     from server.api import store as api_store  # noqa: PLC0415
 
     application = FastAPI()
@@ -36,6 +36,10 @@ def app():
     application.include_router(sessions_router.router)
     application.include_router(chat_router.router)
     application.include_router(files_router.router)
+
+    # Isolation: uploads must land in a per-test tmp dir, never the real
+    # server/uploads/ used by the live server.
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
 
     import asyncio
 
@@ -77,13 +81,17 @@ def auth_cookie(client):
 
 @pytest.fixture
 def session_id(client, auth_cookie):
+    """Session with an attached dataset (the no-dataset guard otherwise
+    refuses to run the sandbox and the retry-recovery turns cannot succeed)."""
     resp = client.post(
         "/api/sessions",
         json={"title": "Retry test"},
         headers={"Cookie": auth_cookie},
     )
     assert resp.status_code == 201
-    return resp.json()["id"]
+    sid = resp.json()["id"]
+    upload_csv(client, auth_cookie, sid)
+    return sid
 
 
 def _make_openai_fake(content: str) -> MagicMock:

@@ -60,9 +60,11 @@ export default function ChatView() {
     prevTop: number;
   } | null>(null);
 
-  // Set active session
+  // Set active session and drop any banner from the previous session: a
+  // failure that happened in one chat must never leak into another.
   useEffect(() => {
     store.setActiveSessionId(sessionId ?? null);
+    setChatError(null);
   }, [sessionId]);
 
   // Consume suggested question from location.state (one-shot)

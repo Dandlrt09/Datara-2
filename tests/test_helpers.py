@@ -33,7 +33,7 @@ async def apply_all_migrations(store: SqliteStore) -> None:
 
 async def create_test_store() -> SqliteStore:
     """Create and initialize a test store with all migrations applied.
-    
+
     Returns:
         SqliteStore: A connected store ready for testing.
     """
@@ -41,3 +41,26 @@ async def create_test_store() -> SqliteStore:
     await s.connect()
     await apply_all_migrations(s)
     return s
+
+
+def upload_csv(
+    client,
+    cookie: str,
+    session_id: str,
+    *,
+    filename: str = "dataset.csv",
+) -> None:
+    """Attach a small CSV to a chat session via the files endpoint.
+
+    The chat router refuses to run the sandbox when a session has no
+    attached files (no-dataset guard), so integration tests that exercise
+    the sandbox path must attach a dataset first. The CSV is fixed (3 rows)
+    so profile-related assertions stay stable across callers.
+    """
+    content = b"name,age,score\nAlice,30,95.5\nBob,25,87.3\nCharlie,35,92.1\n"
+    resp = client.post(
+        f"/api/sessions/{session_id}/files",
+        files={"file": (filename, content, "text/csv")},
+        headers={"Cookie": cookie},
+    )
+    assert resp.status_code in (200, 201), resp.text
