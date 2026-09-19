@@ -371,12 +371,20 @@ def _cost_rates(model: str) -> tuple[float, float]:
 
     Accepts both bare ids ("gpt-4.1-mini") and provider-prefixed slugs
     ("openai/gpt-4.1-mini") so OpenRouter-style names reuse one price entry.
-    Unknown models fall back to gpt-4o pricing.
+    Unknown models fall back to gpt-4o pricing (with a warning).
     """
     rates = _MODEL_COST_MAP.get(model)
     if rates is None and "/" in model:
         rates = _MODEL_COST_MAP.get(model.rsplit("/", 1)[-1])
-    return rates if rates is not None else _FALLBACK_COST_RATES
+    if rates is None:
+        logger.warning(
+            "Unknown model %r has no price entry; falling back to gpt-4o rates "
+            "(the persisted cost_usd will not match this model's real price). "
+            "Add it to _MODEL_COST_MAP.",
+            model,
+        )
+        return _FALLBACK_COST_RATES
+    return rates
 
 
 def _estimate_cost(

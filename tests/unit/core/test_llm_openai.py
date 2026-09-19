@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -527,6 +528,11 @@ class TestCostEstimate:
         cost = _estimate_cost(tokens_in=1000, tokens_out=500, model="unknown-model")
         # Falls back to gpt-4o pricing
         assert cost == pytest.approx(0.0075, rel=1e-9)
+
+    def test_unknown_model_logs_warning(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            _estimate_cost(tokens_in=1000, tokens_out=500, model="unknown-model")
+        assert any("unknown-model" in r.message for r in caplog.records)
 
     def test_provider_prefixed_slug_uses_bare_id_rates(self):
         """OpenRouter-style slugs share the bare id's price instead of
