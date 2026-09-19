@@ -193,25 +193,61 @@ async def _emit_token_deltas(
         await asyncio.sleep(0.01)  # small delay for human-readable pacing
 
 
-# Narrative decimals: models copy full-precision floats (e.g. profile means)
-# into explanations despite prompt rules; enforce ≤6 places deterministically.
-_FULL_PRECISION_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})*\.\d{7,}|\d+\.\d{7,}")
+# Narrative number format: Spanish convention (dot thousands, comma decimal),
+# matching the UI (ChatMessage.formatThousands/formatCost). The formatter only
+# fires on 7+ fractional digits — a backstop for full-precision floats the model
+# leaks despite the prompt rule; short decimals pass through untouched.
+_NARRATIVE_NUMBER = re.compile(
+    r"(?<![\d.,])"
+    r"(?:"
+    r"\d{1,3}(?:\.\d{3})+,\d{7,}"   # Spanish grouped, comma decimal
+    r"|\d{1,3}(?:,\d{3})+\.\d{7,}"  # English grouped, dot decimal
+    r"|\d+[.,]\d{7,}"               # ungrouped, either separator
+    r")"
+    # Reject a following digit, or a separator followed by a digit (partial
+    # match into a longer decimal), but allow a sentence-terminating "." / ",".
+    r"(?!\d|[.,]\d)"
+)
+
+
+def _parse_narrative_number(token: str) -> float:
+    """Parse a numeric literal in either English or Spanish convention.
+
+    When both separators appear the LAST one is the decimal separator and the
+    other is grouping; a repeated single separator is grouping; a lone
+    separator is decimal.
+    """
+    has_dot = "." in token
+    has_comma = "," in token
+    if has_dot and has_comma:
+        if token.rfind(",") > token.rfind("."):
+            return float(token.replace(".", "").replace(",", "."))
+        return float(token.replace(",", ""))
+    if has_comma:
+        return float(token.replace(",", "."))
+    if token.count(".") > 1:
+        return float(token.replace(".", ""))
+    return float(token)
+
+
+def _to_spanish_number(english: str) -> str:
+    """Swap an English-formatted number (1,234.5) to Spanish (1.234,5)."""
+    return english.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
 def _format_narrative_numbers(text: str) -> str:
     """Cap decimal places of numeric literals in narrative text to 6.
 
-    Matches plain (``2500.8230981333336``) and thousands-grouped
-    (``1,500,000.123456789``) decimals only — 7+ fractional digits — and
-    rewrites them rounded to 6 places with thousands separators. Shorter
-    decimals, integers, and non-numeric tokens (prod_004, dates) pass
-    through untouched.
+    Rewrites matched literals to the Spanish convention (dot thousands, comma
+    decimal) rounded to 6 places with trailing zeros stripped. Shorter
+    decimals, integers, and non-numeric tokens (prod_004, dates) pass through.
     """
     def _repl(match: re.Match[str]) -> str:
-        value = float(match.group(0).replace(",", ""))
-        return f"{value:,.6f}".rstrip("0").rstrip(".")
+        value = _parse_narrative_number(match.group(0))
+        english = f"{value:,.6f}".rstrip("0").rstrip(".")
+        return _to_spanish_number(english)
 
-    return _FULL_PRECISION_NUMBER.sub(_repl, text)
+    return _NARRATIVE_NUMBER.sub(_repl, text)
 
 
 def _build_repair_feedback(error: dict[str, Any]) -> str:
@@ -334,7 +370,7 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
         "IMPORTANT: in the pre-code explanation describe WHAT you will compute — NEVER invent or estimate specific result values; "
         "the exact numbers only exist after the code executes."
         "\n\nIMPORTANT — narrative quality: Write natural professional Spanish. Start with the conclusion or key finding. "
-        "Format numeric values with ≤6 decimal places and thousands separators for readability (e.g., 5,035,600.021 — never full-precision floats like 2500.8230981333336). "
+        "Format numeric values in Spanish convention: dot as thousands separator and comma as decimal separator, ≤6 decimal places (e.g. 5.035.600,021 — never full-precision floats like 2500.8230981333336). Drop unnecessary trailing zeros (write 5.020.000, not 5.020.000,0). "
         "Never dump raw column listings or generate unsolicited charts. "
         "No Markdown formatting: use plain text, no **bold**, no bullet lists."
         "\n\nIMPORTANT — single result table: assign the final result to EXACTLY ONE df_ variable (df_result or df_<name>). "
@@ -754,7 +790,7 @@ async def chat_stream(
                                 "The code has now executed and produced results below. "
                                 "Rewrite the explanation to be grounded in the ACTUAL computed numbers. "
                                 "Copy numeric values EXACTLY as they appear in the provided results — never round them. "
-                                "Format large numbers with thousands separators for readability (e.g. 76,036,762.77). "
+                                "Format numbers in Spanish convention: dot thousands separator, comma decimal separator (e.g. 76.036.762,77), dropping unnecessary trailing zeros. "
                                 "Keep every key computed value, do not drop any. For long results never enumerate every row: "
                                 "highlight only the top 2-3 inline and refer to the table for the rest. "
                                 "Do not keep the original estimates: the rewritten narrative must contain ONLY the real computed values. "

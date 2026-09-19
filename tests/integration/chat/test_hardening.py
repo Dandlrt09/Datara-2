@@ -403,7 +403,7 @@ class TestGroundedNarrativePersistence:
         content = assistant_msgs[0]["content_text"]
         # REWRITE: the persisted message is ONLY the grounded narrative —
         # the approach's (invented) numbers must not survive beside it
-        assert content == "El promedio exacto es 10.507123 unidades.", (
+        assert content == "El promedio exacto es 10,507123 unidades.", (
             f"Persisted message should be the formatted grounded rewrite: {content!r}"
         )
         assert "2500.8230981333336" not in content

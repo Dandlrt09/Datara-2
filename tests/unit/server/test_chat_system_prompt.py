@@ -15,6 +15,10 @@ from server.api.routers.chat import build_system_prompt
 # A fixed profile whose serialized form is deterministic (json.dumps keeps
 # dict insertion order), so the SHA-256 pins the exact bytes of the
 # profiles-present prompt against accidental drift.
+#
+# Updated deliberately for the Spanish number-format rule (dot thousands,
+# comma decimal) in the narrative-quality paragraph; the bench shares this
+# prompt and was updated in lockstep.
 _PROFILE = [
     {
         "file_id": 1,
@@ -26,7 +30,7 @@ _PROFILE = [
     }
 ]
 _PROFILES_PROMPT_SHA256 = (
-    "429c61380c6d75a0a043cff7b1136da09b35dd1991ff2f6e3c3d8f615ec144a6"
+    "c392988b1d37d3d092febdf24e8fe11579418eb155fa0a86e4043a17d0791ee7"
 )
 
 
