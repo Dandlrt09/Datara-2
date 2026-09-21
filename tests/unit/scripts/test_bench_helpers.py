@@ -16,7 +16,10 @@ from scripts.bench import (
     _cache_key,
     _mape_check,
     _normalize_number,
+    _number_candidates,
     _parse_args,
+    _text_mentions_int,
+    _text_matches_number,
     _DEFAULT_MODEL,
     BenchQuestion,
     QuestionResult,
@@ -84,6 +87,104 @@ class TestNormalizeNumber:
 
     def test_negative_with_thousands(self):
         assert _normalize_number("-$1,234.56") == -1234.56
+
+
+class TestNumberCandidates:
+    def test_english_thousands_only(self):
+        assert _number_candidates("5,035,600") == [5035600.0]
+
+    def test_spanish_thousands_only(self):
+        assert _number_candidates("5.020.000") == [5020000.0]
+
+    def test_ambiguous_decimal_comma_english_first(self):
+        candidates = _number_candidates("1.234,56")
+        assert candidates[0] == 1.23456
+        assert 1234.56 in candidates
+
+    def test_plain_decimal_is_deduped(self):
+        assert _number_candidates("99.5") == [99.5]
+
+    def test_single_dot_thousands_grouping(self):
+        assert _number_candidates("1.234") == [1.234, 1234.0]
+
+    def test_scientific_notation_is_literal_only(self):
+        assert _number_candidates("1.5e3") == [1500.0]
+
+    def test_negative_scientific_notation(self):
+        assert _number_candidates("-2E-4") == [-0.0002]
+
+    def test_currency_and_percent_stripping(self):
+        assert _number_candidates("$5,035,600.021") == [5035600.021]
+        assert _number_candidates("99.5%") == [99.5]
+
+    def test_unicode_minus(self):
+        assert _number_candidates("−42.5") == [-42.5]
+
+    def test_empty_and_garbage(self):
+        assert _number_candidates("") == []
+        assert _number_candidates("abc") == []
+
+    def test_leading_zero_decimal_not_spanish_grouping(self):
+        """A leading-zero first group is not valid thousands grouping.
+
+        "0.001" must read as the decimal 0.001 only — the spurious integer
+        reading 1.0 (from treating ".001" as a thousands group) is wrong.
+        """
+        assert _number_candidates("0.001") == [0.001]
+        assert _number_candidates("0.100") == [0.1]
+        assert _number_candidates("0.500") == [0.5]
+
+    def test_two_digit_nonzero_group_still_groups(self):
+        """A two-digit non-zero leading group must still offer the Spanish reading."""
+        assert _number_candidates("10.500") == [10.5, 10500.0]
+
+
+class TestTextMatchesNumber:
+    def test_matches_spanish_number_in_sentence(self):
+        assert (
+            _text_matches_number("el total fue 5.020.000 unidades", 5020000.0) is True
+        )
+
+    def test_matches_english_number_in_sentence(self):
+        assert (
+            _text_matches_number("the total was 5,035,600 units", 5035600.0) is True
+        )
+
+    def test_returns_false_when_absent(self):
+        assert _text_matches_number("no numbers here", 5020000.0) is False
+
+    def test_tolerance_pct(self):
+        assert _text_matches_number("el total fue 101", 100.0, pct=0.01) is True
+        assert _text_matches_number("el total fue 105", 100.0, pct=0.01) is False
+
+    def test_abs_tolerance_bypasses_pct(self):
+        assert (
+            _text_matches_number("resultado 0.005", 0.001, pct=0.01, abs_tol=0.005)
+            is True
+        )
+
+    def test_leading_zero_decimal_does_not_match_spurious_integer(self):
+        """0.001 must not match 1.0; 0.500 must not match 500.0."""
+        assert _text_matches_number("valor 0.001", 1.0) is False
+        assert _text_matches_number("proporcion 0.500", 500.0) is False
+
+
+class TestTextMentionsInt:
+    def test_matches_plain_integer(self):
+        assert _text_mentions_int("80 filas", 80) is True
+
+    def test_matches_spanish_thousands(self):
+        assert _text_mentions_int("1.234 filas", 1234) is True
+
+    def test_matches_float_candidate_truncated(self):
+        assert _text_mentions_int("80.0 filas", 80) is True
+
+    def test_returns_false_when_absent(self):
+        assert _text_mentions_int("sin filas", 80) is False
+
+    def test_leading_zero_decimal_does_not_match_spurious_int(self):
+        """0.100 must not be read as 100."""
+        assert _text_mentions_int("0.100 filas", 100) is False
 
 
 class TestMapeCheck:

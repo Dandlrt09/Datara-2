@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -51,15 +52,18 @@ _PROD_LIMITS = {"memory_mb": 2048, "cpu_seconds": 30, "timeout_seconds": 30}
 # ── Pure helpers ────────────────────────────────────────────────────────────────
 
 
-def _normalize_number(s: str) -> float | None:
-    """Normalize a human-readable number string to a float.
+_SCI_NOTATION_RE = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+")
 
-    Strips ``$``, ``%``, whitespace; removes thousands separators ``5,000``;
-    handles Unicode minus.
+
+def _strip_number_token(s: str) -> str:
+    """Strip whitespace, currency symbols, and a trailing ``%`` from a token.
+
+    Maps Unicode minus/en dash to ASCII ``-`` and handles the ``-$1,234``
+    form.  Returns an empty string when nothing numeric remains.
     """
     text = s.strip()
     if not text:
-        return None
+        return ""
     # Handle Unicode minus
     text = text.replace("−", "-").replace("–", "-")
     # Strip leading currency/percent symbols (after minus handling)
@@ -76,14 +80,106 @@ def _normalize_number(s: str) -> float | None:
     # Strip trailing percent — return the number as-is (e.g. "99.5%" -> 99.5)
     if text.endswith("%"):
         text = text[:-1].strip()
-        if not text:
-            return None
-    # Remove thousands separators (commas between digits)
-    text = text.replace(",", "")
+    return text
+
+
+def _number_candidates(s: str) -> list[float]:
+    """Return every plausible numeric reading of a single token.
+
+    Readings are ordered **English first** (dots are decimals, commas are
+    thousands separators), then Spanish (dots are thousands separators, the
+    comma is the decimal separator).  Exact duplicates are dropped while
+    preserving first-seen order; unparseable tokens yield ``[]``.
+
+    Scientific notation (``1.5e3``) is read literally only — it is never
+    reinterpreted as Spanish grouping.
+    """
+    text = _strip_number_token(s)
+    if not text:
+        return []
+    # Scientific notation: a single literal English reading.
+    if _SCI_NOTATION_RE.fullmatch(text):
+        try:
+            return [float(text)]
+        except ValueError:
+            return []
+
+    candidates: list[float] = []
+
+    # English reading: commas are thousands separators, dots are decimals.
     try:
-        return float(text)
+        candidates.append(float(text.replace(",", "")))
     except ValueError:
-        return None
+        pass
+
+    # Spanish reading: dots are thousands separators, the comma is the decimal
+    # point.  Only reinterpret when the token shows Spanish grouping — a comma,
+    # or dots that each separate groups of three digits.  A lone dot with a
+    # short fractional part stays a decimal point, so "99.5" reads identically
+    # in both conventions while "1.234" also offers the 1234 reading.
+    parts = text.lstrip("+-").split(".")
+    grouped = (
+        len(parts) >= 2
+        and 1 <= len(parts[0]) <= 3
+        and parts[0].isdigit()
+        and not parts[0].startswith("0")
+        and all(len(p) == 3 and p.isdigit() for p in parts[1:])
+    )
+    if "," in text or grouped:
+        spanish = text.replace(".", "").replace(",", ".")
+        try:
+            candidates.append(float(spanish))
+        except ValueError:
+            pass
+
+    # Drop exact duplicates, preserving first-seen order.
+    deduped: list[float] = []
+    for value in candidates:
+        if value not in deduped:
+            deduped.append(value)
+    return deduped
+
+
+def _normalize_number(s: str) -> float | None:
+    """Normalize a human-readable number string to a float.
+
+    Returns the first (English) reading from :func:`_number_candidates`, or
+    ``None`` when the token has no numeric reading.
+    """
+    candidates = _number_candidates(s)
+    return candidates[0] if candidates else None
+
+
+def _text_matches_number(
+    text: str,
+    expected: float,
+    *,
+    pct: float = 0.01,
+    abs_tol: float | None = None,
+) -> bool:
+    """Return ``True`` if any token in ``text`` reads as ``expected``.
+
+    Each token is expanded through :func:`_number_candidates` (English and
+    Spanish readings) and checked with :func:`_mape_check`.
+    """
+    for token in text.split():
+        for candidate in _number_candidates(token):
+            passed, _ = _mape_check(candidate, expected, pct=pct, abs_tol=abs_tol)
+            if passed:
+                return True
+    return False
+
+
+def _text_mentions_int(text: str, value: int) -> bool:
+    """Return ``True`` if any token in ``text`` reads as integer ``value``.
+
+    Float candidates are truncated via ``int()`` so ``80.0`` matches ``80``.
+    """
+    for token in text.split():
+        for candidate in _number_candidates(token):
+            if int(candidate) == value:
+                return True
+    return False
 
 
 def _mape_check(
@@ -668,15 +764,8 @@ async def _run_question(
             # Check combined text (explanation + sandbox_text) for the row count number
             combined_text = f"{explanation} {sandbox_text}"
             
-            # Check if any word in combined_text matches the row count
-            found_row_count = False
-            for word in combined_text.split():
-                norm = _normalize_number(word)
-                if norm is not None:
-                    # Compare as integers (allow float 80.0 == int 80)
-                    if int(norm) == row_count:
-                        found_row_count = True
-                        break
+            # Match the row count across English and Spanish number formats
+            found_row_count = _text_mentions_int(combined_text, row_count)
             
             if not found_row_count:
                 return QuestionResult(
@@ -705,16 +794,13 @@ async def _run_question(
     numbers_failed: list[dict[str, Any]] = []
 
     for metric, exp_val in expected.items():
-        # Scan for the expected number in text
-        found = False
-        for word in combined_text.split():
-            norm = _normalize_number(word)
-            if norm is not None:
-                abs_tol = (q.tolerance_abs or {}).get(metric)
-                passed, _ = _mape_check(norm, exp_val, pct=q.tolerance_pct, abs_tol=abs_tol)
-                if passed:
-                    found = True
-                    break
+        # Scan for the expected number in text (English and Spanish readings)
+        found = _text_matches_number(
+            combined_text,
+            exp_val,
+            pct=q.tolerance_pct,
+            abs_tol=(q.tolerance_abs or {}).get(metric),
+        )
         if found:
             numbers_matched += 1
         else:
@@ -725,14 +811,10 @@ async def _run_question(
     if numbers_failed:
         # Check if it's flaky (any metric passes with 2x tolerance)
         for entry in numbers_failed:
-            for word in combined_text.split():
-                norm = _normalize_number(word)
-                if norm is not None:
-                    passed, _ = _mape_check(norm, entry["expected"], pct=q.tolerance_pct * 2)
-                    if passed:
-                        flaky = True
-                        break
-            if flaky:
+            if _text_matches_number(
+                combined_text, entry["expected"], pct=q.tolerance_pct * 2
+            ):
+                flaky = True
                 break
 
         if flaky:
