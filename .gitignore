@@ -1,4 +1,5 @@
 .env
+.secret_key
 .venv/
 __pycache__/
 *.pyc

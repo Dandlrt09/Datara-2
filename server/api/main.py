@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from starlette.exceptions import HTTPException
 from server.api import store as api_store
 from server.api import event_bus as api_event_bus
 from server.api.routers import auth, chat, files, sessions, settings, archive
+from server.db_path import resolve_db_path
 from server.migrate import apply_migrations
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
 from server.services.session_cleanup import sweep_expired, start_background_sweep
@@ -67,9 +67,9 @@ async def lifespan(app: FastAPI):
     # Design: local DB lives at ~/.datara/datara.db (outside the repo),
     # configurable via DATARA_DB_PATH. The parent directory may not exist
     # on a fresh machine — create it before connecting.
-    db_path = os.environ.get("DATARA_DB_PATH") or os.path.expanduser(
-        "~/.datara/datara.db"
-    )
+    # resolve_db_path is the single source of truth: it expands ``~`` so the
+    # store and its key file always agree on the directory.
+    db_path = resolve_db_path()
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(db_path=db_path)
     await store.connect()
@@ -87,6 +87,14 @@ async def lifespan(app: FastAPI):
         logger.info("Migrations applied successfully")
     except Exception:
         logger.exception("Migration failed — continuing with existing schema")
+
+    # Re-encrypt legacy plaintext API keys (idempotent; never logs key material)
+    try:
+        re_encrypted = await store.encrypt_legacy_api_keys()
+        if re_encrypted:
+            logger.info("Encrypted %d legacy plaintext API key row(s)", re_encrypted)
+    except Exception:
+        logger.exception("Legacy API key re-encryption sweep failed")
 
     # Step 2: sweep expired sessions
     try:

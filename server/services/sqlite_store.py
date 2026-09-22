@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -17,10 +16,12 @@ from typing import Any
 import aiosqlite
 
 from core.errors import DuplicateError, NotFoundError
+from server.db_path import resolve_db_path
+from server.services.crypto import SecretBox
 
 logger = logging.getLogger(__name__)
 
-DATARA_DB_PATH = os.environ.get("DATARA_DB_PATH", os.path.expanduser("~/.datara/datara.db"))
+DATARA_DB_PATH = resolve_db_path()
 
 
 class SqliteStore:
@@ -32,7 +33,15 @@ class SqliteStore:
     """
 
     def __init__(self, db_path: str | None = None) -> None:
-        self._db_path = db_path or DATARA_DB_PATH
+        # Resolve here too, so a caller passing a raw unexpanded path directly
+        # can never split the DB from its key file. ``resolve_db_path(None)``
+        # would re-read the env var at call time, so keep the module constant
+        # for the default and only expand an explicit path.
+        self._db_path = resolve_db_path(db_path) if db_path else DATARA_DB_PATH
+        # Resolve the encryption key from this store's own DB location, never
+        # from a module-level path. API keys are encrypted/decrypted at this
+        # boundary so consumers keep seeing plaintext.
+        self._secret_box = SecretBox.for_store(self._db_path)
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
@@ -206,7 +215,16 @@ class SqliteStore:
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
-        return dict(rows[0]) if rows else None
+        return self._decrypt_settings_row(dict(rows[0])) if rows else None
+
+    def _decrypt_settings_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Return a settings row with ``api_key_enc`` decrypted in place.
+
+        Keeps the dict shape/keys identical; callers keep receiving the API
+        key in plaintext.
+        """
+        row["api_key_enc"] = self._secret_box.decrypt(row.get("api_key_enc"))
+        return row
 
     async def upsert_user_settings(
         self,
@@ -219,6 +237,17 @@ class SqliteStore:
         provider_type_provided: bool = False,
         base_url_provided: bool = False,
     ) -> dict[str, Any]:
+        # None must keep meaning "leave the existing column untouched"; only a
+        # provided key gets encrypted before it is bound to SQL. An empty
+        # string is normalized to None so a caller passing "" cannot silently
+        # overwrite a stored key with an encrypted empty value.
+        if api_key_enc == "":
+            api_key_enc = None
+        encrypted_key = (
+            self._secret_box.encrypt(api_key_enc)
+            if api_key_enc is not None
+            else None
+        )
         await self.conn.execute(
             "INSERT INTO user_settings (user_id, api_key_enc, default_model, provider_type, base_url, updated_at) "
             "VALUES (?, ?, ?, ?, ?, datetime('now')) "
@@ -229,8 +258,8 @@ class SqliteStore:
             "  base_url = CASE WHEN ? THEN ? ELSE base_url END,"
             "  updated_at = datetime('now')",
             (
-                user_id, api_key_enc, default_model, provider_type, base_url,
-                api_key_enc, default_model,
+                user_id, encrypted_key, default_model, provider_type, base_url,
+                encrypted_key, default_model,
                 int(provider_type_provided), provider_type,
                 int(base_url_provided), base_url,
             ),
@@ -241,7 +270,32 @@ class SqliteStore:
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
-        return dict(rows[0])
+        return self._decrypt_settings_row(dict(rows[0]))
+
+    async def encrypt_legacy_api_keys(self) -> int:
+        """Encrypt any plaintext ``api_key_enc`` rows written before encryption.
+
+        Idempotent: rows that already look like Fernet tokens are skipped, so
+        this is safe to run on every boot. Returns the number of rows
+        re-encrypted.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT user_id, api_key_enc FROM user_settings "
+            "WHERE api_key_enc IS NOT NULL"
+        )
+        re_encrypted = 0
+        for row in rows:
+            value = row["api_key_enc"]
+            if self._secret_box.is_encrypted(value):
+                continue
+            await self.conn.execute(
+                "UPDATE user_settings SET api_key_enc = ? WHERE user_id = ?",
+                (self._secret_box.encrypt(value), row["user_id"]),
+            )
+            re_encrypted += 1
+        if re_encrypted:
+            await self.conn.commit()
+        return re_encrypted
 
     # ── Messages ──────────────────────────────────────────────────────────────
 

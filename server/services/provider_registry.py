@@ -92,7 +92,8 @@ def build_provider(
     
     Args:
         provider_type: Provider type, or None for env fallback.
-        api_key: API key (encrypted), or None for env fallback.
+        api_key: API key in plaintext (``get_user_settings`` decrypts it), or
+            None for env fallback.
         model: Model name.
         base_url: Custom base URL, or None for env/default.
         timeout: Request timeout in seconds.
@@ -131,7 +132,8 @@ async def fetch_models(
     
     Args:
         provider_type: Provider type from settings.
-        api_key: Encrypted API key from settings.
+        api_key: API key in plaintext from settings (the store decrypts it
+            before returning).
         base_url: Base URL from settings.
         
     Returns:

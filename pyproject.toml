@@ -15,6 +15,7 @@ server = [
     "httpx>=0.28.0",
     "python-multipart>=0.0.9",
     "openai>=1.55.0",
+    "cryptography>=43.0.0",
 ]
 hosted = [
     "datara[server]",

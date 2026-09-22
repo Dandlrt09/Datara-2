@@ -5,9 +5,10 @@ application in the `migrations` table. Called on server startup.
 """
 
 import logging
-import os
 import sqlite3
 from pathlib import Path
+
+from server.db_path import resolve_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,10 @@ def apply_migrations(db_path: str) -> None:
     """Open a SQLite database at *db_path* and apply all pending migrations.
 
     Creates the database file and parent directories if they don't exist.
+    The path is resolved through ``resolve_db_path`` so the migration runner
+    and the encryption key file agree on the database directory.
     """
-    db_path_obj = Path(db_path)
+    db_path_obj = Path(resolve_db_path(db_path))
     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(str(db_path_obj))

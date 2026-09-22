@@ -295,3 +295,103 @@ class TestUserSettings:
         final = await store.get_user_settings(user["id"])
         assert final["api_key_enc"] == "key_123"
         assert final["default_model"] == "gpt-4o"
+
+
+class TestUserSettingsEncryption:
+    """API keys must be ciphertext at rest while callers still see plaintext."""
+
+    async def test_upsert_stores_ciphertext_and_get_round_trips(self, store):
+        user = await store.create_user("enc@example.com", "hash")
+        plaintext = "sk-super-secret-123"
+
+        result = await store.upsert_user_settings(user["id"], api_key_enc=plaintext)
+        # The store boundary still hands callers the plaintext key.
+        assert result["api_key_enc"] == plaintext
+
+        # Bypass get_user_settings and inspect the raw column directly.
+        rows = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        raw = rows[0]["api_key_enc"]
+        assert raw != plaintext
+        assert plaintext not in raw
+        assert raw.startswith("gAAAAA")
+
+        # Read path decrypts back to the original plaintext.
+        settings = await store.get_user_settings(user["id"])
+        assert settings["api_key_enc"] == plaintext
+
+    async def test_partial_update_keeps_encrypted_key(self, store):
+        user = await store.create_user("enc2@example.com", "hash")
+        plaintext = "sk-keep-me-456"
+        await store.upsert_user_settings(user["id"], api_key_enc=plaintext)
+
+        # Omitted key (None) must not wipe or rewrite the stored ciphertext.
+        result = await store.upsert_user_settings(
+            user["id"], default_model="gpt-4o"
+        )
+        assert result["api_key_enc"] == plaintext
+        rows = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert plaintext not in rows[0]["api_key_enc"]
+
+    async def test_encrypt_legacy_api_keys_is_idempotent(self, store):
+        user = await store.create_user("legacy@example.com", "hash")
+        plaintext = "sk-legacy-plain-789"
+        # Simulate a row written before encryption existed.
+        await store.conn.execute(
+            "INSERT INTO user_settings (user_id, api_key_enc, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (user["id"], plaintext),
+        )
+        await store.conn.commit()
+
+        first = await store.encrypt_legacy_api_keys()
+        assert first == 1
+
+        rows = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        raw = rows[0]["api_key_enc"]
+        assert raw != plaintext
+        assert plaintext not in raw
+        assert (await store.get_user_settings(user["id"]))["api_key_enc"] == plaintext
+
+        # Running the sweep again must re-encrypt nothing.
+        second = await store.encrypt_legacy_api_keys()
+        assert second == 0
+        rows_after = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert rows_after[0]["api_key_enc"] == raw
+
+    async def test_empty_string_api_key_keeps_existing_ciphertext(self, store):
+        """An empty string at the store boundary must keep the stored key.
+
+        ``""`` is not ``None``, so without normalization it would be encrypted
+        and overwrite the real key. It must instead leave the ciphertext
+        untouched while the read path still returns the original plaintext.
+        """
+        user = await store.create_user("enc-empty@example.com", "hash")
+        plaintext = "sk-original-key-000"
+        await store.upsert_user_settings(user["id"], api_key_enc=plaintext)
+
+        rows = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        before = rows[0]["api_key_enc"]
+
+        result = await store.upsert_user_settings(user["id"], api_key_enc="")
+
+        assert result["api_key_enc"] == plaintext
+        rows_after = await store.conn.execute_fetchall(
+            "SELECT api_key_enc FROM user_settings WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert rows_after[0]["api_key_enc"] == before
