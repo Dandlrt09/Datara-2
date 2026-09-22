@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Iterable
 
 import openai
 from openai import AsyncOpenAI
@@ -367,17 +367,40 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
 # wrong number. Unknown models yield an unavailable (NULL) cost instead.
 
 
-def _cost_rates(model: str) -> tuple[float, float] | None:
-    """Resolve per-token (input, output) USD rates for a model id.
+def _lookup_rates(model: str) -> tuple[float, float] | None:
+    """Resolve per-token (input, output) USD rates, or ``None`` when unpriced.
 
     Accepts both bare ids ("gpt-4.1-mini") and provider-prefixed slugs
     ("openai/gpt-4.1-mini") so OpenRouter-style names reuse one price entry.
-    Unknown models return ``None`` — no price entry exists, so the cost is
-    unavailable rather than guessed.
+    Deliberately silent: callers decide whether a miss deserves a log.
     """
     rates = _MODEL_COST_MAP.get(model)
     if rates is None and "/" in model:
         rates = _MODEL_COST_MAP.get(model.rsplit("/", 1)[-1])
+    return rates
+
+
+def has_price_entry(model: str) -> bool:
+    """True when ``model`` has a published price in ``_MODEL_COST_MAP``.
+
+    Backs the startup check that flags allowed-but-unpriced models. Never
+    logs, so it is safe to call once per allowed model at boot.
+    """
+    return _lookup_rates(model) is not None
+
+
+def unpriced_models(models: Iterable[str]) -> list[str]:
+    """Sorted subset of ``models`` with no price entry (operator signal)."""
+    return sorted(m for m in models if not has_price_entry(m))
+
+
+def _cost_rates(model: str) -> tuple[float, float] | None:
+    """Resolve per-token (input, output) USD rates for a model id.
+
+    Unknown models return ``None`` — no price entry exists, so the cost is
+    unavailable rather than guessed — and log one warning per call.
+    """
+    rates = _lookup_rates(model)
     if rates is None:
         logger.warning(
             "Unknown model %r has no price entry; cost will be recorded as "
@@ -385,7 +408,6 @@ def _cost_rates(model: str) -> tuple[float, float] | None:
             "Add it to _MODEL_COST_MAP.",
             model,
         )
-        return None
     return rates
 
 

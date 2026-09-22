@@ -32,7 +32,12 @@ from core.errors import (
 )
 from core.protocols.llm_provider import LLMUsage
 from server.services.error_taxonomy import INTERNAL_ERROR_CODE, llm_code
-from server.services.llm_openai import OpenAIProvider, _estimate_cost
+from server.services.llm_openai import (
+    OpenAIProvider,
+    _estimate_cost,
+    has_price_entry,
+    unpriced_models,
+)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -548,6 +553,34 @@ class TestCostEstimate:
     def test_zero_tokens(self):
         cost = _estimate_cost(tokens_in=0, tokens_out=0, model="gpt-4o")
         assert cost == 0.0
+
+
+class TestPriceEntryLookup:
+    """Price-entry detection backing the startup unpriced-model warning."""
+
+    def test_known_bare_id_has_price(self):
+        assert has_price_entry("gpt-4.1-mini") is True
+
+    def test_known_provider_prefixed_slug_has_price(self):
+        """OpenRouter-style slugs resolve via the bare id, like _cost_rates."""
+        assert has_price_entry("openai/gpt-4.1-mini") is True
+
+    def test_unknown_model_has_no_price(self):
+        assert has_price_entry("meta-llama/llama-3.3-70b-instruct") is False
+
+    def test_has_price_entry_is_silent(self, caplog):
+        """The startup check walks every allowed model, so this must not
+        emit the per-call warning that _cost_rates logs."""
+        with caplog.at_level(logging.WARNING):
+            has_price_entry("unknown-model")
+        assert not caplog.records
+
+    def test_unpriced_models_returns_sorted_subset(self):
+        models = ["openai/gpt-4.1-mini", "zz/unknown", "aa/unknown"]
+        assert unpriced_models(models) == ["aa/unknown", "zz/unknown"]
+
+    def test_unpriced_models_empty_when_all_priced(self):
+        assert unpriced_models(["gpt-4o", "openai/gpt-4.1-mini"]) == []
 
 
 # ── Seed kwarg passthrough ──────────────────────────────────────────────────

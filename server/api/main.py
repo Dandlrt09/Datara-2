@@ -125,6 +125,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start background sandbox orphan sweep")
 
+    # Step 5: flag allowed models with no price entry. This is a WARNING, not
+    # a gate: .env.example itself ships an unpriced slug, so failing startup
+    # would break a copy-paste setup. The chat surface already reports such a
+    # turn's cost honestly as unavailable; this is the operator-facing signal
+    # that the price map needs the entry.
+    try:
+        from server.services.llm_openai import unpriced_models
+
+        unpriced = unpriced_models(settings.ALLOWED_MODELS)
+        if unpriced:
+            logger.warning(
+                "Allowed models with no price entry (their turns will show "
+                "'costo no disponible'): %s",
+                ", ".join(unpriced),
+            )
+    except Exception:
+        logger.exception("Unpriced allowed-model check failed")
+
     yield
 
     # Shutdown
