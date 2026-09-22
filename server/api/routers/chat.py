@@ -45,6 +45,7 @@ from server.api import event_bus as _event_bus_module
 from server.api.deps import current_user, get_store
 from server.services.chat_context import build_chat_context
 from server.services.error_taxonomy import (
+    FILE_NOT_PROFILED_CODE,
     INTERNAL_ERROR_CODE,
     NO_DATASET_CODE,
     llm_code,
@@ -548,20 +549,34 @@ async def chat_stream(
                 p["filename"]: p["path"] for p in context["profiles"] if p.get("path")
             }
 
-            # Deterministic no-dataset safety net: with no attached files
-            # there is nothing to read, so generated code can only fail or
-            # improvise an inline frame. Refuse to run the sandbox at all —
-            # no run_code, no repair attempt, nothing persisted — and tell
-            # the user to attach a file.
+            # Deterministic dataset guard: with no usable dataset there is
+            # nothing to read, so generated code can only fail or improvise
+            # an inline frame. Refuse to run the sandbox at all — no
+            # run_code, no repair attempt, nothing persisted. When files ARE
+            # attached but none could be profiled, say so honestly instead of
+            # claiming the session has no data (the false no_dataset bug).
             if code.strip() and not session_files:
-                yield _sse_event("error", {
-                    "type": "session",
-                    "code": NO_DATASET_CODE,
-                    "message": (
-                        "Esta sesión no tiene datos adjuntos. Adjunta un "
-                        "archivo (CSV, TSV, XLSX o JSON) y vuelve a preguntar."
-                    ),
-                })
+                unprofiled = context.get("unprofiled_files") or []
+                if unprofiled:
+                    names = ", ".join(f["filename"] for f in unprofiled)
+                    yield _sse_event("error", {
+                        "type": "session",
+                        "code": FILE_NOT_PROFILED_CODE,
+                        "message": (
+                            f"Hay archivos adjuntos en esta sesión ({names}) que "
+                            "no se pudieron procesar. Vuelve a subirlos o bórralos "
+                            "y prueba de nuevo."
+                        ),
+                    })
+                else:
+                    yield _sse_event("error", {
+                        "type": "session",
+                        "code": NO_DATASET_CODE,
+                        "message": (
+                            "Esta sesión no tiene datos adjuntos. Adjunta un "
+                            "archivo (CSV, TSV, XLSX o JSON) y vuelve a preguntar."
+                        ),
+                    })
                 yield _sse_event("status", {"stage": "done", "state": "error"})
                 _publish_streaming_ended()
                 return

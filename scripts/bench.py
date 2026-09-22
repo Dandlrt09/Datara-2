@@ -549,17 +549,20 @@ class QuestionResult:
 def _bench_profiles(csv_path: Path) -> list[dict]:
     """Build the profile context for a bench CSV, mirroring the app shape.
 
-    Mirrors profile_cache.save_profile's split + chat_context's
-    _serialize_profile so the model sees exactly what a real chat turn
-    would see for this file (schema, per-column stats, 5 sample rows,
-    and the authoritative row_count).
+    Mirrors profile_cache.serialize_profile's JSON-safe split +
+    chat_context's _serialize_profile so the model sees exactly what a
+    real chat turn would see for this file (schema, per-column stats, 5
+    sample rows, and the authoritative row_count). Values are derived from
+    profile_to_json so they stay JSON-safe (datetimes, numpy scalars).
     """
     from core.data.parser import parse_upload
-    from core.data.profiler import build_profile
+    from core.data.profiler import build_profile, profile_to_json
 
     fmt = csv_path.suffix.lstrip(".")
     df, meta = parse_upload(str(csv_path), format_hint=fmt)
     prof = build_profile(df, size_bytes=csv_path.stat().st_size)
+    data = profile_to_json(prof)
+    columns = data.get("columns", [])
     return [
         {
             "filename": csv_path.name,
@@ -567,20 +570,20 @@ def _bench_profiles(csv_path: Path) -> list[dict]:
             "path": str(csv_path),
             "row_count": prof.row_count,
             "profile": {
-                "columns": [{"name": c.name, "dtype": c.dtype} for c in prof.columns],
+                "columns": [{"name": c["name"], "dtype": c["dtype"]} for c in columns],
                 "stats": {
-                    c.name: {
-                        "null_count": c.null_count,
-                        "unique_count": c.unique_count,
-                        "sample_values": c.sample_values,
-                        "min": c.min,
-                        "max": c.max,
-                        "mean": c.mean,
-                        "std": c.std,
+                    c["name"]: {
+                        "null_count": c["null_count"],
+                        "unique_count": c["unique_count"],
+                        "sample_values": c["sample_values"],
+                        "min": c["min"],
+                        "max": c["max"],
+                        "mean": c["mean"],
+                        "std": c["std"],
                     }
-                    for c in prof.columns
+                    for c in columns
                 },
-                "sample": prof.sample_rows[:5],
+                "sample": data.get("sample_rows", [])[:5],
             },
         }
     ]

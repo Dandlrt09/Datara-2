@@ -225,6 +225,44 @@ class TestFileProfile:
         resp = client.get("/api/files/1/profile")
         assert resp.status_code == 401
 
+    def test_upload_xlsx_datetime_column_persists_profile(self, auth_client, session_id):
+        """Regression: an XLSX date column holds pd.Timestamp values. Raw
+        stats_json (pre-fix) raised TypeError, committing the file row
+        without its profile — the false ``session/no_dataset`` bug. Upload
+        must 201, the profile must resolve, and the session listing must
+        report ``has_profile`` true."""
+        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp.close()
+        pd.DataFrame({
+            "fecha": pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]),
+            "v": [1, 2, 3],
+        }).to_excel(tmp.name, sheet_name="Data", index=False)
+        with open(tmp.name, "rb") as f:
+            xlsx_content = f.read()
+
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={
+                "file": (
+                    "dates.xlsx",
+                    xlsx_content,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert resp.status_code == 201
+        file_id = resp.json()["id"]
+
+        prof = auth_client.get(f"/api/files/{file_id}/profile")
+        assert prof.status_code == 200
+        assert prof.json()["file_id"] == file_id
+
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        assert listing.status_code == 200
+        rows = listing.json()
+        assert len(rows) == 1
+        assert rows[0]["has_profile"] is True
+
     def test_get_profile_cross_user_blocked(self, auth_client, session_id, client):
         """RED: cross-user profile access should return 404."""
         # User A uploads

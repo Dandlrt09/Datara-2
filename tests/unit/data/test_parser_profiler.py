@@ -210,3 +210,25 @@ class TestProfileToJSON:
         profile = build_profile(df)
         serialized = profile_to_json(profile)
         json.dumps(serialized)  # should not raise
+
+    def test_json_safe_handles_datetime_and_exotic_scalars(self):
+        """A datetime column (e.g. from XLSX) must serialize; raw
+        pd.Timestamp used to break profile persistence."""
+        from datetime import date
+        from decimal import Decimal
+
+        from core.data.profiler import _json_safe
+
+        df = pd.DataFrame({
+            "fecha": pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]),
+        })
+        profile = build_profile(df)
+        serialized = profile_to_json(profile)
+        json.dumps(serialized)  # must not raise
+        assert _json_safe(pd.Timestamp("2024-01-01")) == str(pd.Timestamp("2024-01-01"))
+        assert _json_safe(date(2024, 1, 1)) == "2024-01-01"
+        assert _json_safe(Decimal("1.5")) == 1.5
+        assert _json_safe(b"ab") == "ab"
+        assert _json_safe({1: pd.Timestamp("2024-01-01")}) == {
+            "1": str(pd.Timestamp("2024-01-01"))
+        }

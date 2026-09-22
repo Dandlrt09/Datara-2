@@ -516,6 +516,59 @@ class SqliteStore:
         )
         return dict(rows[0])
 
+    async def create_file_with_profile(
+        self,
+        *,
+        user_id: int,
+        chat_session: str,
+        filename: str,
+        storage_path: str,
+        size_bytes: int,
+        format_val: str,
+        schema_json: str,
+        stats_json: str,
+        sample_json: str,
+        encoding: str | None = None,
+        sheet_name: str | None = None,
+        row_count: int | None = None,
+    ) -> dict[str, Any]:
+        """Insert a file AND its profile in ONE transaction.
+
+        Either both rows are committed or neither is. This makes the
+        upload path atomic: a file row can never become visible without
+        its profile (the false ``session/no_dataset`` bug).
+        """
+        try:
+            cursor = await self.conn.execute(
+                "INSERT INTO files (user_id, chat_session, filename, storage_path, "
+                "size_bytes, format, encoding, sheet_name, row_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, chat_session, filename, storage_path, size_bytes,
+                 format_val, encoding, sheet_name, row_count),
+            )
+            file_id = cursor.lastrowid
+            await self.conn.execute(
+                "INSERT INTO profiles (file_id, schema_json, stats_json, sample_json) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(file_id) DO UPDATE SET "
+                "  schema_json = excluded.schema_json,"
+                "  stats_json = excluded.stats_json,"
+                "  sample_json = excluded.sample_json,"
+                "  generated_at = datetime('now')",
+                (file_id, schema_json, stats_json, sample_json),
+            )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        )
+        return dict(rows[0])
+
     async def list_files(
         self,
         user_id: int,
@@ -523,17 +576,20 @@ class SqliteStore:
     ) -> list[dict[str, Any]]:
         if chat_session:
             rows = await self.conn.execute_fetchall(
-                "SELECT id, user_id, chat_session, filename, storage_path, "
-                "size_bytes, format, encoding, sheet_name, row_count, created_at "
-                "FROM files WHERE user_id = ? AND chat_session = ? "
-                "ORDER BY created_at DESC",
+                "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
+                "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
+                "(p.file_id IS NOT NULL) AS has_profile "
+                "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
+                "WHERE f.user_id = ? AND f.chat_session = ? ORDER BY f.created_at DESC",
                 (user_id, chat_session),
             )
         else:
             rows = await self.conn.execute_fetchall(
-                "SELECT id, user_id, chat_session, filename, storage_path, "
-                "size_bytes, format, encoding, sheet_name, row_count, created_at "
-                "FROM files WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
+                "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
+                "(p.file_id IS NOT NULL) AS has_profile "
+                "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
+                "WHERE f.user_id = ? ORDER BY f.created_at DESC",
                 (user_id,),
             )
         return [dict(r) for r in rows]
@@ -549,10 +605,12 @@ class SqliteStore:
         rows = await self.conn.execute_fetchall(
             "SELECT f.id, f.filename, f.format, f.row_count, "
             "       f.size_bytes, f.created_at, f.chat_session, "
-            "       cs.title AS session_title "
+            "       cs.title AS session_title, "
+            "       (p.file_id IS NOT NULL) AS has_profile "
             "FROM files f "
             "LEFT JOIN chat_sessions cs "
             "  ON cs.id = f.chat_session AND cs.user_id = ? "
+            "LEFT JOIN profiles p ON p.file_id = f.id "
             "WHERE f.user_id = ? "
             "ORDER BY f.created_at DESC",
             (user_id, user_id),

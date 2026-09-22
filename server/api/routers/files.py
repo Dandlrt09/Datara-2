@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from core.data.parser import parse_upload, parse_upload_sheet
 from core.data.profiler import build_profile
 from server.api.deps import current_user, get_store
-from server.services.profile_cache import get_profile, save_profile
+from server.services.profile_cache import get_profile, serialize_profile
 from server.services.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ class FileResponse(BaseModel):
     size_bytes: int
     row_count: int | None = None
     created_at: str | None = None
+    has_profile: bool = False
 
 
 class ProfileResponse(BaseModel):
@@ -81,6 +82,7 @@ class FileListItem(BaseModel):
     created_at: str | None = None
     chat_session_id: str
     session_title: str | None
+    has_profile: bool = False
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
@@ -195,8 +197,10 @@ async def upload_file(
             detail=f"Failed to parse file: {e}",
         )
 
-    # Build profile
+    # Build AND serialize the profile BEFORE any DB write: a serialization
+    # failure must never leave a committed file row without its profile.
     profile = build_profile(df, size_bytes=size_bytes)
+    schema_json, stats_json, sample_json = serialize_profile(profile)
 
     # The client may have cancelled while parsing/profiling a large file —
     # do not persist a file the user no longer wants.
@@ -204,21 +208,29 @@ async def upload_file(
         dest_path.unlink(missing_ok=True)
         return Response(status_code=499)
 
-    # Persist file record
-    file_record = await store.create_file(
-        user_id=user_id,
-        chat_session=session_id,
-        filename=safe_filename,
-        storage_path=str(dest_path),
-        size_bytes=size_bytes,
-        format_val=meta.format,
-        encoding=meta.encoding,
-        sheet_name=meta.sheet_name,
-        row_count=meta.row_count,
-    )
-
-    # Cache profile
-    await save_profile(store, file_record["id"], profile)
+    # Persist the file row and its profile atomically (one transaction).
+    try:
+        file_record = await store.create_file_with_profile(
+            user_id=user_id,
+            chat_session=session_id,
+            filename=safe_filename,
+            storage_path=str(dest_path),
+            size_bytes=size_bytes,
+            format_val=meta.format,
+            encoding=meta.encoding,
+            sheet_name=meta.sheet_name,
+            row_count=meta.row_count,
+            schema_json=schema_json,
+            stats_json=stats_json,
+            sample_json=sample_json,
+        )
+    except Exception:
+        dest_path.unlink(missing_ok=True)
+        logger.exception("Failed to persist uploaded file and profile")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist uploaded file",
+        )
 
     return FileCreateResponse(
         id=file_record["id"],
@@ -256,6 +268,7 @@ async def list_files(
             size_bytes=f["size_bytes"],
             row_count=f.get("row_count"),
             created_at=f.get("created_at"),
+            has_profile=bool(f.get("has_profile")),
         )
         for f in files
     ]
@@ -278,6 +291,7 @@ async def list_all_files(
             created_at=r.get("created_at"),
             chat_session_id=r["chat_session"],
             session_title=r.get("session_title"),
+            has_profile=bool(r.get("has_profile")),
         )
         for r in rows
     ]

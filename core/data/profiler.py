@@ -10,6 +10,8 @@ This module is CPU-bound and should be called via
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import numpy as np
@@ -167,18 +169,37 @@ def profile_to_json(profile: DataProfile) -> dict[str, Any]:
 
 
 def _json_safe(val: Any) -> Any:
-    """Convert a value to a JSON-safe representation."""
-    if isinstance(val, (np.integer,)):
-        return int(val)
-    if isinstance(val, (np.floating,)):
-        return float(val)
-    if isinstance(val, (np.ndarray,)):
-        return val.tolist()
-    if isinstance(val, pd.Timestamp):
-        return str(val)
-    if isinstance(val, (np.bool_,)):
+    """Convert a value to a JSON-safe representation.
+
+    Handles numpy scalars/arrays, pandas timestamps, stdlib date/datetime,
+    Decimal and bytes, and recurses into dict/list/tuple/set. The
+    `profile_to_json`/`json_safe_records` paths run every stored value
+    through here, so a raw `pd.Timestamp` (e.g. an XLSX date column) can
+    never reach `json.dumps` and break profile persistence.
+    """
+    if val is None:
+        return None
+    if isinstance(val, np.bool_):
         return bool(val)
-    return val
+    if isinstance(val, np.integer):
+        return int(val)
+    if isinstance(val, np.floating):
+        return float(val)
+    if isinstance(val, np.ndarray):
+        return [_json_safe(v) for v in val.tolist()]
+    if isinstance(val, (pd.Timestamp, datetime, date)):
+        return str(val)
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    if isinstance(val, dict):
+        return {str(k): _json_safe(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple, set)):
+        return [_json_safe(v) for v in val]
+    if isinstance(val, (str, bool, int, float)):
+        return val
+    return str(val)
 
 
 def json_safe_records(df: pd.DataFrame) -> list[dict[str, Any]]:

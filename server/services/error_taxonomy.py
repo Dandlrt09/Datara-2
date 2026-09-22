@@ -32,6 +32,7 @@ Normative code table (spec error-taxonomy + Enmienda 1):
                               attached files, so the sandbox is never
                               invoked (deterministic refusal, nothing
                               persisted).
+    session/file_not_profiled chat router guard: attached files exist but none could be profiled (lazy re-profile failed); sandbox not invoked.
 """
 
 from __future__ import annotations
@@ -52,6 +53,12 @@ INTERNAL_ERROR_CODE = "internal/error"
 # (and never repairs) instead of letting improvised code fail with a
 # cryptic import/runtime error.
 NO_DATASET_CODE = "session/no_dataset"
+
+# Emitted by the chat router when the session HAS attached files, but none
+# could be profiled (and lazy re-profiling failed), and the model produced
+# code. Distinct from session/no_dataset so the UI does not claim there are
+# no files when there are.
+FILE_NOT_PROFILED_CODE = "session/file_not_profiled"
 
 # Actual sandbox payload type (server/services/sandbox_local.py run_code
 # docstring) → frontend taxonomy code.

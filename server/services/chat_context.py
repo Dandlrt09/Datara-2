@@ -7,8 +7,10 @@ window of the last N messages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from server.services.profile_cache import get_profile
@@ -33,6 +35,46 @@ def _serialize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _ensure_profile(
+    store: SqliteStore,
+    file_row: dict[str, Any],
+    user_id: int,
+) -> dict[str, Any] | None:
+    """Return a file's profile, lazily re-profiling it from disk if missing.
+
+    A file row can lack a profile row (legacy rows, or a failure before the
+    atomic upload path existed). Instead of silently dropping it — which
+    produced the false ``session/no_dataset`` — re-parse the stored file and
+    cache its profile. Returns None only when the file cannot be read or
+    profiling fails again.
+    """
+    profile = await get_profile(store, file_row["id"], user_id)
+    if profile is not None:
+        return profile
+
+    path = file_row.get("storage_path")
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        from core.data.parser import parse_upload  # noqa: PLC0415
+        from core.data.profiler import build_profile  # noqa: PLC0415
+        from server.services.profile_cache import save_profile  # noqa: PLC0415
+
+        df, _meta = await asyncio.to_thread(
+            parse_upload, path, file_row.get("format")
+        )
+        rebuilt = await asyncio.to_thread(
+            build_profile, df, size_bytes=os.path.getsize(path)
+        )
+        await save_profile(store, file_row["id"], rebuilt)
+        return await get_profile(store, file_row["id"], user_id)
+    except Exception:
+        logger.warning(
+            "Lazy re-profile failed for file %s", file_row.get("id"), exc_info=True
+        )
+        return None
+
+
 async def build_chat_context(
     store: SqliteStore,
     *,
@@ -49,14 +91,15 @@ async def build_chat_context(
         message_window: How many prior messages to include.
 
     Returns:
-        A dict with keys ``profiles`` (list) and ``messages`` (list of
-        role/content dicts, oldest first).
+        A dict with keys ``profiles`` (list), ``unprofiled_files`` (list)
+        and ``messages`` (list of role/content dicts, oldest first).
     """
     # 1. Profile JSON for files in this session (ownership via JOIN files)
     profiles: list[dict[str, Any]] = []
+    unprofiled_files: list[dict[str, Any]] = []
     files = await store.list_files(user_id, chat_session=chat_session)
     for f in files:
-        profile = await get_profile(store, f["id"], user_id)
+        profile = await _ensure_profile(store, f, user_id)
         if profile is not None:
             profiles.append(
                 {
@@ -74,6 +117,10 @@ async def build_chat_context(
                     "row_count": f.get("row_count"),
                     "profile": _serialize_profile(profile),
                 }
+            )
+        else:
+            unprofiled_files.append(
+                {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
             )
 
     # 2. Sliding window of the last N messages (newest first from store)
@@ -94,4 +141,8 @@ async def build_chat_context(
             content = f"{content}\n\n```python\n{m['code']}\n```"
         messages.append({"role": role, "content": content})
 
-    return {"profiles": profiles, "messages": messages}
+    return {
+        "profiles": profiles,
+        "unprofiled_files": unprofiled_files,
+        "messages": messages,
+    }

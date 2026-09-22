@@ -330,6 +330,34 @@ class TestLLMContextGuardrails:
         # And it must be at dataset level, not inside per-column stats
         assert "row_count" not in profile_entry["profile"]["stats"]
 
+    async def test_context_reports_unprofiled_files_honestly(
+        self, client, auth_cookie, store
+    ):
+        """A file row without a profile (legacy, or a failure before the
+        atomic upload path) must NOT be silently dropped: build_chat_context
+        reports it in ``unprofiled_files`` so the chat router can say so
+        honestly instead of emitting the false ``session/no_dataset``."""
+        user = await store.get_user_by_email("costguard@example.com")
+        assert user is not None
+        user_id = user["id"]
+        await store.create_chat_session("unprofiled-sess", user_id, "Unprofiled")
+        await store.create_file(
+            user_id=user_id,
+            chat_session="unprofiled-sess",
+            filename="broken.csv",
+            storage_path="/nonexistent/broken.csv",
+            size_bytes=10,
+            format_val="csv",
+            row_count=2,
+        )
+
+        context = await build_chat_context(
+            store, user_id=user_id, chat_session="unprofiled-sess"
+        )
+        assert context["profiles"] == []
+        names = [f["filename"] for f in context["unprofiled_files"]]
+        assert names == ["broken.csv"]
+
 
 class TestGroundedNarrativePersistence:
     """rigor-mov2 live-validation findings, fixed:
