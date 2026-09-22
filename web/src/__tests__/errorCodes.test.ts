@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  FILE_NOT_PROFILED_CODE,
   NO_DATASET_CODE,
   resolveErrorPresentation,
   isKnownErrorCode,
@@ -71,6 +72,15 @@ describe("resolveErrorPresentation", () => {
     });
   });
 
+  it("maps session/file_not_profiled to the warning retry presentation", () => {
+    expect(resolveErrorPresentation(FILE_NOT_PROFILED_CODE)).toEqual({
+      variant: "warning",
+      title: "Archivos sin procesar",
+      action: "retry-turn",
+      actionLabel: "Reintentar",
+    });
+  });
+
   it.each(["model/inadequate", "weird/unrecognized", null, undefined])(
     "degrades unknown/missing code %s to the generic danger fallback",
     (code) => {
@@ -91,6 +101,7 @@ describe("isKnownErrorCode", () => {
     "llm/rate_limit",
     "internal/error",
     "session/no_dataset",
+    "session/file_not_profiled",
   ])("recognizes taxonomy code %s", (code) => {
     expect(isKnownErrorCode(code)).toBe(true);
   });

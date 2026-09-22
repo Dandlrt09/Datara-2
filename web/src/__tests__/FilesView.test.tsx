@@ -198,4 +198,24 @@ describe("FilesView", () => {
     expect(button).toBeTruthy();
     expect(button.disabled).toBe(true);
   });
+
+  it("renders a 'Not profiled' badge when a file has no profile", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          filename: "broken.xlsx",
+          format: "xlsx",
+          size_bytes: 1024,
+          created_at: "2024-01-01",
+          chat_session_id: "ses-1",
+          session_title: "Session 1",
+          has_profile: false,
+        },
+      ],
+      isLoading: false,
+    });
+    renderWithProviders(<FilesView />);
+    expect(screen.getByText("Not profiled")).toBeTruthy();
+  });
 });

@@ -200,14 +200,32 @@ function FileRow({
   file,
   onDelete,
 }: {
-  file: { id: number; filename: string; format: string; row_count?: number; size_bytes: number; session_title: string | null };
+  file: { id: number; filename: string; format: string; row_count?: number; size_bytes: number; session_title: string | null; has_profile?: boolean };
   onDelete: () => void;
 }) {
   const { data: profile } = useProfile(file.id);
 
   return (
     <tr>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.filename}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
+        {file.filename}
+        {file.has_profile === false && (
+          <span
+            title="This file has no profile and is not ready for chat"
+            style={{
+              marginLeft: 8,
+              padding: "2px 6px",
+              fontSize: "0.75em",
+              borderRadius: 4,
+              background: "#fff3cd",
+              color: "#856404",
+              border: "1px solid #ffeeba",
+            }}
+          >
+            Not profiled
+          </span>
+        )}
+      </td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.format}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.row_count ?? "—"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{(file.size_bytes / 1024).toFixed(1)} KB</td>

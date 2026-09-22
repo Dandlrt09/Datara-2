@@ -15,6 +15,12 @@ export type ErrorAction = "retry-turn" | "go-settings" | "none";
  * session with no attached files, so the sandbox was never invoked. */
 export const NO_DATASET_CODE = "session/no_dataset";
 
+/** Emitted by the backend guard when the session HAS attached files but
+ * none could be profiled (lazy re-profile failed), so the turn could not
+ * run. Distinct from NO_DATASET_CODE so the UI does not claim there are no
+ * files when there are. */
+export const FILE_NOT_PROFILED_CODE = "session/file_not_profiled";
+
 export interface ErrorPresentation {
   variant: ErrorVariant;
   /** Professional Spanish title (spec-pinned per code family). */
@@ -43,6 +49,15 @@ const NO_DATASET: ErrorPresentation = {
   actionLabel: RETRY_LABEL,
 };
 
+/** Warning, actionable banner: files are attached but could not be
+ * profiled, so the turn could not run. Re-upload or delete and retry. */
+const FILE_NOT_PROFILED: ErrorPresentation = {
+  variant: "warning",
+  title: "Archivos sin procesar",
+  action: RETRY,
+  actionLabel: RETRY_LABEL,
+};
+
 /** The verbatim `${type}: ${message}` degradation (today's banner format)
  * applies whenever the code is missing or outside the taxonomy. */
 export function isKnownErrorCode(code: string | null | undefined): boolean {
@@ -51,6 +66,7 @@ export function isKnownErrorCode(code: string | null | undefined): boolean {
     code === "internal/error" ||
     code === "model/not_allowed" ||
     code === NO_DATASET_CODE ||
+    code === FILE_NOT_PROFILED_CODE ||
     code.startsWith("auth/") ||
     code.startsWith("sandbox/") ||
     code.startsWith("llm/")
@@ -67,6 +83,9 @@ export function resolveErrorPresentation(
   }
   if (code === NO_DATASET_CODE) {
     return NO_DATASET;
+  }
+  if (code === FILE_NOT_PROFILED_CODE) {
+    return FILE_NOT_PROFILED;
   }
   if (code === "model/not_allowed") {
     return { variant: "warning", title: "Modelo no disponible", action: "none" };

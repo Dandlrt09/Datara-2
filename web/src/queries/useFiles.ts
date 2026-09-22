@@ -8,6 +8,7 @@ export interface UploadedFile {
   row_count?: number;
   size_bytes: number;
   created_at: string;
+  has_profile?: boolean;
 }
 
 export interface FileListItem extends UploadedFile {
