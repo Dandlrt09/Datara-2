@@ -19,6 +19,11 @@ from server.api.routers.chat import build_system_prompt
 # Updated deliberately for the Spanish number-format rule (dot thousands,
 # comma decimal) in the narrative-quality paragraph; the bench shares this
 # prompt and was updated in lockstep.
+#
+# Updated again deliberately for the single-result-table rule: the
+# surfacing-results paragraph no longer says "assign every requested result
+# table" (plural); it now states the UI shows ONE result table assigned to
+# df_result, matching the sandbox's single-table capture.
 _PROFILE = [
     {
         "file_id": 1,
@@ -30,7 +35,7 @@ _PROFILE = [
     }
 ]
 _PROFILES_PROMPT_SHA256 = (
-    "c392988b1d37d3d092febdf24e8fe11579418eb155fa0a86e4043a17d0791ee7"
+    "563a2759d570406f0cb32fb13633db7207ebae13b97f8f6048151e91e0641ad4"
 )
 
 
@@ -61,3 +66,14 @@ class TestProfilesPresentPathUnchanged:
             hashlib.sha256(prompt.encode("utf-8")).hexdigest()
             == _PROFILES_PROMPT_SHA256
         )
+
+    def test_prompt_states_single_result_table_rule(self):
+        """The prompt must be singular about result tables.
+
+        Regression: the surfacing-results paragraph said "assign every
+        requested result table" (plural) while the later paragraph said
+        "EXACTLY ONE df_ variable", so models rendered several tables.
+        """
+        prompt = build_system_prompt(_PROFILE)
+        assert "assign every requested result table" not in prompt
+        assert "assign the single result table to a DataFrame variable named df_result" in prompt

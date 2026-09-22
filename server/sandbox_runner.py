@@ -331,10 +331,13 @@ def _execute_code(code: str, limits: dict) -> dict:
 
     figures: list[dict] = []
     tables: list[dict] = []
-    # Dedupe identical result tables: models sometimes assign the same
-    # frame to two df_ names (df_cat + df_result); rendering both is
-    # pure noise. Key on content (columns + repr(rows)), not name.
-    seen_table_contents: set[tuple] = set()
+    # The sandbox surfaces AT MOST ONE result table: the UI shows a single
+    # authoritative result, so multiple df*/*_df frames must never render as
+    # separate tables. Collect every qualifying frame (except the raw 'df'
+    # load variable) into an ordered candidate list, then pick exactly one
+    # after the loop. Intermediate frames must use non-df names so they never
+    # become candidates.
+    table_candidates: list[dict] = []
     try:
         # Compile the code
         compiled = compile(code, "<sandbox>", "exec", flags=0, dont_inherit=True)
@@ -378,17 +381,22 @@ def _execute_code(code: str, limits: dict) -> dict:
                             [_json_safe_cell(v) for v in row]
                             for row in head.itertuples(index=False, name=None)
                         ]
-                        content_key = (tuple(columns), repr(rows))
-                        if content_key in seen_table_contents:
-                            continue
-                        seen_table_contents.add(content_key)
-                        tables.append({
+                        table_candidates.append({
                             "name": name,
                             "columns": columns,
                             "rows": rows,
                         })
                 except Exception:
                     pass
+
+        # Surface exactly one table: df_result when present, otherwise the
+        # last candidate in insertion order (the final assignment).
+        if table_candidates:
+            chosen = next(
+                (t for t in table_candidates if t["name"] == "df_result"),
+                table_candidates[-1],
+            )
+            tables.append(chosen)
 
         output_text = buffer.getvalue()
 

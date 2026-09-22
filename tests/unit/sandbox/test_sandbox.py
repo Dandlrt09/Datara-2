@@ -67,8 +67,41 @@ class TestSandboxExecution:
         result = _run_direct("import numpy as np\nprint(np.array([1, 2, 3]).sum())")
         assert result["status"] == "ok"
 
-    def test_duplicate_table_content_deduped(self):
-        """Same frame assigned to two df_ names renders ONE table.
+    def test_single_df_result_renders_one_table(self):
+        """A lone df_result renders exactly one table named df_result."""
+        result = _run_direct(
+            "import pandas as pd\n"
+            "df_result = pd.DataFrame({'a': [1, 2]})\n"
+        )
+        assert result["status"] == "ok"
+        assert [t["name"] for t in result["tables"]] == ["df_result"]
+
+    def test_df_result_wins_over_distinct_other_table(self):
+        """df_cat + df_result with DIFFERENT content renders only df_result.
+
+        The sandbox surfaces ONE authoritative table: df_result takes
+        precedence over any other df_ frame regardless of content.
+        """
+        result = _run_direct(
+            "import pandas as pd\n"
+            "df_cat = pd.DataFrame({'a': [1, 2]})\n"
+            "df_result = pd.DataFrame({'b': [3, 4]})\n"
+        )
+        assert result["status"] == "ok"
+        assert [t["name"] for t in result["tables"]] == ["df_result"]
+
+    def test_last_assigned_df_wins_without_df_result(self):
+        """Two df_ names, no df_result: the LAST assignment wins."""
+        result = _run_direct(
+            "import pandas as pd\n"
+            "df_first = pd.DataFrame({'a': [1, 2]})\n"
+            "df_second = pd.DataFrame({'b': [3, 4]})\n"
+        )
+        assert result["status"] == "ok"
+        assert [t["name"] for t in result["tables"]] == ["df_second"]
+
+    def test_identical_frame_under_two_df_names_renders_one_table(self):
+        """Same frame assigned to df_cat + df_result renders ONE table.
 
         rigor-mov2 live validation: the model created df_cat + df_result
         with identical content and both rendered as separate tables.
@@ -79,18 +112,17 @@ class TestSandboxExecution:
             "df_cat = df_result\n"
         )
         assert result["status"] == "ok"
-        assert len(result["tables"]) == 1
-        assert result["tables"][0]["name"] == "df_result"
+        assert [t["name"] for t in result["tables"]] == ["df_result"]
 
-    def test_distinct_tables_both_kept(self):
-        """Tables with DIFFERENT content must all be kept."""
+    def test_df_result_wins_over_df_other(self):
+        """df_result + df_other distinct content renders only df_result."""
         result = _run_direct(
             "import pandas as pd\n"
             "df_result = pd.DataFrame({'a': [1, 2]})\n"
             "df_other = pd.DataFrame({'b': [3, 4]})\n"
         )
         assert result["status"] == "ok"
-        assert len(result["tables"]) == 2
+        assert [t["name"] for t in result["tables"]] == ["df_result"]
 
     def test_figure_collection(self):
         """Plotly figure should be collected in the result (px is pre-imported)."""
