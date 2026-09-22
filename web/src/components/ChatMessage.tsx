@@ -153,13 +153,19 @@ export default function ChatMessage({
 }: ChatMessageProps) {
   const isUser = role === "user";
   // Usage meta line (assistant turns only): total tokens plus the estimated
-  // cost when one was computed. Absent (null) fields render nothing at all —
-  // user messages and pre-usage rows stay clean.
+  // cost when one was computed. User messages and pre-usage rows (null
+  // tokens) render nothing at all. A row WITH tokens but a null cost means
+  // the model has no price entry — show "costo no disponible" instead of a
+  // guessed number.
   const showTokenMeta = !isUser && (tokensIn != null || tokensOut != null);
   const tokenMeta = showTokenMeta
     ? [
         `${formatThousands((tokensIn ?? 0) + (tokensOut ?? 0))} tokens`,
-        costUsd != null && costUsd > 0 ? `US$ ${formatCost(costUsd)}` : null,
+        costUsd == null
+          ? "costo no disponible"
+          : costUsd > 0
+            ? `US$ ${formatCost(costUsd)}`
+            : null,
       ]
         .filter((part): part is string => part !== null)
         .join(" · ")

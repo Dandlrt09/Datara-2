@@ -516,7 +516,8 @@ class TestCostEstimate:
     Regression: the map used to divide gpt-4o prices by 1_000 instead of
     1_000_000, inflating every persisted cost_usd by 1000x — plus a further
     6.25x for provider-prefixed slugs like "openai/gpt-4.1-mini", which were
-    absent from the map and fell back to the pricier gpt-4o default.
+    absent from the map and fell back to the pricier gpt-4o default. Unknown
+    models now report an unavailable (None) cost instead of inventing one.
     """
 
     def test_known_model(self):
@@ -524,10 +525,11 @@ class TestCostEstimate:
         cost = _estimate_cost(tokens_in=1000, tokens_out=500, model="gpt-4o-2024-08-06")
         assert cost == pytest.approx(0.0075, rel=1e-9)
 
-    def test_unknown_model_fallback(self):
+    def test_unknown_model_returns_none(self):
+        """An unknown model has no price entry: cost must be unavailable
+        (None), never a guessed number."""
         cost = _estimate_cost(tokens_in=1000, tokens_out=500, model="unknown-model")
-        # Falls back to gpt-4o pricing
-        assert cost == pytest.approx(0.0075, rel=1e-9)
+        assert cost is None
 
     def test_unknown_model_logs_warning(self, caplog):
         with caplog.at_level(logging.WARNING):

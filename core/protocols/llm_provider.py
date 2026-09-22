@@ -18,7 +18,9 @@ from typing import AsyncIterator, Protocol, runtime_checkable
 class LLMUsage:
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: float = 0.0
+    # None means the model has no price entry, so the cost is unavailable
+    # (not zero — zero would claim the call was free).
+    cost_usd: float | None = 0.0
 
 
 @dataclass(frozen=True)

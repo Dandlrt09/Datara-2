@@ -525,7 +525,9 @@ async def chat_stream(
             # REQ-4): on the repair path the rebind below replaces
             # llm_response with the repair response, so the FIRST call's
             # usage travels as an extra term summed at the persist block
-            # (first + repair + grounding calls).
+            # (first + repair + grounding calls). A model with no price
+            # entry propagates NULL through that sum rather than a fake
+            # number.
             extra_usage = None
 
             structured = llm_response.structured_data or {}
@@ -821,6 +823,18 @@ async def chat_stream(
                         # Continue with original explanation if second-pass fails
 
             # Step 8: Persist assistant message BEFORE emitting artifacts (persist-then-emit)
+            # Cost across the chain is None-propagating: a model with no
+            # price entry yields cost_usd=None, so the total stays NULL
+            # (rendered as "costo no disponible") instead of a fake number.
+            _cost_terms: list[float | None] = [llm_response.usage.cost_usd]
+            if extra_usage is not None:
+                _cost_terms.append(extra_usage.cost_usd)
+            if grounding_usage is not None:
+                _cost_terms.append(grounding_usage.cost_usd)
+            if any(term is None for term in _cost_terms):
+                _total_cost: float | None = None
+            else:
+                _total_cost = sum(term for term in _cost_terms if term is not None)
             message = await store.create_message(
                 user_id=user_id,
                 chat_session=session_id,
@@ -836,9 +850,7 @@ async def chat_stream(
                 tokens_out=llm_response.usage.tokens_out
                 + (extra_usage.tokens_out if extra_usage else 0)
                 + (grounding_usage.tokens_out if grounding_usage else 0),
-                cost_usd=llm_response.usage.cost_usd
-                + (extra_usage.cost_usd if extra_usage else 0.0)
-                + (grounding_usage.cost_usd if grounding_usage else 0.0),
+                cost_usd=_total_cost,
             )
 
             # Step 9: Emit — artifact → grounded narrative deltas → status(done) → done

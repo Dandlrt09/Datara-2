@@ -733,6 +733,71 @@ class TestMessageTokens:
         assert legacy[0]["cost_usd"] is None
 
 
+# ── Cost honesty for unknown models ────────────────────────────────────────
+
+
+class TestCostNullForUnknownModel:
+    """A model with no price entry must persist cost_usd=NULL, never a
+    guessed number, while token usage is still recorded."""
+
+    def test_unknown_model_persists_null_cost(
+        self, client, auth_cookie, session_id, store, mock_llm, monkeypatch
+    ):
+        """An unknown default_model leaves tokens persisted and cost NULL.
+
+        The slug must pass the chat-time whitelist to reach the cost path —
+        DATARA_ALLOWED_MODELS is exactly how an OpenRouter model absent from
+        the price map becomes reachable in production.
+        """
+        unknown = "some/unknown-slug"
+        monkeypatch.setattr(
+            chat_router, "ALLOWED_MODELS", chat_router.ALLOWED_MODELS | {unknown}
+        )
+        user_id = asyncio.run(store.get_user_by_email("chat@example.com"))["id"]
+        asyncio.run(
+            store.upsert_user_settings(user_id=user_id, default_model=unknown)
+        )
+
+        no_code = {"code": "", "explanation": "Descriptive answer."}
+        mock_llm.return_value = _make_openai_fake(json.dumps(no_code))
+
+        client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "explain the dataset"},
+            headers={"Cookie": auth_cookie},
+        )
+
+        messages = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assistant = [m for m in messages if m["role"] == "assistant"][0]
+        assert assistant["tokens_in"] == 50
+        assert assistant["tokens_out"] == 100
+        assert assistant["cost_usd"] is None
+
+    def test_known_model_persists_exact_cost(
+        self, client, auth_cookie, session_id, mock_llm
+    ):
+        """The default gpt-4o model keeps the exact numeric cost."""
+        no_code = {"code": "", "explanation": "Descriptive answer."}
+        mock_llm.return_value = _make_openai_fake(json.dumps(no_code))
+
+        client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "explain the dataset"},
+            headers={"Cookie": auth_cookie},
+        )
+
+        messages = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assistant = [m for m in messages if m["role"] == "assistant"][0]
+        # 50 * (2.50/1M) + 100 * (10.00/1M) = 0.001125
+        assert assistant["cost_usd"] == pytest.approx(0.001125)
+
+
 # ── Helper ─────────────────────────────────────────────────────────────────
 
 

@@ -653,10 +653,10 @@ async def _run_question(
             "usage": {
                 "tokens_in": response.usage.tokens_in,
                 "tokens_out": response.usage.tokens_out,
-                "cost_usd": response.usage.cost_usd,
+                "cost_usd": response.usage.cost_usd or 0.0,
             },
         }
-        if cache_enabled and response.usage.cost_usd > 0:
+        if cache_enabled and (response.usage.cost_usd or 0.0) > 0:
             _cache_put(key, resp_dict)
         llm_response = resp_dict
 
@@ -671,7 +671,7 @@ async def _run_question(
             status="fail",
             reason="Response missing 'code' or 'explanation' in structured_data",
             artifacts_expected=sorted(q.expected_artifact_types), artifacts_found=[],
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=structured.get("explanation", llm_text),
         )
@@ -691,7 +691,7 @@ async def _run_question(
             id=q.id, question=q.question, csv=q.csv_basename,
             status="fail", reason=f"Sandbox exception: {e}",
             artifacts_expected=sorted(q.expected_artifact_types), artifacts_found=[],
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=explanation, code=code,
         )
@@ -702,7 +702,7 @@ async def _run_question(
             id=q.id, question=q.question, csv=q.csv_basename,
             status="fail", reason=f"Sandbox error: {err.get('type', 'unknown')}: {err.get('message', '')}",
             artifacts_expected=sorted(q.expected_artifact_types), artifacts_found=[],
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=explanation, code=code,
         )
@@ -729,7 +729,7 @@ async def _run_question(
             reason=f"Missing expected artifacts: {sorted(missing)}",
             artifacts_expected=sorted(q.expected_artifact_types),
             artifacts_found=artifacts_found,
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
         )
@@ -742,7 +742,7 @@ async def _run_question(
             reason=f"Unexpected artifacts found: {sorted(artifacts_found)}",
             artifacts_expected=sorted(q.expected_artifact_types),
             artifacts_found=artifacts_found,
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
         )
@@ -773,7 +773,7 @@ async def _run_question(
                     status="fail", reason=f"Missing row count ({row_count}) mention in explanation",
                     artifacts_expected=sorted(q.expected_artifact_types),
                     artifacts_found=artifacts_found,
-                    cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+                    cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
                     tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
                     llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
                 )
@@ -782,7 +782,7 @@ async def _run_question(
             status="pass", reason="ok",
             artifacts_expected=sorted(q.expected_artifact_types),
             artifacts_found=artifacts_found,
-            cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+            cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
             tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
             llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
         )
@@ -834,7 +834,7 @@ async def _run_question(
         artifacts_found=artifacts_found,
         numbers_total=numbers_total, numbers_matched=numbers_matched,
         numbers_failed=numbers_failed,
-        cost_usd=usage.get("cost_usd", 0), duration_seconds=time.time() - start,
+        cost_usd=usage.get("cost_usd") or 0.0, duration_seconds=time.time() - start,
         tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
         llm_explanation=explanation, sandbox_text=sandbox_text, code=code,
     )
@@ -965,6 +965,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     # Pre-flight cost estimate
     total_estimate = 0.0
+    estimate_available = True
     for q in questions:
         csv_path = _EXAMPLES_DIR / q.csv_basename
         if csv_path.exists():
@@ -973,14 +974,21 @@ async def main(argv: list[str] | None = None) -> int:
         else:
             input_tokens = 100 + 800
         out_tokens = 2000
-        total_estimate += _estimate_cost(input_tokens, out_tokens, model)
+        estimate = _estimate_cost(input_tokens, out_tokens, model)
+        if estimate is None:
+            estimate_available = False
+            continue
+        total_estimate += estimate
 
     print(f"\n{'=' * 60}")
     print(f"  Datara Regression Bench")
     print(f"  Model: {model}")
     print(f"  Questions: {len(questions)} ({[q.id for q in questions]})")
     print(f"  Cache: {'ON' if args.cache else 'OFF'}")
-    print(f"  Estimated cost: ${total_estimate:.6f}")
+    if estimate_available:
+        print(f"  Estimated cost: ${total_estimate:.6f}")
+    else:
+        print("  Estimated cost: unavailable (model has no price entry)")
     print(f"{'=' * 60}\n")
 
     if args.interactive:

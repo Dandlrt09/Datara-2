@@ -127,7 +127,7 @@ describe("ChatMessage token meta line", () => {
     expect(screen.queryByText(/US\$/)).toBeNull();
   });
 
-  it("omits the cost segment when no cost was computed", () => {
+  it("shows 'costo no disponible' when the model has no price entry", () => {
     render(
       <ChatMessage
         role="assistant"
@@ -137,7 +137,8 @@ describe("ChatMessage token meta line", () => {
         costUsd={null}
       />,
     );
-    expect(screen.getByText("150 tokens")).toBeTruthy();
+    expect(screen.getByText(/150 tokens/)).toBeTruthy();
+    expect(screen.getByText(/costo no disponible/)).toBeTruthy();
     expect(screen.queryByText(/US\$/)).toBeNull();
   });
 

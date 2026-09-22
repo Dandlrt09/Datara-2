@@ -362,28 +362,30 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
     "z-ai/glm-5.3-flash": (0.05 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
 }
 
-# gpt-4o is the app default; used when a model id is not in the map.
-_FALLBACK_COST_RATES = (2.50 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS)
+# gpt-4o is the app default, but it is NOT a general fallback: pricing a
+# call to an unknown model with another model's rates would persist a
+# wrong number. Unknown models yield an unavailable (NULL) cost instead.
 
 
-def _cost_rates(model: str) -> tuple[float, float]:
+def _cost_rates(model: str) -> tuple[float, float] | None:
     """Resolve per-token (input, output) USD rates for a model id.
 
     Accepts both bare ids ("gpt-4.1-mini") and provider-prefixed slugs
     ("openai/gpt-4.1-mini") so OpenRouter-style names reuse one price entry.
-    Unknown models fall back to gpt-4o pricing (with a warning).
+    Unknown models return ``None`` — no price entry exists, so the cost is
+    unavailable rather than guessed.
     """
     rates = _MODEL_COST_MAP.get(model)
     if rates is None and "/" in model:
         rates = _MODEL_COST_MAP.get(model.rsplit("/", 1)[-1])
     if rates is None:
         logger.warning(
-            "Unknown model %r has no price entry; falling back to gpt-4o rates "
-            "(the persisted cost_usd will not match this model's real price). "
+            "Unknown model %r has no price entry; cost will be recorded as "
+            "unavailable (NULL) instead of a wrong number. "
             "Add it to _MODEL_COST_MAP.",
             model,
         )
-        return _FALLBACK_COST_RATES
+        return None
     return rates
 
 
@@ -391,10 +393,13 @@ def _estimate_cost(
     tokens_in: int,
     tokens_out: int,
     model: str,
-) -> float:
+) -> float | None:
     """Estimate the cost in USD for a model call.
 
-    Falls back to gpt-4o pricing if the model is not recognised.
+    Returns ``None`` when the model has no price entry, so callers persist
+    an unavailable cost instead of a misleading number.
     """
     rates = _cost_rates(model)
+    if rates is None:
+        return None
     return (tokens_in * rates[0]) + (tokens_out * rates[1])
