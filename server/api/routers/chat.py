@@ -450,11 +450,22 @@ async def chat_stream(
             )
     await store.update_chat_session_timestamp(session_id, user_id)
 
+    # At-most-once guard for STREAMING_ENDED on this stream. Every exit path
+    # — including the six explicit early-return call sites AND the generator's
+    # ``finally`` — funnels through ``_publish_streaming_ended``; the guard
+    # makes the later calls no-ops so the event is published exactly once.
+    _streaming_ended_published = False
+
     def _publish_streaming_ended() -> None:
+        nonlocal _streaming_ended_published
         # [R7] Every stream exit path must publish STREAMING_ENDED so other
         # tabs clear their streaming indicators. This includes the error
         # paths below, whose early `return` would otherwise skip the
-        # generator's else-clause.
+        # generator's finally-clause, and generator abandonment via
+        # ``aclose()`` (``GeneratorExit``), which no ``except`` clause catches.
+        if _streaming_ended_published:
+            return
+        _streaming_ended_published = True
         bus = _event_bus_module.bus
         if bus is not None:
             bus.publish(
@@ -890,7 +901,8 @@ async def chat_stream(
             yield _sse_event("done", {"message_id": message["id"]})
 
         except asyncio.CancelledError:
-            # Emit STREAMING_ENDED before re-raise on client abort [R7]
+            # Publish before re-raise on client abort [R7]; the finally below
+            # is the guarantee, this call just keeps the ordering explicit.
             _publish_streaming_ended()
             raise
         except Exception as e:
@@ -907,8 +919,13 @@ async def chat_stream(
                 "code": INTERNAL_ERROR_CODE,
                 "message": f"Internal server error: {e}",
             })
-        else:
-            # Emit STREAMING_ENDED on normal completion [R7]
+        finally:
+            # Guaranteed STREAMING_ENDED on EVERY exit: normal completion,
+            # error, cancellation, and — critically — generator abandonment
+            # (``GeneratorExit`` raised by ``aclose()`` when the client is
+            # gone), which neither ``except`` clause catches. Publishing is
+            # synchronous, so this finally introduces no await. The
+            # at-most-once guard keeps it a no-op when an earlier path ran.
             _publish_streaming_ended()
 
     return StreamingResponse(

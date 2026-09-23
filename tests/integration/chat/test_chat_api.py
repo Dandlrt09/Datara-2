@@ -923,3 +923,82 @@ class TestChatBusEvents:
                 )
 
         asyncio.run(scenario())
+
+    def test_streaming_ended_on_generator_abandonment(
+        self, client, store, mock_llm
+    ):
+        """STREAMING_ENDED is published exactly once when the response
+        generator is ABANDONED rather than drained.
+
+        Driven by the real ``chat_stream`` route and the real
+        ``StreamingResponse.body_iterator``. When the client is gone at a
+        send, Starlette/uvicorn abandon the body iterator and ``aclose()``
+        it; that raises ``GeneratorExit`` (a ``BaseException`` no ``except``
+        clause catches), so only the generator's ``finally`` guarantees the
+        publish. A TCP-level disconnect cannot be simulated in-process with
+        httpx, so this closes the iterator directly — the exact code path
+        uvicorn reaches.
+        """
+        from server.api import event_bus as _bus_module
+        from server.api.routers import chat as _chat_router
+        from server.services.events import EventBus, SessionEventType
+
+        bus: EventBus = _bus_module.bus
+        assert bus is not None
+
+        # Dedicated user + dataset so the route's ownership/dataset guards pass.
+        reg = client.post(
+            "/api/auth/register",
+            json={"email": "abandon@example.com", "password": "password123"},
+        )
+        assert reg.status_code == 200
+        cookie = reg.headers["set-cookie"]
+        user_id = reg.json()["id"]
+        sid = client.post(
+            "/api/sessions", json={"title": "Chat test"}, headers={"Cookie": cookie}
+        ).json()["id"]
+        upload_csv(client, cookie, sid)
+
+        request_body = _chat_router.ChatRequest(question="analyze the data")
+
+        async def scenario():
+            q = await bus.subscribe(user_id)
+            response = await _chat_router.chat_stream(
+                sid,
+                request_body,
+                MagicMock(),  # Request: unused by the route
+                store=store,
+                user={"id": user_id},
+            )
+            gen = response.body_iterator
+
+            # Pull exactly one chunk, then abandon: never drain the stream.
+            first = await anext(gen)
+            assert isinstance(first, str)
+
+            received: list[SessionEvent] = []
+            while not q.empty():
+                received.append(q.get_nowait())
+            assert any(
+                e.type == SessionEventType.STREAMING_STARTED for e in received
+            ), f"STREAMING_STARTED missing: {[e.type for e in received]}"
+            assert bus.is_streaming(user_id, sid) is True
+
+            # Abandon without consuming the rest — uvicorn's disconnect path.
+            await gen.aclose()
+
+            drained: list[SessionEvent] = []
+            while not q.empty():
+                drained.append(q.get_nowait())
+            ended = [
+                e for e in drained if e.type == SessionEventType.STREAMING_ENDED
+            ]
+            assert len(ended) == 1, (
+                "expected exactly one STREAMING_ENDED on abandonment, "
+                f"got {len(ended)}: {[e.type for e in drained]}"
+            )
+            assert ended[0].session_id == sid
+            assert ended[0].payload.get("is_streaming") is False
+            assert bus.is_streaming(user_id, sid) is False
+
+        asyncio.run(scenario())
