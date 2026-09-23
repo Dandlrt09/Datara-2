@@ -144,8 +144,38 @@ vi.mock("../lib/sse", () => ({
 import { streamChat } from "../lib/sse";
 
 vi.mock("../components/ChatMessage", () => ({
-  default: ({ role, content }: { role: string; content: string }) => (
-    <div data-testid={`msg-${role}`}>{content}</div>
+  default: ({
+    role,
+    content,
+    messageId,
+    onEdit,
+    onRegenerate,
+  }: {
+    role: string;
+    content: string;
+    messageId?: number;
+    onEdit?: (id: number, text: string) => void;
+    onRegenerate?: () => void;
+  }) => (
+    <div data-testid={`msg-${role}`}>
+      {content}
+      {onEdit && messageId != null && (
+        // Text-free control: keeps renderedMessageTexts() assertions stable.
+        <button
+          data-testid={`edit-${messageId}`}
+          aria-label="Editar"
+          onClick={() => onEdit(messageId, `${content} corregida`)}
+        />
+      )}
+      {onRegenerate && (
+        // Text-free control: keeps renderedMessageTexts() assertions stable.
+        <button
+          data-testid={`regen-${content}`}
+          aria-label="Volver a generar la respuesta"
+          onClick={onRegenerate}
+        />
+      )}
+    </div>
   ),
 }));
 
@@ -322,7 +352,7 @@ describe("ChatView component", () => {
       "mi pregunta",
       expect.anything(),
       expect.anything(),
-      true,
+      { retry: true, editMessageId: undefined },
     );
   });
 
@@ -993,5 +1023,159 @@ describe("ChatView component", () => {
       '[title="Streaming in progress"]',
     );
     expect(dots.length).toBe(1);
+  });
+
+  // ── Edit question (truncate) ───────────────────────────────────────────────
+
+  it("offers Edit on a user message and posts edit_message_id with the question", async () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [
+          { id: 1, role: "user", content_text: "pregunta original" },
+          { id: 2, role: "assistant", content_text: "respuesta" },
+        ],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(screen.getByTestId("edit-1"));
+
+    await waitFor(() => expect(streamChat).toHaveBeenCalled());
+    expect(vi.mocked(streamChat)).toHaveBeenLastCalledWith(
+      "ses-1",
+      "pregunta original corregida",
+      expect.anything(),
+      expect.anything(),
+      { retry: false, editMessageId: 1 },
+    );
+  });
+
+  it("does not offer Edit while this tab is streaming", () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    act(() => {
+      useChatStore.setState({ isStreaming: true });
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    expect(screen.queryByTestId("edit-1")).toBeNull();
+  });
+
+  it("does not offer Edit while the open session is streaming elsewhere", () => {
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: true }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    expect(screen.queryByTestId("edit-1")).toBeNull();
+  });
+
+  // ── Regenerate answer (truncate the answer, re-ask the last question) ──────
+
+  const REGEN_MSGS = [
+    { id: 1, role: "user", content_text: "primera" },
+    { id: 2, role: "assistant", content_text: "respuesta-1" },
+    { id: 3, role: "user", content_text: "segunda" },
+    { id: 4, role: "assistant", content_text: "respuesta-2" },
+  ];
+
+  it("offers Regenerar only on the last assistant answer", () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ messages: REGEN_MSGS }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    // Only the trailing answer offers the affordance.
+    expect(screen.getByTestId("regen-respuesta-2")).toBeTruthy();
+    expect(screen.queryByTestId("regen-respuesta-1")).toBeNull();
+  });
+
+  it("clicking Regenerar re-asks the last user question through the edit path", async () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ messages: REGEN_MSGS }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(screen.getByTestId("regen-respuesta-2"));
+
+    await waitFor(() => expect(streamChat).toHaveBeenCalled());
+    // Same text as the LAST user question, edit_message_id = that message id:
+    // the edit path truncates the previous answer before re-asking.
+    expect(vi.mocked(streamChat)).toHaveBeenLastCalledWith(
+      "ses-1",
+      "segunda",
+      expect.anything(),
+      expect.anything(),
+      { retry: false, editMessageId: 3 },
+    );
+  });
+
+  it("does not offer Regenerar while this tab is streaming", () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [
+          { id: 1, role: "user", content_text: "pregunta" },
+          { id: 2, role: "assistant", content_text: "respuesta" },
+        ],
+      }),
+    );
+    act(() => {
+      useChatStore.setState({ isStreaming: true });
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    expect(screen.queryByTestId("regen-respuesta")).toBeNull();
+  });
+
+  it("does not offer Regenerar while the open session is streaming elsewhere", () => {
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: true }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [
+          { id: 1, role: "user", content_text: "pregunta" },
+          { id: 2, role: "assistant", content_text: "respuesta" },
+        ],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    expect(screen.queryByTestId("regen-respuesta")).toBeNull();
   });
 });

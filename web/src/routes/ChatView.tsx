@@ -160,7 +160,7 @@ export default function ChatView() {
   };
 
   const runTurn = useCallback(
-    async (q: string, retry: boolean) => {
+    async (q: string, retry: boolean, editMessageId?: number) => {
       if (!sessionId || !q.trim() || store.isStreaming) return;
 
       if (!retry) setQuestion("");
@@ -219,7 +219,7 @@ export default function ChatView() {
             },
           },
           abortRef.current.signal,
-          retry
+          { retry, editMessageId }
         );
       } catch (e) {
         // streamChat throws on network failures / non-SSE responses. Without
@@ -392,6 +392,42 @@ export default function ChatView() {
       (lastMessage?.role === "user" ? lastMessage.content_text : "");
     if (q) void runTurn(q, true);
   }, [runTurn, lastMessage]);
+
+  // Edit question (truncate): the server deletes this message and every later
+  // turn, then re-asks the edited text as a normal turn.
+  const handleEditMessage = useCallback(
+    (messageId: number, text: string) => {
+      if (!sessionId || store.isStreaming) return;
+      void runTurn(text, false, messageId);
+    },
+    [sessionId, store.isStreaming, runTurn],
+  );
+
+  // Regenerate: re-run the LAST user question through the edit path with the
+  // SAME text. The server truncates that turn (including the previous answer)
+  // before re-asking, so the model starts clean. Deliberately NOT retry, which
+  // keeps the old answer in context and tends to repeat it.
+  const handleRegenerate = useCallback(() => {
+    if (!sessionId || store.isStreaming) return;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        void runTurn(messages[i].content_text, false, messages[i].id);
+        return;
+      }
+    }
+  }, [sessionId, store.isStreaming, messages, runTurn]);
+
+  // Last user question in the loaded history. An edit can only start a turn
+  // when the session is present and neither this tab nor another tab is
+  // streaming it — the same states that disable the composer.
+  const lastUserId = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") return messages[i].id;
+    }
+    return undefined;
+  })();
+  const canEditMessage =
+    !!sessionId && !store.isStreaming && !openSessionIsStreaming;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -604,6 +640,22 @@ export default function ChatView() {
                 role={m.role}
                 content={m.content_text}
                 code={m.code}
+                messageId={m.role === "user" ? m.id : undefined}
+                onEdit={
+                  m.role === "user" && canEditMessage
+                    ? handleEditMessage
+                    : undefined
+                }
+                onRegenerate={
+                  m.role === "assistant" &&
+                  m.id === lastMessage?.id &&
+                  canEditMessage
+                    ? handleRegenerate
+                    : undefined
+                }
+                hasLaterMessages={
+                  m.role === "user" ? m.id !== lastUserId : undefined
+                }
                 tokensIn={m.tokens_in}
                 tokensOut={m.tokens_out}
                 costUsd={m.cost_usd}

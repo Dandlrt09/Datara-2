@@ -25,19 +25,31 @@ export interface SSEHandlers {
   onError?: (type: string, code: string | null, message: string) => void;
 }
 
+export interface ChatTurnOptions {
+  retry?: boolean;
+  /** Edit this user message: the server truncates it and every later turn. */
+  editMessageId?: number;
+}
+
 export async function streamChat(
   sessionId: string,
   question: string,
   handlers: SSEHandlers,
   signal?: AbortSignal,
-  retry = false
+  options: ChatTurnOptions = {}
 ): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`/api/sessions/${sessionId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, retry }),
+      body: JSON.stringify({
+        question,
+        retry: options.retry ?? false,
+        ...(options.editMessageId != null
+          ? { edit_message_id: options.editMessageId }
+          : {}),
+      }),
       credentials: "include",
       signal,
     });

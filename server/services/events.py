@@ -31,6 +31,7 @@ class SessionEventType(str, Enum):
     DELETED = "DELETED"
     STREAMING_STARTED = "STREAMING_STARTED"
     STREAMING_ENDED = "STREAMING_ENDED"
+    HISTORY_TRUNCATED = "HISTORY_TRUNCATED"
 
 
 @dataclass
@@ -44,7 +45,9 @@ class SessionEvent:
         payload: Event-specific data. For ``TITLED``: ``{"title": ...}``;
             for ``STREAMING_*``: ``{"is_streaming": true|false}``;
             for ``CREATED``/``UPDATED``: ``{"session": {...}}``;
-            for ``DELETED``: ``{}``.
+            for ``DELETED``: ``{}``;
+            for ``HISTORY_TRUNCATED``:
+            ``{"from_message_id": <first deleted message id>}``.
     """
 
     type: SessionEventType

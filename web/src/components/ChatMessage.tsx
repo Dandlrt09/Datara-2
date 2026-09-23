@@ -14,6 +14,17 @@ interface ChatMessageProps {
   tokensIn?: number | null;
   tokensOut?: number | null;
   costUsd?: number | null;
+  /** Server id of this message; required for the user-edit affordance. */
+  messageId?: number;
+  /** Enables the inline "Editar" affordance. The parent passes it ONLY when a
+   * turn can actually start (session present and not streaming). */
+  onEdit?: (messageId: number, newText: string) => void;
+  /** Enables the "Regenerar" affordance for assistant messages. The parent
+   * owns which question is re-run (the last one) and passes this ONLY when a
+   * turn can actually start. It takes no arguments on purpose. */
+  onRegenerate?: () => void;
+  /** True when later user questions exist: editing truncates their turns. */
+  hasLaterMessages?: boolean;
 }
 
 /** Group an integer with Spanish-style dot thousands separators (1234567 →
@@ -150,8 +161,53 @@ export default function ChatMessage({
   tokensIn,
   tokensOut,
   costUsd,
+  messageId,
+  onEdit,
+  onRegenerate,
+  hasLaterMessages,
 }: ChatMessageProps) {
   const isUser = role === "user";
+  // Regenerate is an assistant-only affordance, parent-gated exactly like
+  // onEdit: without onRegenerate (not the last answer, or a turn is already
+  // streaming) nothing renders.
+  const canRegenerate = !isUser && onRegenerate != null;
+  // Inline edit state for user questions. Availability is controlled by the
+  // parent: without onEdit (e.g. while a turn streams) no Edit affordance is
+  // rendered at all.
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+  const canEdit = isUser && onEdit != null && messageId != null;
+  const trimmedDraft = draft.trim();
+  // Saving requires a non-empty question that actually changed.
+  const canSave = trimmedDraft.length > 0 && trimmedDraft !== content.trim();
+
+  const startEditing = () => {
+    setDraft(content);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setDraft(content);
+    setIsEditing(false);
+  };
+
+  const saveEditing = () => {
+    if (onEdit == null || messageId == null || !canSave) return;
+    onEdit(messageId, trimmedDraft);
+    setIsEditing(false);
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditing();
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      // Plain Enter inserts a newline (multi-line questions); Ctrl/Cmd+Enter
+      // submits, mirroring the rename editor's explicit-save pattern.
+      e.preventDefault();
+      saveEditing();
+    }
+  };
   // Usage meta line (assistant turns only): total tokens plus the estimated
   // cost when one was computed. User messages and pre-usage rows (null
   // tokens) render nothing at all. A row WITH tokens but a null cost means
@@ -174,7 +230,8 @@ export default function ChatMessage({
     <div
       style={{
         display: "flex",
-        justifyContent: isUser ? "flex-end" : "flex-start",
+        flexDirection: "column",
+        alignItems: isUser ? "flex-end" : "flex-start",
         marginBottom: spacing.xxl,
       }}
     >
@@ -187,7 +244,92 @@ export default function ChatMessage({
           padding: `${spacing.xl}px ${spacing.xxl}px`,
         }}
       >
-        <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{renderBold(content)}</p>
+        {canEdit && isEditing ? (
+          <div>
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              autoFocus
+              aria-label="Editar pregunta"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                minHeight: 60,
+                padding: spacing.md,
+                background: colors.onAccent,
+                color: colors.textPrimary,
+                border: `1px solid ${colors.borderLight}`,
+                borderRadius: radii.md,
+                fontFamily: "inherit",
+                fontSize: "inherit",
+                resize: "vertical",
+              }}
+            />
+            {hasLaterMessages && (
+              <p
+                style={{
+                  margin: `${spacing.sm}px 0 0`,
+                  color: colors.warningText,
+                  fontSize: typography.fontSize.xs,
+                }}
+              >
+                Se van a eliminar las preguntas y respuestas posteriores a esta.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: spacing.sm, marginTop: spacing.sm }}>
+              <button
+                onClick={saveEditing}
+                disabled={!canSave}
+                style={{
+                  background: colors.surfaceSubtle,
+                  color: colors.textPrimary,
+                  border: `1px solid ${colors.borderLight}`,
+                  borderRadius: radii.sm,
+                  padding: `${spacing.xs}px ${spacing.md}px`,
+                  cursor: canSave ? "pointer" : "default",
+                  fontSize: typography.fontSize.xs,
+                }}
+              >
+                Guardar
+              </button>
+              <button
+                onClick={cancelEditing}
+                style={{
+                  background: colors.surfaceSubtle,
+                  color: colors.textPrimary,
+                  border: `1px solid ${colors.borderLight}`,
+                  borderRadius: radii.sm,
+                  padding: `${spacing.xs}px ${spacing.md}px`,
+                  cursor: "pointer",
+                  fontSize: typography.fontSize.xs,
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{renderBold(content)}</p>
+        )}
+        {canEdit && !isEditing && (
+          <button
+            onClick={startEditing}
+            style={{
+              marginTop: spacing.sm,
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              color: colors.onAccent,
+              opacity: 0.85,
+              fontSize: typography.fontSize.xs,
+              textDecoration: "underline",
+            }}
+          >
+            Editar
+          </button>
+        )}
         {tokenMeta !== null && (
           <p
             style={{
@@ -242,6 +384,27 @@ export default function ChatMessage({
           return null;
         })}
       </div>
+      {/* Regenerate lives BELOW the bubble, outside the styled surface, so the
+          bubble stays pure content. Assistant-only and parent-gated. */}
+      {canRegenerate && (
+        <button
+          onClick={onRegenerate}
+          title="Volver a generar la respuesta"
+          aria-label="Volver a generar la respuesta"
+          style={{
+            marginTop: spacing.sm,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            color: colors.textMuted,
+            fontSize: typography.fontSize.xs,
+            textDecoration: "underline",
+          }}
+        >
+          Regenerar
+        </button>
+      )}
     </div>
   );
 }

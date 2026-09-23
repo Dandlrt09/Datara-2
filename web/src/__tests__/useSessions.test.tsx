@@ -3,6 +3,7 @@ import { render, renderHook, waitFor, act, cleanup } from "@testing-library/reac
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSessions, useCreateSession, useDeleteSession, useRenameSession } from "../queries/useSessions";
 import { useSseStore } from "../stores/useSseStore";
+import { useChatStore } from "../stores/useChatStore";
 import type { ReactNode } from "react";
 import { api } from "../lib/api";
 import AppShell from "../routes/AppShell";
@@ -19,9 +20,16 @@ vi.mock("../lib/api", () => ({
 
 // Mock the SSE hook so we can capture the onEvent callback AppShell passes in
 vi.mock("../lib/useSessionEvents", () => ({
-  useSessionEvents: (opts: { onEvent?: (e: unknown) => void } = {}) => {
+  useSessionEvents: (
+    opts: {
+      onEvent?: (e: unknown) => void;
+      onReconnected?: () => void;
+    } = {},
+  ) => {
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent =
       opts.onEvent;
+    (globalThis as { __capturedOnReconnected?: () => void }).__capturedOnReconnected =
+      opts.onReconnected;
     return { state: "open" };
   },
 }));
@@ -36,13 +44,6 @@ vi.mock("../queries/useAuth", () => ({
     error: null,
   }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
-
-// Mock chat store
-vi.mock("../stores/useChatStore", () => ({
-  useChatStore: () => ({
-    isStreaming: false,
-  }),
 }));
 
 // Mock wizard store  
@@ -246,7 +247,9 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
     (api.get as Mock).mockRejectedValue(new Error("backend restarting"));
     cleanup();
     qc = createTestQueryClient();
+    useChatStore.setState({ historyReset: null, activeSessionId: null });
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent = undefined;
+    (globalThis as { __capturedOnReconnected?: () => void }).__capturedOnReconnected = undefined;
     render(<AppShell />, { wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper> });
   });
 
@@ -254,6 +257,13 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
     const fn = (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent;
     expect(fn).toBeDefined();
     return fn as (e: unknown) => void;
+  }
+
+  function capturedReconnected(): () => void {
+    const fn = (globalThis as { __capturedOnReconnected?: () => void })
+      .__capturedOnReconnected;
+    expect(fn).toBeDefined();
+    return fn as () => void;
   }
 
   it("TITLED (wire vocabulary: uppercase enum name) patches cache title", () => {
@@ -321,5 +331,52 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
     // ...and nothing was fabricated into the cache
     expect(qc.getQueryData(["sessions"])).toBeUndefined();
+  });
+
+  it("HISTORY_TRUNCATED bumps the chat store and leaves the sessions cache untouched", () => {
+    // A truncating edit invalidates the chat pagination chain, not the
+    // sidebar: the event must reach the chat store and `return old` so the
+    // sessions cache is byte-for-byte unchanged.
+    const sessionsBefore = [{ id: "s1", title: "t" }];
+    qc.setQueryData<{ id: string; title: string }[]>(["sessions"], sessionsBefore);
+
+    captured()({
+      type: "HISTORY_TRUNCATED",
+      session_id: "s1",
+      timestamp: 100,
+      payload: { from_message_id: 42 },
+    });
+
+    expect(useChatStore.getState().historyReset).toEqual({
+      sessionId: "s1",
+      nonce: 1,
+    });
+    expect(qc.getQueryData(["sessions"])).toEqual(sessionsBefore);
+  });
+
+  it("onReconnected bumps historyReset for the active session and invalidates sessions", () => {
+    // Race 3: the event bus is best-effort, so a tab whose SSE stream was down
+    // during a truncating edit never saw HISTORY_TRUNCATED. On reconnect the
+    // active session must self-heal by firing the same reset signal.
+    useChatStore.setState({ activeSessionId: "s1", historyReset: null });
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    capturedReconnected()();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
+    expect(useChatStore.getState().historyReset).toEqual({
+      sessionId: "s1",
+      nonce: 1,
+    });
+  });
+
+  it("onReconnected without an active session invalidates but does not bump", () => {
+    useChatStore.setState({ activeSessionId: null, historyReset: null });
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    capturedReconnected()();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sessions"] });
+    expect(useChatStore.getState().historyReset).toBeNull();
   });
 });

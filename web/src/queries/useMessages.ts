@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useChatStore } from "../stores/useChatStore";
 
 export interface Message {
   id: number;
@@ -102,6 +103,7 @@ function bottomWindow(
 }
 
 export function useMessages(sessionId: string | null): UseMessagesResult {
+  const queryClient = useQueryClient();
   const [olderState, setOlderState] = useState<OlderWindowsState | null>(null);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [loadOlderError, setLoadOlderError] = useState<string | null>(null);
@@ -131,6 +133,27 @@ export function useMessages(sessionId: string | null): UseMessagesResult {
     [newestQuery.data, olderWindows],
   );
 
+  // A truncating edit (delete-from + re-ask) invalidates the whole loaded
+  // pagination chain: rows already fetched into olderWindows were deleted
+  // server-side and the re-asked turn gets HIGHER ids, so they cannot be
+  // distinguished locally. On the signal, drop the stale older windows and
+  // refetch ONLY the newest window — never this hook's own `refetch()`, which
+  // would demote the stale snapshot back into olderWindows and re-create the
+  // ghosts. The newest window is the only trustworthy page, and "Cargar
+  // mensajes anteriores" reappears from it. The nonce makes a repeated
+  // truncation for the same session fire again; the sessionId guard ignores
+  // signals for other sessions.
+  const historyReset = useChatStore((s) => s.historyReset);
+  const historyResetNonce = historyReset?.nonce;
+  const historyResetSessionId = historyReset?.sessionId;
+  useEffect(() => {
+    if (!sessionId || historyResetSessionId !== sessionId) return;
+    setOlderState(null);
+    setLoadOlderError(null);
+    void newestQuery.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyResetNonce, historyResetSessionId, sessionId]);
+
   // Keyset heuristic: a bottom window that filled the whole page means older
   // messages MAY exist; a shorter batch means the history ends there. A
   // history whose length is an exact multiple of the page size costs one
@@ -148,10 +171,21 @@ export function useMessages(sessionId: string | null): UseMessagesResult {
     if (!bottom || bottom.length < MESSAGES_PAGE_SIZE) return;
     setIsLoadingOlder(true);
     setLoadOlderError(null);
+    // Read the reset nonce imperatively so this callback gains no render
+    // dependency. If a truncating edit resets the history while this page is
+    // in flight, the batch was fetched with a PRE-truncation cursor and its
+    // rows were deleted server-side — writing it into the freshly-cleared
+    // older windows would resurrect them as ghosts.
+    const resetNonceAtStart = useChatStore.getState().historyReset?.nonce ?? 0;
     try {
       // Keyset cursor: return messages with id < the oldest loaded id.
       const cursor = bottom[bottom.length - 1].id;
       const batch = await fetchWindow(sessionId, cursor);
+      // A reset landed while we were fetching: drop the stale page. The
+      // `finally` below still clears isLoadingOlder.
+      if ((useChatStore.getState().historyReset?.nonce ?? 0) !== resetNonceAtStart) {
+        return;
+      }
       setOlderState((prev) => {
         const windows =
           prev && prev.sessionId === sessionId ? prev.windows : [];
@@ -177,7 +211,18 @@ export function useMessages(sessionId: string | null): UseMessagesResult {
     // vanish (they sit below the fresh window and above the first older
     // window). The merge dedupes the overlap between the demoted and the
     // fresh window, so the history never grows a gap after a refetch.
-    const snapshot = newestQuery.data;
+    //
+    // Read the current window from the query cache imperatively instead of
+    // closing over `newestQuery.data`: callers (ChatView.runTurn) capture this
+    // callback at the start of an in-flight turn and invoke it later on
+    // done/error/abort. A truncating edit in the meantime fires the
+    // history-reset signal, which replaces the newest window in the cache; a
+    // captured snapshot would still hold the PRE-truncation window (deleted
+    // rows included) and demoting it would resurrect them as ghosts. Reading
+    // at call time always demotes the window that is actually current.
+    const snapshot = sessionId
+      ? queryClient.getQueryData<MessageWindow>(["messages", sessionId])
+      : undefined;
     if (sessionId && snapshot && snapshot.length >= MESSAGES_PAGE_SIZE) {
       setOlderState((prev) => {
         const same = prev && prev.sessionId === sessionId ? prev : null;
@@ -192,7 +237,7 @@ export function useMessages(sessionId: string | null): UseMessagesResult {
       });
     }
     await newestQuery.refetch();
-  }, [sessionId, newestQuery.data, newestQuery.refetch]);
+  }, [sessionId, newestQuery.refetch, queryClient]);
 
   return {
     messages,

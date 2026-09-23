@@ -191,4 +191,28 @@ describe("streamChat SSE parser", () => {
     await expect(pending).resolves.toBeUndefined();
     expect(handlers.onError).not.toHaveBeenCalled();
   });
+
+  it("sends edit_message_id only when provided and keeps sending retry", async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(init?.body as string);
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    };
+
+    await streamChat("ses-1", "hola", {}, undefined, { retry: true });
+    expect(JSON.parse(bodies[0])).toEqual({ question: "hola", retry: true });
+
+    await streamChat("ses-1", "editada", {}, undefined, { editMessageId: 7 });
+    expect(JSON.parse(bodies[1])).toEqual({
+      question: "editada",
+      retry: false,
+      edit_message_id: 7,
+    });
+
+    await streamChat("ses-1", "normal", {}, undefined, {});
+    expect(JSON.parse(bodies[2])).toEqual({ question: "normal", retry: false });
+  });
 });

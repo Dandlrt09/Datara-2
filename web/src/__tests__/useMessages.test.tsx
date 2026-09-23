@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useMessages, MESSAGES_PAGE_SIZE } from "../queries/useMessages";
 import type { Message } from "../queries/useMessages";
 import { api } from "../lib/api";
+import { useChatStore } from "../stores/useChatStore";
 
 // NOTE: every expectation below is derived from MESSAGES_PAGE_SIZE so the
 // suite stays valid for any page-size value (e.g. the temporary live-test
@@ -56,6 +57,8 @@ const PS = MESSAGES_PAGE_SIZE;
 describe("useMessages pagination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The chat store is a global Zustand singleton — reset truncation residue.
+    useChatStore.setState({ historyReset: null });
   });
 
   it("exposes the newest window oldest-first; a full batch means hasMore", async () => {
@@ -237,5 +240,176 @@ describe("useMessages pagination", () => {
     await waitFor(() => expect(result.current.messages.length).toBe(3));
     expect(result.current.messages[0].id).toBe(8);
     expect(result.current.messages[2].id).toBe(10);
+  });
+
+  it("a history-reset signal drops stale older windows and refetches only the newest window", async () => {
+    // Newest window: ids PS+1..2*PS. Older window fetched BEFORE the edit:
+    // ids 1..PS. After a truncating edit the server no longer returns those
+    // older rows, so the reset must drop the whole older window and refetch
+    // ONLY the newest page — never demoting the stale snapshot back in.
+    mockedGet
+      .mockResolvedValueOnce(windowOf(2 * PS, PS)) // newest: PS+1..2*PS
+      .mockResolvedValueOnce(windowOf(PS, PS)) // older: 1..PS
+      .mockResolvedValueOnce(windowOf(2 * PS, PS)); // refetched newest
+    const { result } = renderHook(() => useMessages("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+
+    await act(async () => {
+      await result.current.loadOlder();
+    });
+    expect(result.current.messages.length).toBe(2 * PS);
+    expect(result.current.messages.map((m) => m.id)).toContain(1);
+
+    await act(async () => {
+      useChatStore.getState().bumpHistoryReset("ses-1");
+    });
+
+    // The stale older row is gone and only the newest window remains.
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+    expect(result.current.messages.map((m) => m.id)).not.toContain(1);
+    // The refetch hit the newest window only (no before cursor).
+    expect(mockedGet).toHaveBeenLastCalledWith(
+      `/api/sessions/ses-1/messages?limit=${PS}`,
+    );
+  });
+
+  it("ignores a history-reset signal for a different session", async () => {
+    mockedGet
+      .mockResolvedValueOnce(windowOf(2 * PS, PS))
+      .mockResolvedValueOnce(windowOf(PS, PS));
+    const { result } = renderHook(() => useMessages("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+
+    await act(async () => {
+      await result.current.loadOlder();
+    });
+    expect(result.current.messages.length).toBe(2 * PS);
+    const callsBefore = mockedGet.mock.calls.length;
+
+    await act(async () => {
+      useChatStore.getState().bumpHistoryReset("ses-other");
+    });
+
+    // Cross-session signal: the loaded history is untouched and no refetch
+    // was issued.
+    expect(result.current.messages.length).toBe(2 * PS);
+    expect(mockedGet.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("a stale refetch captured before a reset cannot resurrect deleted rows", async () => {
+    // Race 1: ChatView.runTurn captures `refetch` at the start of a turn and
+    // calls it later on done/error/abort. A truncating edit meanwhile fires
+    // the history-reset signal. The captured callback must read the CURRENT
+    // window from the query cache — not its own render-time snapshot — or it
+    // demotes the PRE-truncation window (deleted rows included) back into
+    // olderWindows and renders ghosts.
+    //
+    // Pre-edit: newest ids 2PS+1..3PS, older ids PS+1..2PS. The edit deletes
+    // ids PS+1..3PS and re-asks, so the surviving history is ids 1..PS plus
+    // two new rows (3PS+1, 3PS+2). Post-reset newest = 3PS+2, 3PS+1, PS..3.
+    const postReset = [
+      msg(3 * PS + 2),
+      msg(3 * PS + 1),
+      ...windowOf(PS, PS - 2), // ids PS..3
+    ];
+    // A valid later append (3PS+3, 3PS+4) slides ids 3 and 4 out of the
+    // newest window; the demoted current window must rescue them.
+    const slid = [
+      msg(3 * PS + 4),
+      msg(3 * PS + 3),
+      msg(3 * PS + 2),
+      msg(3 * PS + 1),
+      ...windowOf(PS, PS - 4), // ids PS..5
+    ];
+    mockedGet
+      .mockResolvedValueOnce(windowOf(3 * PS, PS)) // pre-edit newest
+      .mockResolvedValueOnce(windowOf(2 * PS, PS)) // older: PS+1..2PS
+      .mockResolvedValueOnce(postReset) // reset refetch
+      .mockResolvedValueOnce(slid); // stale callback's refetch
+
+    const { result } = renderHook(() => useMessages("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+    await act(async () => {
+      await result.current.loadOlder();
+    });
+    expect(result.current.messages.length).toBe(2 * PS);
+    expect(result.current.messages.map((m) => m.id)).toContain(PS + 1);
+
+    // Capture the callback from THIS render, before the reset — exactly what
+    // an in-flight turn holds.
+    const staleRefetch = result.current.refetch;
+
+    await act(async () => {
+      useChatStore.getState().bumpHistoryReset("ses-1");
+    });
+    // Let the reset settle: stale older rows gone, newest window replaced.
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+    expect(result.current.messages.map((m) => m.id)).not.toContain(PS + 1);
+
+    await act(async () => {
+      await staleRefetch();
+    });
+
+    const ids = result.current.messages.map((m) => m.id);
+    // The deleted rows never come back.
+    expect(ids).not.toContain(PS + 1);
+    expect(ids).not.toContain(2 * PS);
+    expect(ids).not.toContain(2 * PS + 1);
+    expect(ids).not.toContain(3 * PS);
+    // No-regression: the current window was demoted, so history that slid out
+    // of the refetched window (ids 3 and 4) is preserved, never lost.
+    expect(ids).toContain(3);
+    expect(ids).toContain(4);
+    expect(result.current.messages[0].id).toBe(3);
+    expect(result.current.messages.length).toBe(PS + 2);
+    expect(uniqueIds(result.current.messages)).toBe(PS + 2);
+  });
+
+  it("a loadOlder page that resolves after a reset is not written into the cleared state", async () => {
+    // Race 2: loadOlder fetches a page keyed by a pre-truncation cursor. If a
+    // truncating edit resets the history while the fetch is in flight, the
+    // page must be dropped (the nonce check) instead of resurrecting rows.
+    let resolveOlder!: (v: Message[]) => void;
+    const olderPage = new Promise<Message[]>((res) => {
+      resolveOlder = res;
+    });
+    mockedGet
+      .mockResolvedValueOnce(windowOf(2 * PS, PS)) // call1: initial newest
+      .mockImplementationOnce(() => olderPage) // call2: loadOlder (pending)
+      .mockResolvedValueOnce(windowOf(2 * PS, PS)); // call3: reset refetch
+
+    const { result } = renderHook(() => useMessages("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.messages.length).toBe(PS));
+
+    let loadPromise!: Promise<void>;
+    await act(async () => {
+      loadPromise = result.current.loadOlder();
+    });
+    await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(2));
+    expect(result.current.isLoadingOlder).toBe(true);
+
+    // Truncating edit lands while the older page is still in flight.
+    await act(async () => {
+      useChatStore.getState().bumpHistoryReset("ses-1");
+    });
+    await waitFor(() => expect(mockedGet).toHaveBeenCalledTimes(3));
+
+    // The pre-truncation page finally resolves.
+    await act(async () => {
+      resolveOlder(windowOf(PS, PS)); // stale ids 1..PS
+      await loadPromise;
+    });
+
+    expect(result.current.isLoadingOlder).toBe(false);
+    expect(result.current.messages.length).toBe(PS);
+    expect(result.current.messages.map((m) => m.id)).not.toContain(1);
   });
 });

@@ -115,6 +115,11 @@ export default function AppShell() {
             return old.map((s) =>
               s.id === event.session_id ? { ...s, is_streaming: false } : s,
             );
+          case "HISTORY_TRUNCATED":
+            // A truncated edit invalidates the loaded pagination chain for the
+            // session; the sidebar itself is unaffected (return old).
+            useChatStore.getState().bumpHistoryReset(event.session_id);
+            return old;
           default:
             return old;
         }
@@ -125,6 +130,17 @@ export default function AppShell() {
 
   const onReconnected = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    // The event bus is best-effort (drop-on-full, non-persistent): a tab whose
+    // SSE stream was down during a truncating edit never received
+    // HISTORY_TRUNCATED and would keep rendering the deleted rows. Re-derive
+    // the active session's loaded windows from the authoritative newest page
+    // by firing the same reset signal; `useMessages` drops its stale older
+    // windows and refetches the newest one. Read the active id imperatively so
+    // this callback gains no render dependency.
+    const active = useChatStore.getState().activeSessionId;
+    if (active) {
+      useChatStore.getState().bumpHistoryReset(active);
+    }
   }, [queryClient]);
 
   useSessionEvents({ onEvent, onReconnected });

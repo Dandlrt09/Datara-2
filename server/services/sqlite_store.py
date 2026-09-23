@@ -367,6 +367,26 @@ class SqliteStore:
             )
         return [dict(r) for r in rows]
 
+    async def delete_messages_from(
+        self,
+        user_id: int,
+        chat_session: str,
+        from_id: int,
+    ) -> int:
+        """Delete *from_id* and every later message in the session.
+
+        Truncation for the edit flow: messages are ordered by id and a corrected
+        question invalidates every answer that followed it. Returns the number of
+        deleted rows.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM messages "
+            "WHERE user_id = ? AND chat_session = ? AND id >= ?",
+            (user_id, chat_session, from_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
     async def get_message(
         self,
         message_id: int,

@@ -92,6 +92,10 @@ class ChatRequest(BaseModel):
     # Retry re-runs the last failed turn: the question is NOT re-persisted
     # (it is already in history) and failed turns persist nothing.
     retry: bool = False
+    # Edit question (truncate): delete this user message and every later turn,
+    # then ask the edited question as a normal turn. A corrected question
+    # invalidates every answer computed from the previous one.
+    edit_message_id: int | None = None
 
 
 class MessageResponse(BaseModel):
@@ -418,6 +422,73 @@ async def chat_stream(
                 "message": f"El modelo '{model}' no está permitido. Modelos permitidos: {allowed_list}."
             }
         )
+
+    # Edit question (truncate): replacing a user message invalidates that turn
+    # and every later turn, so delete them all and then persist the edited
+    # question exactly like a normal turn below.
+    if body.edit_message_id is not None:
+        if body.retry:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_request",
+                    "message": (
+                        "No se puede editar una pregunta y reintentar el mismo "
+                        "turno a la vez."
+                    ),
+                },
+            )
+        # Ownership is enforced in get_message; a foreign session id is
+        # indistinguishable from a missing message (no existence leak).
+        target = await store.get_message(body.edit_message_id, user_id)
+        if target is None or target["chat_session"] != session_id:
+            raise HTTPException(status_code=404, detail="Message not found")
+        if target["role"] != "user":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_edit_target",
+                    "message": "Solo se puede editar una pregunta tuya.",
+                },
+            )
+        await store.delete_messages_from(user_id, session_id, body.edit_message_id)
+        # A truncated history invalidates the clients' pagination chain: the
+        # deleted rows are gone and the re-asked turn gets HIGHER ids, so a
+        # client cannot tell its stale windows from live ones locally. Every
+        # tab of this user must drop its loaded windows. Persist-then-emit: the
+        # truncation is committed before this event; the payload names the
+        # first deleted id.
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.HISTORY_TRUNCATED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={"from_message_id": body.edit_message_id},
+                ),
+            )
+        # Keep the sidebar honest when the corrected question is the one that
+        # named the chat. Retitle ONLY when the current title provably equals
+        # the auto-title derived from the replaced question — a manual rename
+        # can never match and is never clobbered.
+        current_title = (session.get("title") or "").strip()
+        if current_title and current_title == target["content_text"].strip()[:48]:
+            new_title = body.question.strip()[:48] or "New chat"
+            await store.update_chat_session_title(session_id, user_id, new_title)
+            # Publish TITLED after the title write completes [R7].
+            bus = _event_bus_module.bus
+            if bus is not None:
+                bus.publish(
+                    user_id,
+                    SessionEvent(
+                        type=SessionEventType.TITLED,
+                        session_id=session_id,
+                        timestamp=time.time(),
+                        payload={"title": new_title},
+                    ),
+                )
 
     # Step 2: Persist user message (skipped on retry — the failed turn's
     # question is already in history; re-persisting would duplicate it)

@@ -12,6 +12,10 @@ interface ChatState {
   ) => void;
   isStreaming: boolean;
   setStreaming: (v: boolean) => void;
+  /** Set when a history truncation (edit) invalidates the loaded pagination
+   * chain for a session; `useMessages` reacts by dropping its older windows. */
+  historyReset: { sessionId: string; nonce: number } | null;
+  bumpHistoryReset: (sessionId: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -25,4 +29,12 @@ export const useChatStore = create<ChatState>((set) => ({
   setPendingArtifacts: (artifacts) => set({ pendingArtifacts: artifacts }),
   isStreaming: false,
   setStreaming: (v) => set({ isStreaming: v }),
+  historyReset: null,
+  bumpHistoryReset: (sessionId) =>
+    set((s) => ({
+      historyReset: {
+        sessionId,
+        nonce: (s.historyReset?.nonce ?? 0) + 1,
+      },
+    })),
 }));
