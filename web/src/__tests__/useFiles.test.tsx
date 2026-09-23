@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useUploadFile } from "../queries/useFiles";
+import { useUploadFile, UploadError } from "../queries/useFiles";
 
 function makeWrapper() {
   const qc = new QueryClient({
@@ -61,5 +61,63 @@ describe("useUploadFile", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.signal).toBeUndefined();
+  });
+
+  it("rejects with an UploadError carrying the status and server detail", async () => {
+    const detail =
+      "A file named 'a.csv' already exists in this session. Delete it first.";
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useUploadFile(), {
+      wrapper: makeWrapper(),
+    });
+
+    let caught: unknown;
+    try {
+      await result.current.mutateAsync({
+        sessionId: "ses-1",
+        file: new File(["x"], "a.csv"),
+      });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(UploadError);
+    expect((caught as UploadError).status).toBe(409);
+    expect((caught as UploadError).message).toBe(detail);
+  });
+
+  it("falls back to the status message when the error body is not JSON", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON");
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useUploadFile(), {
+      wrapper: makeWrapper(),
+    });
+
+    let caught: unknown;
+    try {
+      await result.current.mutateAsync({
+        sessionId: "ses-1",
+        file: new File(["x"], "a.csv"),
+      });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(UploadError);
+    expect((caught as UploadError).status).toBe(400);
+    expect((caught as UploadError).message).toBe("Upload failed: 400");
   });
 });

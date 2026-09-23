@@ -2,12 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { useSessions, useCreateSession, useDeleteSession, useRenameSession } from "../queries/useSessions";
 import { useMessages } from "../queries/useMessages";
+import { useUploadFile, UploadError } from "../queries/useFiles";
 import { useChatStore } from "../stores/useChatStore";
 import { useWizardStore } from "../stores/useWizardStore";
 import { streamChat } from "../lib/sse";
 import { isKnownErrorCode, resolveErrorPresentation } from "../lib/errorCodes";
 import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
+
+// Composer attach control: mirrors the server's accepted formats
+// (server/api/routers/files.py ``_SUPPORTED_EXTENSIONS``). ``.tab`` is NOT
+// accepted here because the server rejects it.
+const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".tsv", ".xlsx", ".json"];
 
 export default function ChatView() {
   const { sessionId } = useParams();
@@ -47,6 +53,20 @@ export default function ChatView() {
   const abortRef = useRef<AbortController | null>(null);
   // Last question sent in this session — the Retry button re-runs it.
   const lastQuestionRef = useRef("");
+  // Set when THIS tab's own turn settles (terminal event or abort). The
+  // cross-tab stream-end effect consumes it so this tab never refetches twice
+  // for a turn it already resynced in onDone/onError/finally.
+  const ownTurnSettledRef = useRef(false);
+  // Composer attach control: in-flight upload + its abort handle + its copy.
+  const uploadFileMut = useUploadFile();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  // Distinguishes the user pressing "Cancelar" from the abort fired on
+  // session change/unmount: only the former may report "Carga cancelada.",
+  // otherwise that copy would leak into the session the user just opened.
+  const uploadCanceledByUserRef = useRef(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
@@ -65,6 +85,10 @@ export default function ChatView() {
   useEffect(() => {
     store.setActiveSessionId(sessionId ?? null);
     setChatError(null);
+    // An attach failure/notice belongs to the session it happened in — never
+    // leak it into the next chat.
+    setAttachError(null);
+    setAttachNotice(null);
   }, [sessionId]);
 
   // Consume suggested question from location.state (one-shot)
@@ -170,6 +194,7 @@ export default function ChatView() {
               store.setPendingArtifacts({ figures, tables, texts }),
             onDone: () => {
               turnSettled = true;
+              ownTurnSettledRef.current = true;
               store.setStreaming(false);
               // The turn's message is persisted server-side; drop the live
               // streaming state so the refetched list is the single source of
@@ -185,6 +210,7 @@ export default function ChatView() {
               // persist nothing server-side, so the history keeps just the
               // question and the Retry button re-runs it.
               turnSettled = true;
+              ownTurnSettledRef.current = true;
               store.setStreaming(false);
               store.clearStreamingText();
               store.setPendingArtifacts(null);
@@ -206,6 +232,9 @@ export default function ChatView() {
       } finally {
         store.setStreaming(false);
         abortRef.current = null;
+        // Any way this tab's own turn ends marks the settle so the cross-tab
+        // effect does not double-fetch when the sessions cache flips to false.
+        ownTurnSettledRef.current = true;
         if (!turnSettled) {
           // Aborted or silently-ended stream: the server only persisted the
           // question (before the stream started), so resync the history and
@@ -233,6 +262,57 @@ export default function ChatView() {
     abortRef.current?.abort();
   }, []);
 
+  const handleAttachFile = useCallback(
+    async (file: File) => {
+      if (!sessionId || store.isStreaming || uploadFileMut.isPending) return;
+
+      const trimmedName = file.name.trim();
+      const dot = trimmedName.lastIndexOf(".");
+      const ext = dot >= 0 ? trimmedName.slice(dot).toLowerCase() : "";
+      if (!ACCEPTED_UPLOAD_EXTENSIONS.includes(ext)) {
+        // No extension must not print an empty parenthesis.
+        const shownExt = ext || "sin extensión";
+        setAttachError(
+          `Formato no soportado (${shownExt}). Usá CSV, TSV, XLSX o JSON.`,
+        );
+        return;
+      }
+
+      setAttachError(null);
+      setAttachNotice(null);
+      uploadCanceledByUserRef.current = false;
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
+      try {
+        await uploadFileMut.mutateAsync({
+          sessionId,
+          file,
+          signal: controller.signal,
+        });
+        setAttachNotice(`${file.name} adjuntado a esta sesión.`);
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError") {
+          // Silent when the abort came from leaving the session: the new
+          // session must not inherit a message about the previous upload.
+          if (uploadCanceledByUserRef.current) setAttachError("Carga cancelada.");
+        } else if (e instanceof UploadError && e.status === 409) {
+          setAttachError(
+            "Ya hay un archivo con ese nombre en esta sesión. Borralo antes de volver a subirlo.",
+          );
+        } else if (e instanceof UploadError && e.status === 400) {
+          setAttachError(
+            "No se pudo leer el archivo. Verificá el formato y el contenido.",
+          );
+        } else {
+          setAttachError("No se pudo adjuntar el archivo. Reintentá.");
+        }
+      } finally {
+        uploadAbortRef.current = null;
+      }
+    },
+    [sessionId, store.isStreaming, uploadFileMut],
+  );
+
   const handleLoadOlder = useCallback(() => {
     const el = scrollRef.current;
     if (el) {
@@ -255,15 +335,53 @@ export default function ChatView() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      // An upload must not outlive the session view either.
+      uploadAbortRef.current?.abort();
     };
   }, [sessionId]);
 
+  // Cross-tab streaming state for the OPEN session, derived from the sessions
+  // cache that also drives the sidebar dot. Unknown/not-found degrades to
+  // false so the Retry formula below keeps today's behavior exactly.
+  const openSession = sessions?.find((s) => s.id === sessionId);
+  const openSessionIsStreaming = openSession?.is_streaming === true;
+
+  // When the open session's cross-tab stream ends, pull the assistant answer
+  // into this observing tab. The previous-value ref is seeded with the CURRENT
+  // value so mounting while is_streaming is already true never fires a fetch.
+  const prevOpenStreamingRef = useRef(openSessionIsStreaming);
+  useEffect(() => {
+    const wasStreaming = prevOpenStreamingRef.current;
+    prevOpenStreamingRef.current = openSessionIsStreaming;
+    if (!wasStreaming && openSessionIsStreaming) {
+      // A new stream began; a previous own-turn settle no longer applies.
+      ownTurnSettledRef.current = false;
+      return;
+    }
+    if (wasStreaming && !openSessionIsStreaming) {
+      // The tab that ran the turn already resynced in onDone/onError/finally.
+      if (ownTurnSettledRef.current) {
+        ownTurnSettledRef.current = false;
+        return;
+      }
+      // useMessages.refetch() demotes the previous newest window before
+      // refetching, so the sliding window cannot drop history (a bare
+      // invalidate would bypass that and leave a gap in long sessions).
+      void refetchMessages();
+    }
+  }, [openSessionIsStreaming, refetchMessages]);
+
   // A trailing user message (no assistant reply after it) is a persisted
   // failed/aborted turn — keep the Retry affordance available across
-  // navigation and reloads instead of tying it to ephemeral error state.
+  // navigation and reloads instead of tying it to ephemeral error state. A
+  // cross-tab stream in flight suppresses it: the turn is alive elsewhere, so
+  // offering Retry would contradict the sidebar dot for the same session.
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
   const retryAvailable =
-    !!sessionId && !store.isStreaming && lastMessage?.role === "user";
+    !!sessionId &&
+    !store.isStreaming &&
+    !openSessionIsStreaming &&
+    lastMessage?.role === "user";
 
   const handleRetryTurn = useCallback(() => {
     // Prefer the persisted history: the failed turn's question survives
@@ -564,6 +682,31 @@ export default function ChatView() {
             </button>
           </div>
         )}
+        {(uploadFileMut.isPending || attachError || attachNotice) && (
+          <div style={{ marginBottom: 8 }}>
+            {uploadFileMut.isPending ? (
+              <div role="status" style={{ color: "#555" }}>
+                <span style={{ marginRight: 8 }}>Subiendo archivo…</span>
+                <button
+                  onClick={() => {
+                    uploadCanceledByUserRef.current = true;
+                    uploadAbortRef.current?.abort();
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            ) : attachError ? (
+              <p role="alert" style={{ color: "#c62828", margin: 0 }}>
+                {attachError}
+              </p>
+            ) : (
+              <p role="status" style={{ color: "#2e7d32", margin: 0 }}>
+                {attachNotice}
+              </p>
+            )}
+          </div>
+        )}
         <div
           style={{
             borderTop: "1px solid #ddd",
@@ -572,6 +715,36 @@ export default function ChatView() {
             gap: 8,
           }}
         >
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept=".csv,.tsv,.xlsx,.json"
+            aria-label="Adjuntar archivo"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Reset so re-selecting the same file fires `change` again.
+              e.target.value = "";
+              if (file) void handleAttachFile(file);
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Adjuntar archivo"
+            onClick={() => {
+              setAttachError(null);
+              fileInputRef.current?.click();
+            }}
+            disabled={!sessionId || store.isStreaming || uploadFileMut.isPending}
+            title={
+              !sessionId
+                ? "Creá o seleccioná una sesión para adjuntar archivos"
+                : "Adjuntar archivo (CSV, TSV, XLSX o JSON)"
+            }
+            style={{ padding: "8px 12px" }}
+          >
+            {uploadFileMut.isPending ? "…" : "Adjuntar"}
+          </button>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}

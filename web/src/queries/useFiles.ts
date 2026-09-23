@@ -16,6 +16,16 @@ export interface FileListItem extends UploadedFile {
   session_title: string | null;
 }
 
+/** Upload failure that keeps the HTTP status available to callers. */
+export class UploadError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "UploadError";
+    this.status = status;
+  }
+}
+
 interface ProfileSummary {
   schema: { columns: string[] };
   stats: Record<string, unknown>;
@@ -58,7 +68,22 @@ export function useUploadFile() {
         body: form,
         signal,
       });
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      if (!res.ok) {
+        // The server sends ``{"detail": ...}`` for domain errors (409
+        // duplicate name, 400 parse failure). Surface that detail so callers
+        // can map it; a non-JSON body must never throw here, so parsing is
+        // best-effort and falls back to the status message.
+        let detail: string | undefined;
+        try {
+          const body = (await res.json()) as { detail?: unknown };
+          if (typeof body?.detail === "string" && body.detail.trim()) {
+            detail = body.detail;
+          }
+        } catch {
+          // Non-JSON error body — fall back to the status message.
+        }
+        throw new UploadError(res.status, detail || `Upload failed: ${res.status}`);
+      }
       return res.json() as Promise<UploadedFile & { profile_summary: ProfileSummary }>;
     },
     onSuccess: () =>

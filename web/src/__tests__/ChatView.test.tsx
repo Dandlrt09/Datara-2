@@ -118,6 +118,25 @@ vi.mock("../queries/useMessages", () => ({
   useMessages: () => useMessagesMock(),
 }));
 
+// ChatView's attach control uses useUploadFile + UploadError. The mock class
+// keeps `instanceof UploadError` working inside the component.
+const { useUploadFileMock, UploadErrorMock } = vi.hoisted(() => {
+  class UploadErrorMock extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "UploadError";
+      this.status = status;
+    }
+  }
+  return { useUploadFileMock: vi.fn(), UploadErrorMock };
+});
+
+vi.mock("../queries/useFiles", () => ({
+  useUploadFile: () => useUploadFileMock(),
+  UploadError: UploadErrorMock,
+}));
+
 vi.mock("../lib/sse", () => ({
   streamChat: vi.fn(),
 }));
@@ -152,6 +171,10 @@ describe("ChatView component", () => {
     });
     useDeleteSessionMock.mockReturnValue({ mutate: vi.fn() });
     useRenameSessionMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    useUploadFileMock.mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({ id: 1, filename: "a.csv" }),
+      isPending: false,
+    });
     
     // Wizard store mock
     useWizardStoreMock.mockReturnValue({
@@ -378,6 +401,64 @@ describe("ChatView component", () => {
       screen.getByText("El último turno quedó sin respuesta."),
     ).toBeTruthy();
     expect(screen.getByText("Retry")).toBeTruthy();
+  });
+
+  it("suppresses Retry from persisted history while the open session is streaming elsewhere", () => {
+    // Cross-tab false positive: another tab owns the live turn, so this tab
+    // sees a persisted trailing user message with local isStreaming false.
+    // The sidebar dot says streaming — no Retry banner may contradict it.
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: true }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta huérfana" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(
+      screen.queryByText("El último turno quedó sin respuesta."),
+    ).toBeNull();
+    expect(screen.queryByText("Retry")).toBeNull();
+  });
+
+  it("refetches messages on the open session's cross-tab streaming true -> false transition", async () => {
+    const refetchMessages = vi.fn();
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({ refetch: refetchMessages }),
+    );
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: true }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    // Mounting while already streaming must NOT fire a spurious refetch.
+    expect(refetchMessages).not.toHaveBeenCalled();
+
+    // The other tab's turn ends: AppShell patches the sessions cache to false.
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: false }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    await act(async () => {
+      view.rerender(<ChatView />);
+    });
+
+    await waitFor(() => expect(refetchMessages).toHaveBeenCalledTimes(1));
   });
 
   it("empty state shows 'Start first-run wizard' button when no session is selected", () => {
@@ -718,5 +799,199 @@ describe("ChatView component", () => {
 
     expect((screen.getByText("Guardar") as HTMLButtonElement).disabled).toBe(true);
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  // ── Composer attach control ────────────────────────────────────────────────
+
+  function fileInput(container: HTMLElement): HTMLInputElement {
+    const input = container.querySelector('input[type="file"]');
+    expect(input).toBeTruthy();
+    return input as HTMLInputElement;
+  }
+
+  it("renders the attach control and disables it when there is no session", () => {
+    renderWithProviders(<ChatView />, { route: "/app/chat" });
+    const btn = screen.getByRole("button", {
+      name: "Adjuntar archivo",
+    }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("attaching a supported file uploads it to the session and shows the notice", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValue({ id: 1, filename: "datos.csv" });
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    const file = new File(["a,b\n1,2\n"], "datos.csv", { type: "text/csv" });
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "ses-1", file }),
+      );
+    });
+    expect(
+      await screen.findByText("datos.csv adjuntado a esta sesión."),
+    ).toBeTruthy();
+  });
+
+  it("rejects an unsupported extension without uploading", async () => {
+    const mutateAsync = vi.fn();
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [new File(["x"], "notes.txt")] },
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Formato no soportado (.txt).");
+    expect(alert.textContent).toContain("Usá CSV, TSV, XLSX o JSON.");
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("maps a 409 upload failure to the Spanish duplicate-name message", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockRejectedValue(
+        new UploadErrorMock(
+          409,
+          "A file named 'datos.csv' already exists in this session. Delete it first.",
+        ),
+      );
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [new File(["x"], "datos.csv")] },
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Ya hay un archivo con ese nombre");
+    expect(alert.textContent).toContain("Borralo antes de volver a subirlo.");
+    expect(alert.textContent).not.toContain("already exists");
+  });
+
+  it("maps a 400 upload failure to the Spanish unreadable-file message", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockRejectedValue(
+        new UploadErrorMock(400, "Failed to parse file: boom"),
+      );
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [new File(["x"], "datos.csv")] },
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "No se pudo leer el archivo. Verificá el formato y el contenido.",
+    );
+    expect(alert.textContent).not.toContain("Failed to parse file");
+  });
+
+  it("shows 'sin extensión' for a file with no extension", async () => {
+    const mutateAsync = vi.fn();
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [new File(["x"], "README")] },
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Formato no soportado (sin extensión).");
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("pressing Cancelar aborts the upload and shows the cancelled message", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const mutateAsync = vi.fn(
+      ({ signal }: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          capturedSignal = signal;
+          signal?.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }),
+    );
+    // isPending is true only while the upload is in flight, matching the hook.
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+
+    const view = renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.change(fileInput(view.container), {
+      target: { files: [new File(["x"], "datos.csv")] },
+    });
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+
+    // Reflect the in-flight state so the Cancelar control appears.
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: true });
+    await act(async () => {
+      view.rerender(<ChatView />);
+    });
+
+    fireEvent.click(screen.getByText("Cancelar"));
+    // The composer aborted the very signal it handed to the mutation.
+    expect(capturedSignal?.aborted).toBe(true);
+
+    // Upload settled: back to idle so the error branch can render.
+    useUploadFileMock.mockReturnValue({ mutateAsync, isPending: false });
+    await act(async () => {
+      view.rerender(<ChatView />);
+    });
+
+    expect(await screen.findByText("Carga cancelada.")).toBeTruthy();
+  });
+
+  it("renders the sidebar streaming dot for a session with is_streaming true", () => {
+    useSessionsMock.mockReturnValue({
+      data: [
+        { id: "ses-1", title: "Chat 1", is_streaming: true },
+        { id: "ses-2", title: "Chat 2", is_streaming: false },
+      ],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    const view = renderWithProviders(<ChatView />, { route: "/app/chat" });
+
+    // Only the streaming session shows the pulsing dot.
+    const dots = view.container.querySelectorAll(
+      '[title="Streaming in progress"]',
+    );
+    expect(dots.length).toBe(1);
   });
 });
