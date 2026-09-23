@@ -11,7 +11,7 @@ from server.api import event_bus as api_event_bus
 from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.api.routers.sessions import router as sessions_router
-from server.services.events import EventBus, SessionEventType
+from server.services.events import EventBus, SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
@@ -223,5 +223,57 @@ class TestRenameSession:
             assert event.type is SessionEventType.TITLED
             assert event.session_id == session_id
             assert event.payload == {"title": "Nuevo nombre"}
+        finally:
+            api_event_bus.bus = None
+
+
+class TestListSessionsIsStreaming:
+    """``GET /api/sessions`` exposes the bus's streaming registry."""
+
+    def test_list_marks_only_the_streaming_session(self, client):
+        reg = client.post(
+            "/api/auth/register",
+            json={"email": "dave@example.com", "password": "password123"},
+        )
+        assert reg.status_code == 200
+        cookie = reg.headers["set-cookie"]
+        user_id = reg.json()["id"]
+
+        first = client.post(
+            "/api/sessions", json={"title": "First"}, headers={"Cookie": cookie}
+        ).json()["id"]
+        second = client.post(
+            "/api/sessions", json={"title": "Second"}, headers={"Cookie": cookie}
+        ).json()["id"]
+
+        api_event_bus.bus = EventBus()
+        try:
+            # No subscribers: state must still be tracked from published events.
+            api_event_bus.bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.STREAMING_STARTED,
+                    session_id=first,
+                    timestamp=0,
+                ),
+            )
+
+            resp = client.get("/api/sessions", headers={"Cookie": cookie})
+            assert resp.status_code == 200
+            by_id = {s["id"]: s["is_streaming"] for s in resp.json()}
+            assert by_id[first] is True
+            assert by_id[second] is False
+
+            api_event_bus.bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.STREAMING_ENDED,
+                    session_id=first,
+                    timestamp=0,
+                ),
+            )
+            resp = client.get("/api/sessions", headers={"Cookie": cookie})
+            by_id = {s["id"]: s["is_streaming"] for s in resp.json()}
+            assert by_id[first] is False
         finally:
             api_event_bus.bus = None

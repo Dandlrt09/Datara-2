@@ -260,6 +260,67 @@ class TestPerUserFanOut:
         assert [e.timestamp for e in received] == [1, 2, 3]
 
 
+class TestStreamingRegistry:
+    """``EventBus`` tracks streaming state from STREAMING_* events."""
+
+    @staticmethod
+    def _event(type_: SessionEventType, session_id: str) -> SessionEvent:
+        return SessionEvent(type=type_, session_id=session_id, timestamp=0)
+
+    def test_started_then_ended_toggles_state(self, bus):
+        assert bus.is_streaming(1, "ses_a") is False
+        bus.publish(
+            1,
+            self._event(SessionEventType.STREAMING_STARTED, "ses_a"),
+        )
+        assert bus.is_streaming(1, "ses_a") is True
+        bus.publish(
+            1,
+            self._event(SessionEventType.STREAMING_ENDED, "ses_a"),
+        )
+        assert bus.is_streaming(1, "ses_a") is False
+
+    def test_tracked_with_zero_subscribers(self, bus):
+        # A dropped/reconnecting SSE connection must not lose the state:
+        # tracking happens regardless of whether anyone is subscribed.
+        assert bus.subscriber_count == 0
+        delivered = bus.publish(
+            1,
+            self._event(SessionEventType.STREAMING_STARTED, "ses_a"),
+        )
+        assert delivered == 0
+        assert bus.is_streaming(1, "ses_a") is True
+
+    def test_state_isolated_per_user_and_session(self, bus):
+        bus.publish(
+            1,
+            self._event(SessionEventType.STREAMING_STARTED, "ses_a"),
+        )
+        # Another session for the same user stays false.
+        assert bus.is_streaming(1, "ses_b") is False
+        # Another user for the same session id stays false.
+        assert bus.is_streaming(2, "ses_a") is False
+        assert bus.is_streaming(1, "ses_a") is True
+
+    def test_non_streaming_event_types_do_not_change_state(self, bus):
+        bus.publish(1, self._event(SessionEventType.TITLED, "ses_a"))
+        bus.publish(1, self._event(SessionEventType.CREATED, "ses_a"))
+        bus.publish(1, self._event(SessionEventType.UPDATED, "ses_a"))
+        bus.publish(1, self._event(SessionEventType.DELETED, "ses_a"))
+        assert bus.is_streaming(1, "ses_a") is False
+
+    async def test_publish_still_returns_delivered_count(self, bus):
+        q = await bus.subscribe(1)
+        delivered = bus.publish(
+            1,
+            self._event(SessionEventType.STREAMING_STARTED, "ses_a"),
+        )
+        assert delivered == 1
+        received = await asyncio.wait_for(q.get(), timeout=1)
+        assert received.type is SessionEventType.STREAMING_STARTED
+        assert bus.is_streaming(1, "ses_a") is True
+
+
 class TestSessionEvent:
     """SessionEvent dataclass basics."""
 

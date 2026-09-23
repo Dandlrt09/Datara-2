@@ -40,6 +40,7 @@ class SessionResponse(BaseModel):
     title: str
     created_at: str
     updated_at: str
+    is_streaming: bool = False
 
 
 @router.get("", response_model=list[SessionResponse])
@@ -49,12 +50,19 @@ async def list_sessions(
 ):
     """List all chat sessions for the current user, newest first."""
     sessions = await store.list_chat_sessions(user["id"])
+    # ``is_streaming`` is derived from the bus's in-flight registry so a
+    # reload/reconnect restores the cross-tab streaming dot from the initial
+    # list, not only from live SSE events.
+    bus = _event_bus_module.bus
     return [
         SessionResponse(
             id=s["id"],
             title=s["title"],
             created_at=s["created_at"],
             updated_at=s["updated_at"],
+            is_streaming=(
+                bus.is_streaming(user["id"], s["id"]) if bus is not None else False
+            ),
         )
         for s in sessions
     ]

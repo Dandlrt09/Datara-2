@@ -77,6 +77,15 @@ class EventBus:
         )
         # monotonic drop counter for observability
         self._drop_count: int = 0
+        # (user_id, session_id) pairs with an in-flight stream. Derived from
+        # the same STREAMING_STARTED/STREAMING_ENDED events the frontend
+        # consumes, so the bus and the UI share one source of truth. It is
+        # process-local: a stream cannot outlive the server process. The
+        # guarantee that no ``true`` can get stuck rests on the chat router
+        # publishing STREAMING_ENDED exactly once on every exit — including
+        # generator abandonment via ``aclose()`` (``GeneratorExit``) — through
+        # an at-most-once guard in the stream's ``finally`` clause.
+        self._streaming: set[tuple[int, str]] = set()
 
     async def subscribe(self, user_id: int) -> asyncio.Queue[SessionEvent]:
         """Register a new subscriber for *user_id*.
@@ -112,6 +121,14 @@ class EventBus:
         silently drop the event. Returns the number of queues that
         **successfully received** the event (i.e. delivered count).
         """
+        # Track streaming state BEFORE the zero-subscriber early return: a
+        # dropped or reconnecting SSE connection must not lose the state, and
+        # the state must mirror the events even when nobody is listening.
+        if event.type == SessionEventType.STREAMING_STARTED:
+            self._streaming.add((user_id, event.session_id))
+        elif event.type == SessionEventType.STREAMING_ENDED:
+            self._streaming.discard((user_id, event.session_id))
+
         subs = self._subscribers.get(user_id)
         if not subs:
             return 0
@@ -124,6 +141,16 @@ class EventBus:
             except asyncio.QueueFull:
                 self._drop_count += 1
         return delivered
+
+    def is_streaming(self, user_id: int, session_id: str) -> bool:
+        """Whether *session_id* has an in-flight stream for *user_id*.
+
+        Derived from published ``STREAMING_STARTED``/``STREAMING_ENDED``
+        events on this bus (see :meth:`publish`). The state is process-local:
+        it lives in memory and dies with the server process, which is correct
+        because a stream cannot outlive the process.
+        """
+        return (user_id, session_id) in self._streaming
 
     @property
     def drop_count(self) -> int:
