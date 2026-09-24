@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -32,11 +33,13 @@ from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
 
 
-def _register_user(client: TestClient) -> str:
+def _register_user(
+    client: TestClient, email: str = "sse-test@example.com"
+) -> str:
     """Register a test user and return the session cookie header value."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": "sse-test@example.com", "password": "password123"},
+        json={"email": email, "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]
@@ -64,6 +67,44 @@ def _parse_sse(raw: str) -> list[dict]:
     return events
 
 
+class _CapturingBus(EventBus):
+    """EventBus that records every published ``(user_id, event)`` pair.
+
+    Subclass (not a mock) so the streaming-state tracking in ``publish``
+    still runs; the tests only read ``published``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.published: list[tuple[int, SessionEvent]] = []
+
+    def publish(self, user_id: int, event: SessionEvent) -> int:
+        self.published.append((user_id, event))
+        return super().publish(user_id, event)
+
+    def events_of(self, event_type: SessionEventType) -> list[SessionEvent]:
+        return [e for _, e in self.published if e.type == event_type]
+
+
+def _make_openai_fake(content: str) -> MagicMock:
+    """Build a MagicMock shaped like an OpenAI ChatCompletion response."""
+    choice = MagicMock()
+    choice.message = MagicMock()
+    choice.message.content = content
+    choice.finish_reason = "stop"
+
+    usage = MagicMock()
+    usage.prompt_tokens = 50
+    usage.completion_tokens = 100
+
+    response = MagicMock()
+    response.choices = [choice]
+    response.usage = usage
+    response.model = "gpt-4o-2024-08-06"
+    response.to_dict = MagicMock(return_value={"id": "fake"})
+    return response
+
+
 @pytest.fixture
 def app():
     """Create a minimal FastAPI app with sessions router + event bus.
@@ -72,11 +113,14 @@ def app():
     """
     from server.api import event_bus as api_event_bus
     from server.api import store as api_store
+    from server.api.routers import chat as chat_router
     from server.api.routers.auth import router as auth_router
 
     application = FastAPI()
     application.include_router(auth_router)
     application.include_router(sessions_router)
+    # Chat router included so the UPDATED-on-turn test can POST a real turn.
+    application.include_router(chat_router.router)
 
     # In-memory SQLite store
     s = SqliteStore(db_path=":memory:")
@@ -285,6 +329,125 @@ class TestEndpointBusSubscription:
         # Verify the endpoint returns the correct content-type
         # for a non-streaming check of the early-return path (503):
         assert True  # coverage via _sse_event_stream tests above
+
+
+class TestSessionLifecycleEvents:
+    """Server-side emitters for the cross-tab session lifecycle.
+
+    ``_CapturingBus`` is monkeypatched onto ``server.api.event_bus.bus``;
+    the routers read that module attribute at call time, so the replacement
+    is observed by every request.
+    """
+
+    def _capture(self) -> _CapturingBus:
+        from server.api import event_bus as api_event_bus
+
+        bus = _CapturingBus()
+        api_event_bus.bus = bus
+        return bus
+
+    def test_create_session_publishes_one_created(self, app, client):
+        bus = self._capture()
+        cookie = _register_user(client)
+        resp = client.post(
+            "/api/sessions",
+            json={"title": "My chat"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+
+        created = bus.events_of(SessionEventType.CREATED)
+        assert len(created) == 1
+        event = created[0]
+        assert event.session_id == body["id"]
+        assert event.payload == {
+            "session": {
+                "id": body["id"],
+                "title": body["title"],
+                "created_at": body["created_at"],
+                "updated_at": body["updated_at"],
+                "is_streaming": False,
+            }
+        }
+
+    def test_delete_owned_session_publishes_one_deleted_empty_payload(
+        self, app, client
+    ):
+        bus = self._capture()
+        cookie = _register_user(client)
+        created = client.post(
+            "/api/sessions", json={"title": "Bye"}, headers={"Cookie": cookie}
+        ).json()
+        bus.published.clear()
+
+        resp = client.delete(
+            f"/api/sessions/{created['id']}", headers={"Cookie": cookie}
+        )
+        assert resp.status_code == 204
+
+        deleted = bus.events_of(SessionEventType.DELETED)
+        assert len(deleted) == 1
+        assert deleted[0].session_id == created["id"]
+        assert deleted[0].payload == {}
+
+    def test_delete_unknown_session_publishes_nothing(self, app, client):
+        bus = self._capture()
+        cookie = _register_user(client)
+
+        resp = client.delete(
+            "/api/sessions/ses_does_not_exist", headers={"Cookie": cookie}
+        )
+        assert resp.status_code == 204
+        assert bus.events_of(SessionEventType.DELETED) == []
+
+    def test_delete_foreign_session_publishes_nothing(self, app, client):
+        bus = self._capture()
+        owner = _register_user(client, "owner@example.com")
+        intruder = _register_user(client, "intruder@example.com")
+        created = client.post(
+            "/api/sessions", json={"title": "Mine"}, headers={"Cookie": owner}
+        ).json()
+        bus.published.clear()
+
+        resp = client.delete(
+            f"/api/sessions/{created['id']}", headers={"Cookie": intruder}
+        )
+        assert resp.status_code == 204
+        assert bus.events_of(SessionEventType.DELETED) == []
+
+    def test_chat_turn_publishes_updated_without_is_streaming(self, app, client):
+        bus = self._capture()
+        cookie = _register_user(client)
+        created = client.post(
+            "/api/sessions", json={"title": "Turn"}, headers={"Cookie": cookie}
+        ).json()
+        sid = created["id"]
+        bus.published.clear()
+
+        valid_response = {"code": "print('hi')", "explanation": "ok"}
+        mock_create = AsyncMock(
+            return_value=_make_openai_fake(_json.dumps(valid_response))
+        )
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{sid}/chat",
+                json={"question": "hi"},
+                headers={"Cookie": cookie},
+            )
+        assert resp.status_code == 200
+
+        updated = bus.events_of(SessionEventType.UPDATED)
+        assert len(updated) == 1
+        assert set(updated[0].payload.keys()) == {"updated_at"}
+
+        # The emitted timestamp is exactly the one stored by the DB.
+        sessions = client.get("/api/sessions", headers={"Cookie": cookie}).json()
+        stored = next(s for s in sessions if s["id"] == sid)
+        assert updated[0].payload["updated_at"] == stored["updated_at"]
 
 
 # Multi-sub fan-out is covered by unit tests:

@@ -200,12 +200,19 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
-    async def delete_chat_session(self, session_id: str, user_id: int) -> None:
-        await self.conn.execute(
+    async def delete_chat_session(self, session_id: str, user_id: int) -> int:
+        """Delete a chat session owned by *user_id*.
+
+        Returns the number of deleted rows: ``0`` when the session does not
+        exist or belongs to another user (the caller uses that to decide
+        whether a ``DELETED`` event should be published), ``1`` on success.
+        """
+        cursor = await self.conn.execute(
             "DELETE FROM chat_sessions WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
         await self.conn.commit()
+        return cursor.rowcount
 
     # ── User Settings ────────────────────────────────────────────────────────────
 
@@ -405,14 +412,26 @@ class SqliteStore:
         self,
         session_id: str,
         user_id: int,
-    ) -> None:
-        """Update the updated_at timestamp for a chat session."""
-        await self.conn.execute(
+    ) -> str | None:
+        """Bump ``updated_at`` for a chat session, returning the NEW value.
+
+        Returns ``None`` when no row matched (missing or foreign session).
+        The timestamp is read back from the DB inside this method so the DB
+        stays the single source of truth — it is never computed in Python.
+        """
+        cursor = await self.conn.execute(
             "UPDATE chat_sessions SET updated_at = datetime('now') "
             "WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
         await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        rows = await self.conn.execute_fetchall(
+            "SELECT updated_at FROM chat_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        return rows[0]["updated_at"] if rows else None
 
     async def update_chat_session_title(
         self,

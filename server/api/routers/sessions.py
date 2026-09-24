@@ -78,12 +78,36 @@ async def create_session(
     session_id = "ses_" + secrets.token_urlsafe(16)
     title = body.title or "New chat"
     session = await store.create_chat_session(session_id, user["id"], title)
-    return SessionResponse(
+    response = SessionResponse(
         id=session["id"],
         title=session["title"],
         created_at=session["created_at"],
         updated_at=session["updated_at"],
     )
+
+    # Persist-then-emit: the row is committed above; publish CREATED so other
+    # tabs can prepend the session without waiting for a refetch. The payload
+    # mirrors the returned response exactly (session fields + is_streaming).
+    bus = _event_bus_module.bus
+    if bus is not None:
+        bus.publish(
+            user["id"],
+            SessionEvent(
+                type=SessionEventType.CREATED,
+                session_id=response.id,
+                timestamp=time.time(),
+                payload={
+                    "session": {
+                        "id": response.id,
+                        "title": response.title,
+                        "created_at": response.created_at,
+                        "updated_at": response.updated_at,
+                        "is_streaming": False,
+                    }
+                },
+            ),
+        )
+    return response
 
 
 @router.delete("/{session_id}", status_code=204)
@@ -97,7 +121,23 @@ async def delete_session(
     Returns 204 even if the session doesn't exist or doesn't belong
     to the user (be safe — don't reveal existence to other users).
     """
-    await store.delete_chat_session(session_id, user["id"])
+    deleted = await store.delete_chat_session(session_id, user["id"])
+
+    # Persist-then-emit: only a real deletion (rowcount > 0) is announced.
+    # A missing/foreign id publishes nothing, so other tabs never drop a
+    # session that still exists and the endpoint reveals no existence.
+    if deleted > 0:
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user["id"],
+                SessionEvent(
+                    type=SessionEventType.DELETED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={},
+                ),
+            )
 
     # Best-effort: the DB rows (files → profiles, messages) cascade via FK,
     # but the uploaded files on disk would be orphaned. Cleanup must never

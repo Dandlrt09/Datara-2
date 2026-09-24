@@ -21,6 +21,15 @@ export const NO_DATASET_CODE = "session/no_dataset";
  * files when there are. */
 export const FILE_NOT_PROFILED_CODE = "session/file_not_profiled";
 
+/** Reserved taxonomy code — registered everywhere, emitted nowhere by design.
+ *
+ * It is deliberately registered here (recognized by ``isKnownErrorCode`` and
+ * given a presentation below) so a future emitter can ship it without a
+ * frontend release, but NO runtime path emits it today: model adequacy is
+ * decided at configuration time via the bench (see the RESERVED note in
+ * ``server/services/error_taxonomy.py``). Do not delete it as dead code. */
+export const MODEL_INADEQUATE_CODE = "model/inadequate";
+
 export interface ErrorPresentation {
   variant: ErrorVariant;
   /** Professional Spanish title (spec-pinned per code family). */
@@ -58,6 +67,15 @@ const FILE_NOT_PROFILED: ErrorPresentation = {
   actionLabel: RETRY_LABEL,
 };
 
+/** Reserved (registered, no emitter yet): the selected model cannot handle
+ * the task; the fix is to choose a capable model in Settings. */
+const MODEL_INADEQUATE: ErrorPresentation = {
+  variant: "warning",
+  title: "Modelo no adecuado para esta tarea",
+  action: "go-settings",
+  actionLabel: "Ir a Ajustes",
+};
+
 /** The verbatim `${type}: ${message}` degradation (today's banner format)
  * applies whenever the code is missing or outside the taxonomy. */
 export function isKnownErrorCode(code: string | null | undefined): boolean {
@@ -65,6 +83,7 @@ export function isKnownErrorCode(code: string | null | undefined): boolean {
   return (
     code === "internal/error" ||
     code === "model/not_allowed" ||
+    code === MODEL_INADEQUATE_CODE ||
     code === NO_DATASET_CODE ||
     code === FILE_NOT_PROFILED_CODE ||
     code.startsWith("auth/") ||
@@ -90,6 +109,9 @@ export function resolveErrorPresentation(
   if (code === "model/not_allowed") {
     return { variant: "warning", title: "Modelo no disponible", action: "none" };
   }
+  if (code === MODEL_INADEQUATE_CODE) {
+    return MODEL_INADEQUATE;
+  }
   if (code?.startsWith("sandbox/")) {
     return {
       variant: "error",
@@ -106,8 +128,8 @@ export function resolveErrorPresentation(
       actionLabel: RETRY_LABEL,
     };
   }
-  // internal/error (Enmienda 1), reserved model/inadequate, and any unknown
-  // or missing code share the generic danger fallback.
+  // internal/error (Enmienda 1) and any unknown or missing code share the
+  // generic danger fallback. (model/inadequate is registered above.)
   return {
     variant: "error",
     title: "Error",

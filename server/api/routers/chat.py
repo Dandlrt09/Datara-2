@@ -519,7 +519,24 @@ async def chat_stream(
                     payload={"title": new_title},
                 ),
             )
-    await store.update_chat_session_timestamp(session_id, user_id)
+    updated_at = await store.update_chat_session_timestamp(session_id, user_id)
+    if updated_at is not None:
+        # Persist-then-emit: the session just became the most recent one, so
+        # every tab must re-sort its sidebar. Payload carries ONLY the new
+        # ``updated_at`` — never ``is_streaming`` (the client must not be able
+        # to clobber the streaming dot from this event). Fires for normal,
+        # retry and edit turns alike, which is correct.
+        bus = _event_bus_module.bus
+        if bus is not None:
+            bus.publish(
+                user_id,
+                SessionEvent(
+                    type=SessionEventType.UPDATED,
+                    session_id=session_id,
+                    timestamp=time.time(),
+                    payload={"updated_at": updated_at},
+                ),
+            )
 
     # At-most-once guard for STREAMING_ENDED on this stream. Every exit path
     # — including the six explicit early-return call sites AND the generator's

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   FILE_NOT_PROFILED_CODE,
+  MODEL_INADEQUATE_CODE,
   NO_DATASET_CODE,
   resolveErrorPresentation,
   isKnownErrorCode,
@@ -81,7 +82,18 @@ describe("resolveErrorPresentation", () => {
     });
   });
 
-  it.each(["model/inadequate", "weird/unrecognized", null, undefined])(
+  it("maps the reserved model/inadequate code to the warning go-settings presentation", () => {
+    // Reserved: registered here so a future emitter needs no frontend
+    // release, but no runtime path emits it today.
+    expect(resolveErrorPresentation(MODEL_INADEQUATE_CODE)).toEqual({
+      variant: "warning",
+      title: "Modelo no adecuado para esta tarea",
+      action: "go-settings",
+      actionLabel: "Ir a Ajustes",
+    });
+  });
+
+  it.each(["weird/unrecognized", null, undefined])(
     "degrades unknown/missing code %s to the generic danger fallback",
     (code) => {
       expect(resolveErrorPresentation(code)).toEqual({
@@ -97,6 +109,7 @@ describe("isKnownErrorCode", () => {
     "auth/invalid_key",
     "auth/no_credits",
     "model/not_allowed",
+    "model/inadequate",
     "sandbox/timeout",
     "llm/rate_limit",
     "internal/error",
@@ -106,7 +119,7 @@ describe("isKnownErrorCode", () => {
     expect(isKnownErrorCode(code)).toBe(true);
   });
 
-  it.each(["model/inadequate", "nope/unknown", null, undefined])(
+  it.each(["nope/unknown", null, undefined])(
     "rejects non-taxonomy/missing code %s",
     (code) => {
       expect(isKnownErrorCode(code)).toBe(false);

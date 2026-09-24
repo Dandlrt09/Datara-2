@@ -60,11 +60,14 @@ vi.mock("../stores/useWizardStore", () => ({
 
 
 
+// Stable navigate spy so tests can assert on cross-session navigation.
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
+
 // Mock react-router so AppShell doesn't require a real router context
 vi.mock("react-router-dom", () => ({
   Routes: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Route: () => null,
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateMock,
   Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
@@ -92,6 +95,14 @@ const MOCK_SESSIONS = [
   { id: "s1", title: "Chat 1", created_at: "2024-01-01T00:00:00Z", updated_at: "2024-01-01T00:00:00Z" },
   { id: "s2", title: "Chat 2", created_at: "2024-01-02T00:00:00Z", updated_at: "2024-01-02T00:00:00Z" },
 ];
+
+type CachedSession = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  is_streaming?: boolean;
+};
 
 describe("useSessions", () => {
   let qc: QueryClient;
@@ -247,6 +258,7 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
     (api.get as Mock).mockRejectedValue(new Error("backend restarting"));
     cleanup();
     qc = createTestQueryClient();
+    navigateMock.mockClear();
     useChatStore.setState({ historyReset: null, activeSessionId: null });
     (globalThis as { __capturedOnEvent?: (e: unknown) => void }).__capturedOnEvent = undefined;
     (globalThis as { __capturedOnReconnected?: () => void }).__capturedOnReconnected = undefined;
@@ -314,6 +326,158 @@ describe("AppShell SSE event → cache patch wiring (regression)", () => {
       { id: string; title: string; is_streaming?: boolean }[]
     >(["sessions"]);
     expect(cached?.[0]?.is_streaming).toBe(false);
+  });
+
+  it("CREATED inserts a new session and puts it first (newest updated_at)", () => {
+    qc.setQueryData<CachedSession[]>(["sessions"], [
+      {
+        id: "old",
+        title: "Old",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+      },
+    ]);
+    captured()({
+      type: "CREATED",
+      session_id: "new",
+      timestamp: 100,
+      payload: {
+        session: {
+          id: "new",
+          title: "New",
+          created_at: "2024-02-01 00:00:00",
+          updated_at: "2024-02-01 00:00:00",
+          is_streaming: false,
+        },
+      },
+    });
+    const cached = qc.getQueryData<CachedSession[]>(["sessions"]);
+    expect(cached?.map((s) => s.id)).toEqual(["new", "old"]);
+    expect(cached?.[0]).toEqual({
+      id: "new",
+      title: "New",
+      created_at: "2024-02-01 00:00:00",
+      updated_at: "2024-02-01 00:00:00",
+      is_streaming: false,
+    });
+  });
+
+  it("CREATED with a malformed payload leaves the cache unchanged", () => {
+    const before: CachedSession[] = [
+      {
+        id: "old",
+        title: "Old",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+      },
+    ];
+    qc.setQueryData<CachedSession[]>(["sessions"], before);
+    captured()({
+      type: "CREATED",
+      session_id: "new",
+      timestamp: 100,
+      payload: {},
+    });
+    expect(qc.getQueryData(["sessions"])).toEqual(before);
+  });
+
+  it("UPDATED touches only updated_at, re-sorts, and preserves is_streaming", () => {
+    qc.setQueryData<CachedSession[]>(["sessions"], [
+      {
+        id: "a",
+        title: "A",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+        is_streaming: true,
+      },
+      {
+        id: "b",
+        title: "B",
+        created_at: "2024-02-01 00:00:00",
+        updated_at: "2024-02-01 00:00:00",
+      },
+    ]);
+    captured()({
+      type: "UPDATED",
+      session_id: "a",
+      timestamp: 100,
+      payload: { updated_at: "2024-03-01 00:00:00" },
+    });
+    const cached = qc.getQueryData<CachedSession[]>(["sessions"]);
+    expect(cached?.map((s) => s.id)).toEqual(["a", "b"]);
+    expect(cached?.[0]).toEqual({
+      id: "a",
+      title: "A",
+      created_at: "2024-01-01 00:00:00",
+      updated_at: "2024-03-01 00:00:00",
+      is_streaming: true,
+    });
+  });
+
+  it("UPDATED with a missing payload timestamp leaves the cache unchanged", () => {
+    const before: CachedSession[] = [
+      {
+        id: "a",
+        title: "A",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+      },
+    ];
+    qc.setQueryData<CachedSession[]>(["sessions"], before);
+    captured()({
+      type: "UPDATED",
+      session_id: "a",
+      timestamp: 100,
+      payload: {},
+    });
+    expect(qc.getQueryData(["sessions"])).toEqual(before);
+  });
+
+  it("DELETED removes the session without navigating when it is not active", () => {
+    useChatStore.setState({ activeSessionId: "b", historyReset: null });
+    qc.setQueryData<CachedSession[]>(["sessions"], [
+      {
+        id: "a",
+        title: "A",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+      },
+      {
+        id: "b",
+        title: "B",
+        created_at: "2024-02-01 00:00:00",
+        updated_at: "2024-02-01 00:00:00",
+      },
+    ]);
+    captured()({
+      type: "DELETED",
+      session_id: "a",
+      timestamp: 100,
+      payload: {},
+    });
+    const cached = qc.getQueryData<CachedSession[]>(["sessions"]);
+    expect(cached?.map((s) => s.id)).toEqual(["b"]);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("DELETED of the currently open session navigates to /app/chat", () => {
+    useChatStore.setState({ activeSessionId: "a", historyReset: null });
+    qc.setQueryData<CachedSession[]>(["sessions"], [
+      {
+        id: "a",
+        title: "A",
+        created_at: "2024-01-01 00:00:00",
+        updated_at: "2024-01-01 00:00:00",
+      },
+    ]);
+    captured()({
+      type: "DELETED",
+      session_id: "a",
+      timestamp: 100,
+      payload: {},
+    });
+    expect(qc.getQueryData<CachedSession[]>(["sessions"])).toEqual([]);
+    expect(navigateMock).toHaveBeenCalledWith("/app/chat");
   });
 
   it("event with empty/failed cache invalidates instead of no-op", () => {

@@ -39,6 +39,17 @@ function withErrorBoundary(viewName: string, Element: React.ComponentType) {
   );
 }
 
+/** Return a copy of *sessions* sorted newest-first by ``updated_at``.
+ *
+ * The values are DB strings (``YYYY-MM-DD HH:MM:SS``), so a lexicographic
+ * compare is chronological. Kept in one place so CREATED and UPDATED cannot
+ * drift apart in their ordering. */
+function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort((a, b) =>
+    String(b.updated_at).localeCompare(String(a.updated_at)),
+  );
+}
+
 export default function AppShell() {
   const navigate = useNavigate();
   const { data: user, isLoading, error } = useMe();
@@ -94,19 +105,52 @@ export default function AppShell() {
         // TITLED, DELETED, STREAMING_STARTED, STREAMING_ENDED} — these are
         // the raw uppercase enum NAMES, not dotted lowercase.
         switch (event.type) {
-          case "CREATED":
-          case "UPDATED":
-            return old.map((s) =>
-              s.id === event.session_id ? { ...s, ...event.payload } : s,
+          case "CREATED": {
+            // Payload: {"session": {id, title, created_at, updated_at,
+            // is_streaming}}. A missing/malformed payload must not insert
+            // `undefined` into the cache — return the list unchanged instead.
+            const created = event.payload.session as ChatSession | undefined;
+            if (
+              !created ||
+              typeof created !== "object" ||
+              typeof created.id !== "string"
+            ) {
+              return old;
+            }
+            const exists = old.some((s) => s.id === created.id);
+            const next = exists
+              ? old.map((s) => (s.id === created.id ? { ...s, ...created } : s))
+              : [created, ...old];
+            return sortSessionsNewestFirst(next);
+          }
+          case "UPDATED": {
+            // Payload: {"updated_at": <DB timestamp>}. Never carries
+            // is_streaming: only the recency field is touched, then the list
+            // is re-sorted so the bumped session floats to the top.
+            const updatedAt = event.payload.updated_at;
+            if (typeof updatedAt !== "string") {
+              return old;
+            }
+            return sortSessionsNewestFirst(
+              old.map((s) =>
+                s.id === event.session_id ? { ...s, updated_at: updatedAt } : s,
+              ),
             );
+          }
           case "TITLED":
             return old.map((s) =>
               s.id === event.session_id
                 ? { ...s, title: (event.payload.title as string) ?? s.title }
                 : s,
             );
-          case "DELETED":
+          case "DELETED": {
+            // If the user is currently viewing the deleted session, leave the
+            // ghost chat and land on the new-chat route.
+            if (useChatStore.getState().activeSessionId === event.session_id) {
+              navigate("/app/chat");
+            }
             return old.filter((s) => s.id !== event.session_id);
+          }
           case "STREAMING_STARTED":
             return old.map((s) =>
               s.id === event.session_id ? { ...s, is_streaming: true } : s,
@@ -125,7 +169,7 @@ export default function AppShell() {
         }
       });
     },
-    [queryClient],
+    [queryClient, navigate],
   );
 
   const onReconnected = useCallback(() => {

@@ -42,12 +42,19 @@ class SessionEvent:
         type: The event type discriminator.
         session_id: Opaque session identifier (``ses_``-prefixed).
         timestamp: Epoch seconds (``time.time()``).
-        payload: Event-specific data. For ``TITLED``: ``{"title": ...}``;
-            for ``STREAMING_*``: ``{"is_streaming": true|false}``;
-            for ``CREATED``/``UPDATED``: ``{"session": {...}}``;
-            for ``DELETED``: ``{}``;
-            for ``HISTORY_TRUNCATED``:
-            ``{"from_message_id": <first deleted message id>}``.
+        payload: Event-specific data:
+            ``CREATED``: ``{"session": {...}}`` — the created session, carrying
+                the same fields as ``SessionResponse`` (``id``, ``title``,
+                ``created_at``, ``updated_at``, ``is_streaming``);
+            ``UPDATED``: ``{"updated_at": <DB timestamp string>}`` — only the
+                recency field is sent; ``is_streaming`` must NEVER appear here
+                (the client must not clobber the streaming dot from it);
+            ``TITLED``: ``{"title": ...}``;
+            ``STREAMING_STARTED`` / ``STREAMING_ENDED``:
+                ``{"is_streaming": true|false}``;
+            ``DELETED``: ``{}``;
+            ``HISTORY_TRUNCATED``:
+                ``{"from_message_id": <first deleted message id>}``.
     """
 
     type: SessionEventType

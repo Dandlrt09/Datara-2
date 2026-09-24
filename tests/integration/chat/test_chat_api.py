@@ -901,8 +901,17 @@ class TestChatBusEvents:
                         headers={"Cookie": auth_cookie},
                     )
                 )
-                # Wait for STREAMING_STARTED — the stream is mid-flight
-                started = await asyncio.wait_for(bus_q.get(), timeout=10)
+                # UPDATED now precedes STREAMING_STARTED: the turn bumps the
+                # session recency in the endpoint body, before the stream
+                # generator starts. Skip any pre-stream events and wait for
+                # STREAMING_STARTED — the stream is then mid-flight.
+                started = None
+                for _ in range(5):
+                    ev = await asyncio.wait_for(bus_q.get(), timeout=10)
+                    if ev.type == SessionEventType.STREAMING_STARTED:
+                        started = ev
+                        break
+                assert started is not None
                 assert started.type == SessionEventType.STREAMING_STARTED
 
                 # Cancel the in-flight request (production disconnect sim)
