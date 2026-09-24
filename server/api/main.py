@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException
 from server.api import store as api_store
 from server.api import event_bus as api_event_bus
 from server.api.routers import auth, chat, files, sessions, settings, archive
+from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
 from server.migrate import apply_migrations
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
@@ -167,6 +168,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Body-size guard for the multipart upload route. Register it BEFORE CORS:
+# Starlette's most-recently-added middleware is the outermost, so installing
+# the guard first leaves CORSMiddleware outermost and its headers apply to the
+# guard's 413/411 responses (the Vite dev origin needs them).
+install_upload_guard(app)
 
 # CORS — allow localhost origins for local dev
 app.add_middleware(

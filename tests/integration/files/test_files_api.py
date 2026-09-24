@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from server.api.routers import auth as auth_router
 from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
+from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
 
@@ -29,6 +30,10 @@ def app(tmp_path, monkeypatch):
     application.include_router(auth_router.router)
     application.include_router(sessions_router.router)
     application.include_router(files_router.router)
+
+    # Register the ASGI body guard exactly as main.py does, so the upload
+    # route under test is reached through it.
+    install_upload_guard(application)
 
     # Isolation: uploads must land in a per-test tmp dir, never the real
     # server/uploads/ used by the live server.

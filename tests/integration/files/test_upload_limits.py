@@ -10,7 +10,9 @@ Limits are read at call time, so ``monkeypatch.setenv`` controls them.
 
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +23,11 @@ from fastapi.testclient import TestClient
 from server.api.routers import auth as auth_router
 from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
+from server.api.upload_guard import (
+    MISSING_LENGTH_DETAIL,
+    UploadSizeGuard,
+    install_upload_guard,
+)
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
 
@@ -34,9 +41,11 @@ def app(tmp_path, monkeypatch):
     application.include_router(sessions_router.router)
     application.include_router(files_router.router)
 
-    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
+    # Register the ASGI body guard exactly as main.py does, so the upload
+    # route under test is reached through it.
+    install_upload_guard(application)
 
-    import asyncio
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
 
     s = SqliteStore(db_path=":memory:")
 
@@ -154,6 +163,78 @@ class TestContentLengthFastReject:
 
         assert resp.status_code == 413
         assert calls["ensure_dir"] == 0
+
+
+class TestBodyGuard:
+    def test_oversized_unauthenticated_upload_rejected_before_spooling(
+        self, client, monkeypatch
+    ):
+        """An oversized body with NO auth cookie is rejected by the ASGI guard
+        before the handler runs (no size-based work, no auth resolution).
+
+        A tested upload body must exceed ``max_upload_bytes +
+        CONTENT_LENGTH_MARGIN`` (1 MB) so the guard fires on the declared
+        Content-Length; the session id is made up because the guard answers
+        before routing or session lookup.
+        """
+        monkeypatch.setenv("DATARA_MAX_UPLOAD_BYTES", "1000")
+
+        calls = {"ensure_dir": 0}
+        original = files_router._ensure_upload_dir
+
+        def _spy(*args, **kwargs):
+            calls["ensure_dir"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(files_router, "_ensure_upload_dir", _spy)
+
+        # ~2 MB, well over max (1000) + margin (1 MB).
+        big_csv = b"a\n" + b"x" * (2 * 1024 * 1024)
+        resp = client.post(
+            "/api/sessions/fake-session/files",
+            files={"file": ("huge.csv", big_csv, "text/csv")},
+        )
+
+        assert resp.status_code == 413
+        assert "1000" in resp.json()["detail"]
+        # Handler never ran: without the guard a cookie-less upload would be
+        # 401, and no disk work would happen either way — the 413 is the proof
+        # the guard short-circuited, the spy confirms no handler disk work.
+        assert calls["ensure_dir"] == 0
+
+    def test_upload_without_content_length_rejected_411(self):
+        """No Content-Length header → 411 before the wrapped app is called.
+
+        Driven through a direct ASGI harness: httpx/TestClient may impose a
+        Transfer-Encoding: chunked body instead of omitting the header, so
+        this stays deterministic.
+        """
+        called = {"app": False}
+
+        async def dummy_app(scope, receive, send):  # pragma: no cover - guard fires first
+            called["app"] = True
+
+        guard = UploadSizeGuard(dummy_app)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/sessions/abc/files",
+            "headers": [],
+        }
+        messages = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        asyncio.run(guard(scope, receive, send))
+
+        assert messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == 411
+        assert json.loads(messages[1]["body"]) == {"detail": MISSING_LENGTH_DETAIL}
+        assert called["app"] is False
 
 
 class TestQuotas:

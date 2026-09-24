@@ -19,6 +19,7 @@ from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed
 from core.data.profiler import build_profile
 from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
+from server.api.upload_guard import CONTENT_LENGTH_MARGIN, oversize_upload_detail
 from server.limits import get_limits
 from server.services.profile_cache import get_profile, serialize_profile
 from server.services.sqlite_store import SqliteStore
@@ -29,12 +30,10 @@ router = APIRouter(prefix="/api", tags=["files"])
 
 _DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 
-# Streaming read chunk and the slack allowed over max_upload_bytes when
-# interpreting Content-Length. Multipart bodies carry boundaries and part
-# headers, so the raw body is slightly larger than the file: a 1 MB margin
-# guarantees a file exactly at the cap is never falsely rejected.
+# Streaming read chunk for the bounded copy to disk. The multipart
+# Content-Length slack lives in server.api.upload_guard.CONTENT_LENGTH_MARGIN,
+# imported above, so the middleware and this handler can never drift.
 _CHUNK_BYTES = 1024 * 1024
-_CONTENT_LENGTH_MARGIN = 1024 * 1024
 
 # Uploads root, resolved at import time. Override with DATARA_UPLOADS_DIR so
 # deployments and test harnesses can relocate it (tests point this at a
@@ -185,10 +184,13 @@ async def upload_file(
 
     limits = get_limits()
 
-    # Content-Length fast reject, before touching disk. Accepting the part
-    # means Starlette has already buffered the multipart body, but this avoids
-    # the extra copy to the destination file when the declared size is clearly
-    # over the cap. The margin covers multipart boundaries/headers.
+    # Content-Length fast reject, before touching disk. The ASGI
+    # UploadSizeGuard is the PRIMARY guard: it rejects an oversized declared
+    # body before Starlette spools the multipart body at all. This in-handler
+    # check is the fallback for a router mounted without that middleware;
+    # accepting the part means Starlette has already buffered the multipart
+    # body, so it only avoids the extra copy to the destination file. The
+    # shared margin covers multipart boundaries/headers.
     declared_length = request.headers.get("content-length")
     if declared_length is not None:
         try:
@@ -197,14 +199,11 @@ async def upload_file(
             declared_bytes = None
         if (
             declared_bytes is not None
-            and declared_bytes > limits.max_upload_bytes + _CONTENT_LENGTH_MARGIN
+            and declared_bytes > limits.max_upload_bytes + CONTENT_LENGTH_MARGIN
         ):
             raise HTTPException(
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                detail=(
-                    f"File too large: request body of {declared_bytes} bytes exceeds "
-                    f"the {limits.max_upload_bytes}-byte per-file limit."
-                ),
+                detail=oversize_upload_detail(declared_bytes, limits.max_upload_bytes),
             )
 
     # Same-name guard: file deletion exists (DELETE /api/files/{id} and the
