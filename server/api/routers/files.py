@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed_size
 from core.data.profiler import build_profile
+from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
 from server.limits import get_limits
 from server.services.profile_cache import get_profile, serialize_profile
@@ -129,6 +130,18 @@ def remove_session_uploads(user_id: int, chat_session: str) -> None:
 _SUPPORTED_EXTENSIONS = frozenset({".csv", ".tsv", ".xlsx", ".json"})
 
 
+def _duplicate_name_detail(safe_filename: str) -> str:
+    """Shared 409 detail for a same-name collision.
+
+    Both the pre-check and the insert-time UNIQUE violation use this so the
+    two collision paths can never drift apart.
+    """
+    return (
+        f"A file named '{safe_filename}' already exists in this session. "
+        "Delete it first before uploading a file with the same name."
+    )
+
+
 def _validate_extension(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     if ext not in _SUPPORTED_EXTENSIONS:
@@ -202,10 +215,7 @@ async def upload_file(
     if duplicate is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"A file named '{safe_filename}' already exists in this session. "
-                "Delete it first before uploading a file with the same name."
-            ),
+            detail=_duplicate_name_detail(safe_filename),
         )
 
     # Quota check (best-effort soft cap, checked before any disk write). Two
@@ -332,6 +342,14 @@ async def upload_file(
             schema_json=schema_json,
             stats_json=stats_json,
             sample_json=sample_json,
+        )
+    except DuplicateError:
+        # Lost the insert race against a concurrent same-name upload: the row
+        # that won owns dest_path, so keep the bytes on disk and answer with
+        # the same 409 the pre-check returns.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_duplicate_name_detail(safe_filename),
         )
     except Exception:
         dest_path.unlink(missing_ok=True)

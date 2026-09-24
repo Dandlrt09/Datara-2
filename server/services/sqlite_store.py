@@ -538,14 +538,20 @@ class SqliteStore:
         sheet_name: str | None = None,
         row_count: int | None = None,
     ) -> dict[str, Any]:
-        cursor = await self.conn.execute(
-            "INSERT INTO files (user_id, chat_session, filename, storage_path, "
-            "size_bytes, format, encoding, sheet_name, row_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (user_id, chat_session, filename, storage_path, size_bytes,
-             format_val, encoding, sheet_name, row_count),
-        )
-        await self.conn.commit()
+        try:
+            cursor = await self.conn.execute(
+                "INSERT INTO files (user_id, chat_session, filename, storage_path, "
+                "size_bytes, format, encoding, sheet_name, row_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, chat_session, filename, storage_path, size_bytes,
+                 format_val, encoding, sheet_name, row_count),
+            )
+            await self.conn.commit()
+        except aiosqlite.IntegrityError:
+            await self.conn.rollback()
+            raise DuplicateError(
+                f"file already exists: {filename} in session {chat_session}"
+            )
         file_id = cursor.lastrowid
         rows = await self.conn.execute_fetchall(
             "SELECT id, user_id, chat_session, filename, storage_path, "
@@ -597,6 +603,11 @@ class SqliteStore:
                 (file_id, schema_json, stats_json, sample_json),
             )
             await self.conn.commit()
+        except aiosqlite.IntegrityError:
+            await self.conn.rollback()
+            raise DuplicateError(
+                f"file already exists: {filename} in session {chat_session}"
+            )
         except Exception:
             await self.conn.rollback()
             raise

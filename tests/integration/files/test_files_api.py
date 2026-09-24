@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import json
 import tempfile
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -19,9 +18,7 @@ from server.api.routers import auth as auth_router
 from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.sqlite_store import SqliteStore
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
+from tests.test_helpers import apply_all_migrations
 
 
 @pytest.fixture
@@ -43,9 +40,7 @@ def app(tmp_path, monkeypatch):
 
     async def _setup():
         await s.connect()
-        init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-        await s.conn.executescript(init_sql)
-        await s.conn.commit()
+        await apply_all_migrations(s)
 
     asyncio.run(_setup())
     api_store._store = s
@@ -509,3 +504,45 @@ class TestSameNameReupload:
             files={"file": ("dup.csv", b"a\n2\n", "text/csv")},
         )
         assert second.status_code == 201
+
+    def test_insert_time_collision_returns_same_409_and_keeps_file(
+        self, auth_client, session_id, monkeypatch
+    ):
+        """A collision that only surfaces at INSERT time returns the pre-check's
+        409 and does NOT unlink the storage path the winning row owns.
+
+        The pre-check is bypassed deterministically (no timing race), so this
+        exercises the store's IntegrityError -> DuplicateError -> 409 path.
+        """
+        from server.api.routers import files as files_router
+        from server.services.sqlite_store import SqliteStore
+
+        async def _no_existing(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(SqliteStore, "get_file_by_name", _no_existing)
+
+        name = "race.csv"
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": (name, b"a\n1\n", "text/csv")},
+        )
+        assert first.status_code == 201
+
+        second = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": (name, b"a\n2\n3\n4\n", "text/csv")},
+        )
+        assert second.status_code == 409
+        # Same detail text the pre-check emits — the paths must not drift.
+        assert second.json()["detail"] == files_router._duplicate_name_detail(name)
+
+        # Exactly one DB row survives.
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        assert len(listing.json()) == 1
+
+        # The winner's file is still on disk at its storage path.
+        stored = list(files_router.UPLOADS_DIR.rglob(name))
+        assert len(stored) == 1
+        assert stored[0].is_file()
+        assert stored[0].stat().st_size > 0

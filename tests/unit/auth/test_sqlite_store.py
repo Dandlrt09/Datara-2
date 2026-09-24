@@ -395,3 +395,79 @@ class TestUserSettingsEncryption:
             (user["id"],),
         )
         assert rows_after[0]["api_key_enc"] == before
+
+
+class TestFilesUniqueName:
+    """The files table enforces UNIQUE(user_id, chat_session, filename).
+
+    The second insert with a colliding key must raise ``DuplicateError`` and
+    must not leave a second row behind, and the connection must stay usable
+    afterwards (proving the failure rolled back cleanly).
+    """
+
+    async def test_create_file_duplicate_name_raises_and_keeps_one_row(self, store):
+        from core.errors import DuplicateError
+
+        user = await store.create_user("dedupe@example.com", "hash")
+        await store.create_chat_session("ses_dedupe", user["id"], "Dedupe")
+
+        first = await store.create_file(
+            user_id=user["id"],
+            chat_session="ses_dedupe",
+            filename="same.csv",
+            storage_path="/tmp/same.csv",
+            size_bytes=10,
+            format_val="csv",
+            row_count=1,
+        )
+        with pytest.raises(DuplicateError, match="already exists"):
+            await store.create_file(
+                user_id=user["id"],
+                chat_session="ses_dedupe",
+                filename="same.csv",
+                storage_path="/tmp/same.csv",
+                size_bytes=20,
+                format_val="csv",
+                row_count=2,
+            )
+
+        rows = await store.conn.execute_fetchall(
+            "SELECT id FROM files WHERE user_id = ? AND chat_session = ? AND filename = ?",
+            (user["id"], "ses_dedupe", "same.csv"),
+        )
+        assert len(rows) == 1
+        assert rows[0]["id"] == first["id"]
+
+    async def test_create_file_with_profile_duplicate_name_raises_and_keeps_one_row(
+        self, store
+    ):
+        from core.errors import DuplicateError
+
+        user = await store.create_user("dedupe2@example.com", "hash")
+        await store.create_chat_session("ses_dedupe2", user["id"], "Dedupe 2")
+
+        kwargs = {
+            "user_id": user["id"],
+            "chat_session": "ses_dedupe2",
+            "filename": "profile.csv",
+            "size_bytes": 10,
+            "format_val": "csv",
+            "schema_json": "{}",
+            "stats_json": "{}",
+            "sample_json": "[]",
+            "row_count": 1,
+        }
+        first = await store.create_file_with_profile(
+            storage_path="/tmp/profile.csv", **kwargs
+        )
+        with pytest.raises(DuplicateError, match="already exists"):
+            await store.create_file_with_profile(
+                storage_path="/tmp/profile.csv", **kwargs
+            )
+
+        rows = await store.conn.execute_fetchall(
+            "SELECT id FROM files WHERE user_id = ? AND chat_session = ? AND filename = ?",
+            (user["id"], "ses_dedupe2", "profile.csv"),
+        )
+        assert len(rows) == 1
+        assert rows[0]["id"] == first["id"]
