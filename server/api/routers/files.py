@@ -15,9 +15,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.data.parser import parse_upload, parse_upload_sheet
+from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed_size
 from core.data.profiler import build_profile
 from server.api.deps import current_user, get_store
+from server.limits import get_limits
 from server.services.profile_cache import get_profile, serialize_profile
 from server.services.sqlite_store import SqliteStore
 
@@ -26,6 +27,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["files"])
 
 _DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+
+# Streaming read chunk and the slack allowed over max_upload_bytes when
+# interpreting Content-Length. Multipart bodies carry boundaries and part
+# headers, so the raw body is slightly larger than the file: a 1 MB margin
+# guarantees a file exactly at the cap is never falsely rejected.
+_CHUNK_BYTES = 1024 * 1024
+_CONTENT_LENGTH_MARGIN = 1024 * 1024
 
 # Uploads root, resolved at import time. Override with DATARA_UPLOADS_DIR so
 # deployments and test harnesses can relocate it (tests point this at a
@@ -152,15 +160,39 @@ async def upload_file(
     """
     user_id = user["id"]
 
+    ext = _validate_extension(file.filename or "unknown")
+    format_hint = ext.lstrip(".")
+
     # Verify session ownership
     session = await store.get_chat_session(session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    ext = _validate_extension(file.filename or "unknown")
-    format_hint = ext.lstrip(".")
-
     safe_filename = Path(file.filename or f"upload{ext}").name
+
+    limits = get_limits()
+
+    # Content-Length fast reject, before touching disk. Accepting the part
+    # means Starlette has already buffered the multipart body, but this avoids
+    # the extra copy to the destination file when the declared size is clearly
+    # over the cap. The margin covers multipart boundaries/headers.
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            declared_bytes = int(declared_length)
+        except ValueError:
+            declared_bytes = None
+        if (
+            declared_bytes is not None
+            and declared_bytes > limits.max_upload_bytes + _CONTENT_LENGTH_MARGIN
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"File too large: request body of {declared_bytes} bytes exceeds "
+                    f"the {limits.max_upload_bytes}-byte per-file limit."
+                ),
+            )
 
     # Same-name guard: file deletion exists (DELETE /api/files/{id} and the
     # Files UI), so a repeated basename in the same session is rejected
@@ -176,15 +208,77 @@ async def upload_file(
             ),
         )
 
-    # Save to disk
+    # Quota check (best-effort soft cap, checked before any disk write). Two
+    # concurrent uploads can race past this; the per-file byte cap is the hard
+    # bound. Session quota is checked first so the message is more specific.
+    session_bytes = await store.total_size_by_user(user_id, chat_session=session_id)
+    if session_bytes >= limits.max_session_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"Session storage quota exceeded: {session_bytes} bytes already "
+                f"stored, limit {limits.max_session_bytes} bytes."
+            ),
+        )
+    user_bytes = await store.total_size_by_user(user_id)
+    if user_bytes >= limits.max_user_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"User storage quota exceeded: {user_bytes} bytes already "
+                f"stored, limit {limits.max_user_bytes} bytes."
+            ),
+        )
+
+    # Stream to disk in bounded chunks so a huge upload never becomes one
+    # in-memory buffer, and the per-file cap is enforced as bytes arrive.
     upload_dir = _ensure_upload_dir(user_id, session_id)
     dest_path = upload_dir / safe_filename
 
-    content = await file.read()
+    size_bytes = 0
+    try:
+        with dest_path.open("wb") as dest:
+            while True:
+                chunk = await file.read(_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > limits.max_upload_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            f"File too large: exceeds the "
+                            f"{limits.max_upload_bytes}-byte per-file limit."
+                        ),
+                    )
+                dest.write(chunk)
+    except Exception:
+        # Never leave a truncated orphan behind (including the 413 above).
+        dest_path.unlink(missing_ok=True)
+        raise
+
+    # The client may have aborted while the body streamed in.
     if await request.is_disconnected():
+        dest_path.unlink(missing_ok=True)
         return Response(status_code=499)
-    dest_path.write_bytes(content)
-    size_bytes = len(content)
+
+    # XLSX is a zip container: reject a zip bomb by the archive's declared
+    # uncompressed total BEFORE openpyxl inflates it. A non-zip payload falls
+    # through to parse_upload, which reports the real 400.
+    if format_hint == "xlsx":
+        try:
+            expanded_bytes = xlsx_uncompressed_size(str(dest_path))
+        except Exception:
+            expanded_bytes = None
+        if expanded_bytes is not None and expanded_bytes > limits.max_expanded_bytes:
+            dest_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"XLSX expands to {expanded_bytes} bytes, over the "
+                    f"{limits.max_expanded_bytes}-byte expanded limit."
+                ),
+            )
 
     # Parse (CPU-bound — would be offloaded via run_in_executor in production)
     try:
@@ -195,6 +289,21 @@ async def upload_file(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to parse file: {e}",
+        )
+
+    # Post-parse backstop for NON-xlsx formats: this runs AFTER parse, so it
+    # cannot prevent the memory spike — the raw byte cap above is what bounds
+    # the input. It catches a DataFrame whose in-memory footprint is still
+    # over the expanded-size budget.
+    footprint_bytes = int(df.memory_usage(deep=True).sum())
+    if footprint_bytes > limits.max_expanded_bytes:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"Parsed data uses {footprint_bytes} bytes in memory, over the "
+                f"{limits.max_expanded_bytes}-byte expanded limit."
+            ),
         )
 
     # Build AND serialize the profile BEFORE any DB write: a serialization

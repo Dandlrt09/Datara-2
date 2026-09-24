@@ -5,13 +5,14 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from core.data.parser import parse_upload, parse_upload_sheet
+from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed_size
 from core.data.profiler import build_profile, profile_to_json
 
 
@@ -129,6 +130,20 @@ class TestParseUploadErrors:
         path = _write_bytes(b"a,b\n1,2\n", suffix=".pdf")
         with pytest.raises(ValueError, match="Unsupported format"):
             parse_upload(path, format_hint="pdf")
+
+
+class TestXlsxUncompressedSize:
+    def test_matches_infolist_sum(self):
+        path = _write_xlsx(pd.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]}))
+        with zipfile.ZipFile(path) as archive:
+            expected = sum(info.file_size for info in archive.infolist())
+        assert expected > 0
+        assert xlsx_uncompressed_size(path) == expected
+
+    def test_non_zip_path_raises(self):
+        path = _write_bytes(b"this is not a zip container", suffix=".xlsx")
+        with pytest.raises(zipfile.BadZipFile):
+            xlsx_uncompressed_size(path)
 
 
 # ── Profiler Tests ─────────────────────────────────────────────────────────

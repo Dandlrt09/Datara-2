@@ -687,6 +687,29 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
+    async def total_size_by_user(
+        self,
+        user_id: int,
+        chat_session: str | None = None,
+    ) -> int:
+        """Return total stored bytes for a user, optionally in one session.
+
+        Backs the upload route's best-effort quota check. An empty result
+        yields 0 via ``COALESCE``.
+        """
+        if chat_session is not None:
+            rows = await self.conn.execute_fetchall(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM files "
+                "WHERE user_id = ? AND chat_session = ?",
+                (user_id, chat_session),
+            )
+        else:
+            rows = await self.conn.execute_fetchall(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE user_id = ?",
+                (user_id,),
+            )
+        return int(rows[0][0]) if rows else 0
+
     async def delete_file(self, file_id: int, user_id: int) -> bool:
         """Delete a file, enforcing ownership. Returns True if a row was deleted."""
         cursor = await self.conn.execute(

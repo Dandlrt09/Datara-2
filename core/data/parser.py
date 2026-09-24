@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,23 @@ def _detect_delimiter(path: str, sample_size: int = 4096) -> str:
 def _list_xlsx_sheets(path: str) -> list[str]:
     """List sheet names in an XLSX file."""
     return pd.ExcelFile(path).sheet_names
+
+
+def xlsx_uncompressed_size(path: str) -> int:
+    """Return the total uncompressed size of an XLSX's zip entries, in bytes.
+
+    XLSX is a zip container. A small compressed file can expand enormously
+    when openpyxl (or any reader) inflates it — the zip-bomb vector. Summing
+    ``ZipInfo.file_size`` over the archive gives that expansion cost without
+    extracting anything, so the upload route can reject the file before
+    parsing it.
+
+    Raises:
+        FileNotFoundError: If the path does not exist.
+        zipfile.BadZipFile: If the path is not a valid zip/XLSX container.
+    """
+    with zipfile.ZipFile(path) as archive:
+        return sum(info.file_size for info in archive.infolist())
 
 
 def parse_upload(path: str, format_hint: str | None = None) -> tuple[pd.DataFrame, ParseMeta]:
