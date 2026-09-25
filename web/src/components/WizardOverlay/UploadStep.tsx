@@ -3,6 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import { useCreateSession } from '../../queries/useSessions';
 import { useUploadFile } from '../../queries/useFiles';
 import { SheetPicker } from '../SheetPicker';
+import { UPLOAD_ACCEPT_MAP } from '../../lib/uploadFormats';
 
 interface UploadStepProps {
   onSkip: () => void;
@@ -97,12 +98,7 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     disabled: isUploadPending,
-    accept: {
-      'text/csv': ['.csv'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-      'application/json': ['.json'],
-      'text/tab-separated-values': ['.tsv', '.tab'],
-    },
+    accept: UPLOAD_ACCEPT_MAP,
     maxFiles: 1,
   });
 

@@ -346,4 +346,16 @@ describe("FilesView", () => {
     const button = screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });
+
+  it("renders a file input whose accept list excludes .tab (F6)", () => {
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+
+    const { container } = renderWithProviders(<FilesView />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+
+    expect(input).toBeTruthy();
+    const accept = input?.getAttribute("accept") ?? "";
+    expect(accept).not.toContain(".tab");
+    expect(accept).toContain(".tsv");
+  });
 });

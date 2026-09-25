@@ -7,14 +7,12 @@ import { useChatStore } from "../stores/useChatStore";
 import { useWizardStore } from "../stores/useWizardStore";
 import { streamChat } from "../lib/sse";
 import { isKnownErrorCode, resolveErrorPresentation } from "../lib/errorCodes";
+// Composer attach control: accepted formats come from the shared client source
+// of truth, which mirrors the server allow-list (`.tab` is deliberately out).
+import { SUPPORTED_UPLOAD_EXTENSIONS, UPLOAD_ACCEPT_ATTR } from "../lib/uploadFormats";
 import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
-
-// Composer attach control: mirrors the server's accepted formats
-// (server/api/routers/files.py ``_SUPPORTED_EXTENSIONS``). ``.tab`` is NOT
-// accepted here because the server rejects it.
-const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".tsv", ".xlsx", ".json"];
 
 export default function ChatView() {
   const { sessionId } = useParams();
@@ -278,7 +276,7 @@ export default function ChatView() {
       const trimmedName = file.name.trim();
       const dot = trimmedName.lastIndexOf(".");
       const ext = dot >= 0 ? trimmedName.slice(dot).toLowerCase() : "";
-      if (!ACCEPTED_UPLOAD_EXTENSIONS.includes(ext)) {
+      if (!SUPPORTED_UPLOAD_EXTENSIONS.includes(ext)) {
         // No extension must not print an empty parenthesis.
         const shownExt = ext || "sin extensión";
         setAttachError(
@@ -795,7 +793,7 @@ export default function ChatView() {
           <input
             type="file"
             ref={fileInputRef}
-            accept=".csv,.tsv,.xlsx,.json"
+            accept={UPLOAD_ACCEPT_ATTR}
             aria-label="Adjuntar archivo"
             style={{ display: "none" }}
             onChange={(e) => {

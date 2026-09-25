@@ -229,4 +229,16 @@ describe('WizardOverlay', () => {
     expect(uploadHarness.calls).toBe(0);
     rendered.unmount();
   });
+
+  it('renders an upload input whose accept list excludes .tab (F6)', () => {
+    const { container } = renderWithProviders(<WizardOverlay />);
+    fireEvent.click(screen.getByText('Get started'));
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+
+    expect(input).toBeTruthy();
+    const accept = input?.getAttribute('accept') ?? '';
+    expect(accept).not.toContain('.tab');
+    expect(accept).toContain('.tsv');
+  });
 });

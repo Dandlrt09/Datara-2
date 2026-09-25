@@ -5,6 +5,7 @@ import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets
 import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
 
 export default function FilesView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -94,12 +95,7 @@ export default function FilesView() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      "text/csv": [".csv"],
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-      "application/json": [".json"],
-      "text/tab-separated-values": [".tsv", ".tab"],
-    },
+    accept: UPLOAD_ACCEPT_MAP,
     maxFiles: 1,
   });
 
