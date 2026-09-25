@@ -285,4 +285,65 @@ describe("FilesView", () => {
 
     expect(screen.queryByText(/This workbook has/)).toBeNull();
   });
+
+  const deletableFile = {
+    id: 42,
+    filename: "sales.csv",
+    format: "csv",
+    row_count: 10,
+    size_bytes: 2048,
+    created_at: "2024-01-01",
+    chat_session_id: "ses-1",
+    session_title: "Session 1",
+    has_profile: true,
+  };
+
+  it("clicking Delete opens the confirmation dialog and sends no request", () => {
+    const mutate = vi.fn();
+    useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText('Delete "sales.csv"? This cannot be undone.')).toBeTruthy();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("confirming the dialog deletes the file with its id", () => {
+    const mutate = vi.fn();
+    useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith(42);
+  });
+
+  it("cancelling the dialog sends no request", () => {
+    const mutate = vi.fn();
+    useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("disables the row delete trigger while a delete is pending", () => {
+    useDeleteFileMock.mockReturnValue({ mutate: vi.fn(), isError: false, isPending: true });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+
+    renderWithProviders(<FilesView />);
+
+    const button = screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
 });

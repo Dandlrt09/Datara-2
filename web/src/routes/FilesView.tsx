@@ -4,6 +4,7 @@ import { useSessions, useCreateSession } from "../queries/useSessions";
 import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets } from "../queries/useFiles";
 import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 export default function FilesView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -14,6 +15,9 @@ export default function FilesView() {
     sheets: string[];
     sheetName: string | null;
   } | null>(null);
+
+  // File awaiting confirmation before the irreversible delete.
+  const [fileToDelete, setFileToDelete] = useState<{ id: number; filename: string } | null>(null);
 
   const sessions = useSessions();
   const globalFiles = useFilesGlobal();
@@ -73,6 +77,17 @@ export default function FilesView() {
   const handleCancelUpload = useCallback(() => {
     uploadAbortRef.current?.abort();
   }, []);
+
+  // The DELETE request only fires after the user confirms in the dialog.
+  const handleCancelDelete = useCallback(() => {
+    setFileToDelete(null);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (!fileToDelete) return;
+    deleteFileMut.mutate(fileToDelete.id);
+    setFileToDelete(null);
+  }, [deleteFileMut, fileToDelete]);
 
   const uploadError = uploadFileMut.error as Error | null;
   const uploadAborted = uploadFileMut.isError && uploadError?.name === "AbortError";
@@ -210,7 +225,12 @@ export default function FilesView() {
             </thead>
             <tbody>
               {globalFiles.data.map((f) => (
-                <FileRow key={f.id} file={f} onDelete={() => deleteFileMut.mutate(f.id)} />
+                <FileRow
+                  key={f.id}
+                  file={f}
+                  onDelete={() => setFileToDelete({ id: f.id, filename: f.filename })}
+                  deletePending={deleteFileMut.isPending}
+                />
               ))}
             </tbody>
           </table>
@@ -223,6 +243,20 @@ export default function FilesView() {
           Delete failed: {(deleteFileMut.error as Error)?.message ?? "Unknown error"}
         </p>
       )}
+
+      <ConfirmDialog
+        open={fileToDelete !== null}
+        title="Delete file"
+        message={
+          fileToDelete
+            ? `Delete "${fileToDelete.filename}"? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete file"
+        cancelLabel="Cancel"
+        onConfirm={handleConfirmDelete}
+        onCancel={handleCancelDelete}
+      />
     </div>
   );
 }
@@ -230,9 +264,11 @@ export default function FilesView() {
 function FileRow({
   file,
   onDelete,
+  deletePending,
 }: {
   file: { id: number; filename: string; format: string; row_count?: number; size_bytes: number; session_title: string | null; has_profile?: boolean };
   onDelete: () => void;
+  deletePending: boolean;
 }) {
   const { data: profile } = useProfile(file.id);
   const isXlsx = file.format === "xlsx";
@@ -300,7 +336,11 @@ function FileRow({
             currentSheet={sheetsQuery.data.default_sheet}
           />
         )}
-        <button onClick={onDelete} style={{ marginLeft: 8, color: "red" }}>
+        <button
+          onClick={onDelete}
+          disabled={deletePending}
+          style={{ marginLeft: 8, color: "red", cursor: deletePending ? "not-allowed" : "pointer" }}
+        >
           Delete
         </button>
       </td>
