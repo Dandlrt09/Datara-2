@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState, type MutableRefObject } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useCreateSession } from '../../queries/useSessions';
 import { useUploadFile } from '../../queries/useFiles';
@@ -7,9 +7,11 @@ import { SheetPicker } from '../SheetPicker';
 interface UploadStepProps {
   onSkip: () => void;
   onNext: (sessionId: string) => void;
+  /** Shared abort channel owned by the parent wizard. */
+  abortRef: MutableRefObject<AbortController | null>;
 }
 
-export function UploadStep({ onSkip, onNext }: UploadStepProps) {
+export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
   const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // Set when the upload resolved to a multi-sheet workbook: the picker is
@@ -22,16 +24,16 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
 
   const createSessionMut = useCreateSession();
   const uploadFileMut = useUploadFile();
-  
-  const uploadAbortRef = useRef<AbortController | null>(null);
+
+  const isUploadPending = uploadFileMut.isPending || createSessionMut.isPending;
 
   const handleCancelUpload = useCallback(() => {
-    uploadAbortRef.current?.abort();
-  }, []);
+    abortRef.current?.abort();
+  }, [abortRef]);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
-      if (!acceptedFiles.length) return;
+      if (!acceptedFiles.length || isUploadPending) return;
       
       const file = acceptedFiles[0];
       setUploadError(null);
@@ -52,7 +54,7 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
       // Upload file
       if (sessionId) {
         const controller = new AbortController();
-        uploadAbortRef.current = controller;
+        abortRef.current = controller;
         
         try {
           const result = await uploadFileMut.mutateAsync({
@@ -78,14 +80,18 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
             return;
           }
           setUploadError(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+          // A settled upload must never be aborted by a later exit path (D4).
+          abortRef.current = null;
         }
       }
     },
-    [createdSessionId, createSessionMut, uploadFileMut, onNext]
+    [createdSessionId, createSessionMut, uploadFileMut, onNext, isUploadPending, abortRef]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    disabled: isUploadPending,
     accept: {
       'text/csv': ['.csv'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -95,7 +101,6 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
     maxFiles: 1,
   });
 
-  const isUploadPending = uploadFileMut.isPending || createSessionMut.isPending;
   const uploadAborted = uploadFileMut.isError && uploadFileMut.error instanceof Error && 
     uploadFileMut.error.name === 'AbortError';
 

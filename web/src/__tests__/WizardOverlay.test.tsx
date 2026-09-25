@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { renderWithProviders } from './test-utils';
 
 // Mock with vi.fn() directly
@@ -39,20 +39,72 @@ vi.mock('../queries/useSessions', () => ({
   }),
 }));
 
-vi.mock('../queries/useFiles', () => ({
-  useUploadFile: () => ({
-    mutateAsync: vi.fn().mockResolvedValue({}),
-    isPending: false,
-  }),
-  useSelectFileSheet: () => ({
-    mutateAsync: vi.fn(),
-    isPending: false,
-    isError: false,
-  }),
+// Upload harness: the mocked mutation returns a promise we control, captures the
+// AbortSignal handed to it, and flips isPending so the dropzone reflects a real
+// in-flight upload. Assertions read the signal's `aborted` flag — the receipt the
+// component can actually observe through the hook.
+const uploadHarness = vi.hoisted(() => ({
+  signals: [] as AbortSignal[],
+  calls: 0,
 }));
+
+vi.mock('../queries/useFiles', async () => {
+  const React = await import('react');
+  return {
+    useUploadFile: () => {
+      const [isPending, setIsPending] = React.useState(false);
+      const mutateAsync = React.useCallback((args: { signal?: AbortSignal }) => {
+        if (args.signal) uploadHarness.signals.push(args.signal);
+        uploadHarness.calls += 1;
+        setIsPending(true);
+        return new Promise<Record<string, never>>(() => {
+          // Intentionally never settles: the test drives the abort.
+        });
+      }, []);
+      return { mutateAsync, isPending, isError: false, error: null };
+    },
+    useSelectFileSheet: () => ({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: false,
+    }),
+  };
+});
 
 // Import after mocking
 import { WizardOverlay } from '../components/WizardOverlay';
+
+function makeFile(name = 'data.csv') {
+  return new File(['a,b\n1,2'], name, { type: 'text/csv' });
+}
+
+function getDropzone() {
+  return screen
+    .getByText(/Drag and drop a file here, or click to select|Uploading\.\.\./)
+    .closest('div') as HTMLElement;
+}
+
+function fireDrop(dropzone: HTMLElement, file = makeFile()) {
+  fireEvent.drop(dropzone, { dataTransfer: { files: [file], types: ['Files'] } });
+}
+
+async function goToUploadWithPendingUpload() {
+  const rendered = renderWithProviders(<WizardOverlay />);
+  fireEvent.click(screen.getByText('Get started'));
+  const dropzone = getDropzone();
+  await act(async () => {
+    fireDrop(dropzone);
+  });
+  await waitFor(() => expect(uploadHarness.calls).toBe(1));
+  await waitFor(() => expect(screen.getByText('Uploading...')).toBeTruthy());
+  expect(uploadHarness.signals[0].aborted).toBe(false);
+  return { ...rendered, dropzone };
+}
+
+beforeEach(() => {
+  uploadHarness.signals.length = 0;
+  uploadHarness.calls = 0;
+});
 
 describe('WizardOverlay', () => {
   it('renders welcome step initially', () => {
@@ -87,5 +139,46 @@ describe('WizardOverlay', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(dialog.getAttribute('aria-label')).toBe('First-run wizard');
+  });
+
+  it('aborts an in-flight upload when Skip is pressed', async () => {
+    await goToUploadWithPendingUpload();
+
+    fireEvent.click(screen.getByText('Skip'));
+
+    expect(uploadHarness.signals[0].aborted).toBe(true);
+  });
+
+  it('aborts an in-flight upload when Escape is pressed', async () => {
+    await goToUploadWithPendingUpload();
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+
+    expect(uploadHarness.signals[0].aborted).toBe(true);
+  });
+
+  it('aborts an in-flight upload when the wizard unmounts', async () => {
+    const { unmount } = await goToUploadWithPendingUpload();
+
+    unmount();
+
+    expect(uploadHarness.signals[0].aborted).toBe(true);
+  });
+
+  it('ignores a second drop while an upload is pending', async () => {
+    const { dropzone } = await goToUploadWithPendingUpload();
+
+    fireDrop(dropzone, makeFile('second.csv'));
+
+    await waitFor(() => expect(uploadHarness.calls).toBe(1));
+    expect(uploadHarness.signals.length).toBe(1);
+  });
+
+  it('still aborts an in-flight upload from the in-step Cancel button', async () => {
+    await goToUploadWithPendingUpload();
+
+    fireEvent.click(screen.getByText('Cancel'));
+
+    expect(uploadHarness.signals[0].aborted).toBe(true);
   });
 });

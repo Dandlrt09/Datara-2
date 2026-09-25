@@ -15,23 +15,28 @@ export function WizardOverlay() {
   const [currentStep, setCurrentStep] = useState<'welcome' | 'upload' | 'question' | 'finish'>('welcome');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
-  const [uploadAbortController, _setUploadAbortController] = useState<AbortController | null>(null);
   
   const dialogRef = useRef<HTMLDivElement>(null);
   const skipButtonRef = useRef<HTMLButtonElement>(null);
+  // Shared abort channel owned by the wizard and handed to the upload step, so
+  // Skip / Escape / unmount can abort a request the child started.
+  const uploadAbortRef = useRef<AbortController | null>(null);
 
   const handleSkip = useCallback(() => {
     // Abort any in-flight upload
-    if (uploadAbortController) {
-      uploadAbortController.abort();
-    }
+    uploadAbortRef.current?.abort();
     
     // Persist skipped state
     writeWizardFlags({ wizardSkipped: true });
     
     // Close wizard
     closeWizard(true);
-  }, [uploadAbortController, closeWizard]);
+  }, [closeWizard]);
+
+  // Abort any in-flight upload when the wizard unmounts (e.g. external close).
+  useEffect(() => () => {
+    uploadAbortRef.current?.abort();
+  }, []);
 
   const handleUploadSuccess = useCallback((newSessionId: string) => {
     setSessionId(newSessionId);
@@ -71,6 +76,7 @@ export function WizardOverlay() {
           <UploadStep
             onSkip={handleSkip}
             onNext={handleUploadSuccess}
+            abortRef={uploadAbortRef}
           />
         );
       case 'question':
