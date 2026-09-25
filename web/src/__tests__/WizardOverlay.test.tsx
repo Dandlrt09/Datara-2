@@ -32,9 +32,25 @@ vi.mock('../lib/wizardStorage', () => ({
   writeWizardFlags: vi.fn(),
 }));
 
+// Session-creation harness: lets a test defer session creation so it can leave
+// the wizard while the request is still in flight. When `deferred` is null the
+// mutation resolves immediately (default behaviour, keeps existing tests green).
+const { createSessionHarness } = vi.hoisted(() => ({
+  createSessionHarness: {
+    deferred: null as null | {
+      promise: Promise<{ id: string }>;
+      resolve: (v: { id: string }) => void;
+    },
+  },
+}));
+
 vi.mock('../queries/useSessions', () => ({
   useCreateSession: () => ({
-    mutateAsync: vi.fn().mockResolvedValue({ id: 'ses-123' }),
+    mutateAsync: vi.fn(() =>
+      createSessionHarness.deferred
+        ? createSessionHarness.deferred.promise
+        : Promise.resolve({ id: 'ses-123' })
+    ),
     isPending: false,
   }),
 }));
@@ -104,6 +120,7 @@ async function goToUploadWithPendingUpload() {
 beforeEach(() => {
   uploadHarness.signals.length = 0;
   uploadHarness.calls = 0;
+  createSessionHarness.deferred = null;
 });
 
 describe('WizardOverlay', () => {
@@ -180,5 +197,36 @@ describe('WizardOverlay', () => {
     fireEvent.click(screen.getByText('Cancel'));
 
     expect(uploadHarness.signals[0].aborted).toBe(true);
+  });
+
+  it('does not start the upload when the wizard is left during session creation', async () => {
+    const rendered = renderWithProviders(<WizardOverlay />);
+    fireEvent.click(screen.getByText('Get started'));
+
+    // Defer session creation so the wizard can be left while it is in flight.
+    let resolveSession!: (v: { id: string }) => void;
+    createSessionHarness.deferred = {
+      promise: new Promise<{ id: string }>((resolve) => {
+        resolveSession = resolve;
+      }),
+      resolve: (v) => resolveSession(v),
+    };
+
+    const dropzone = getDropzone();
+    await act(async () => {
+      fireDrop(dropzone);
+    });
+
+    // Leave the wizard while session creation is still pending.
+    fireEvent.click(screen.getByText('Skip'));
+
+    // Session creation now resolves late; the upload must NOT start.
+    await act(async () => {
+      createSessionHarness.deferred!.resolve({ id: 'ses-late' });
+      await Promise.resolve();
+    });
+
+    expect(uploadHarness.calls).toBe(0);
+    rendered.unmount();
   });
 });

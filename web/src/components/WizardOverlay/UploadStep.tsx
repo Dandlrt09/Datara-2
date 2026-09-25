@@ -34,56 +34,61 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (!acceptedFiles.length || isUploadPending) return;
-      
+
       const file = acceptedFiles[0];
       setUploadError(null);
-      
-      // Create session if not already created in this wizard run
-      let sessionId = createdSessionId;
-      if (!sessionId) {
-        try {
-          const result = await createSessionMut.mutateAsync(undefined);
-          sessionId = result.id;
-          setCreatedSessionId(sessionId);
-        } catch (err) {
-          setUploadError(`Failed to create session: ${err instanceof Error ? err.message : 'Unknown error'}`);
-          return;
-        }
-      }
-      
-      // Upload file
-      if (sessionId) {
-        const controller = new AbortController();
-        abortRef.current = controller;
-        
-        try {
-          const result = await uploadFileMut.mutateAsync({
-            sessionId,
-            file,
-            signal: controller.signal,
-          });
 
-          if (result?.sheets && result.sheets.length > 1) {
-            // Multi-sheet workbook: surface the picker before advancing.
-            setPendingSheets({
-              fileId: result.id,
-              sheets: result.sheets,
-              sheetName: result.sheet_name ?? null,
-            });
-          } else {
-            // Success - move to next step
-            onNext(sessionId);
-          }
-        } catch (err) {
-          if (err instanceof Error && err.name === 'AbortError') {
-            // Upload cancelled - don't show error
+      // Create the controller synchronously, before the first await, so a Skip /
+      // Escape / unmount during session creation still has something to abort.
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        // Create session if not already created in this wizard run
+        let sessionId = createdSessionId;
+        if (!sessionId) {
+          try {
+            const result = await createSessionMut.mutateAsync(undefined);
+            if (controller.signal.aborted) return; // wizard left during creation
+            sessionId = result.id;
+            setCreatedSessionId(sessionId);
+          } catch (err) {
+            setUploadError(`Failed to create session: ${err instanceof Error ? err.message : 'Unknown error'}`);
             return;
           }
-          setUploadError(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        } finally {
-          // A settled upload must never be aborted by a later exit path (D4).
-          abortRef.current = null;
         }
+
+        // Upload file
+        if (sessionId && !controller.signal.aborted) {
+          try {
+            const result = await uploadFileMut.mutateAsync({
+              sessionId,
+              file,
+              signal: controller.signal,
+            });
+
+            if (result?.sheets && result.sheets.length > 1) {
+              // Multi-sheet workbook: surface the picker before advancing.
+              setPendingSheets({
+                fileId: result.id,
+                sheets: result.sheets,
+                sheetName: result.sheet_name ?? null,
+              });
+            } else {
+              // Success - move to next step
+              onNext(sessionId);
+            }
+          } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+              // Upload cancelled - don't show error
+              return;
+            }
+            setUploadError(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          }
+        }
+      } finally {
+        // Only clear if this is still the current controller (never clobber a newer one).
+        if (abortRef.current === controller) abortRef.current = null;
       }
     },
     [createdSessionId, createSessionMut, uploadFileMut, onNext, isUploadPending, abortRef]
