@@ -37,6 +37,8 @@ export interface ErrorCardProps {
   variant?: ErrorCardVariant;
   /** Label for the retry button; defaults to the original "Retry". */
   actionLabel?: string;
+  /** Optional content rendered between the message and the retry action. */
+  children?: ReactNode;
 }
 
 export function ErrorCard({
@@ -46,6 +48,7 @@ export function ErrorCard({
   onRetry,
   variant = "error",
   actionLabel = "Retry",
+  children,
 }: ErrorCardProps) {
   const displayMessage =
     message ?? (error instanceof Error ? error.message : undefined);
@@ -68,6 +71,7 @@ export function ErrorCard({
       {displayMessage && (
         <p style={{ margin: "0 0 12px", color: "#555" }}>{displayMessage}</p>
       )}
+      {children}
       {onRetry && (
         <button onClick={onRetry} style={{ padding: "6px 16px" }}>
           {actionLabel}

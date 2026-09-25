@@ -619,6 +619,61 @@ class SqliteStore:
         )
         return dict(rows[0])
 
+    async def reselect_sheet(
+        self,
+        *,
+        file_id: int,
+        user_id: int,
+        sheet_name: str,
+        row_count: int | None,
+        schema_json: str,
+        stats_json: str,
+        sample_json: str,
+    ) -> dict[str, Any] | None:
+        """Re-profile a file against a different sheet in ONE transaction.
+
+        Updates ``files.sheet_name``/``row_count`` (ownership enforced in the
+        WHERE clause) and upserts the file's single ``profiles`` row, with a
+        single ``commit()``. Doing the two writes separately would open a
+        window where the profile is sheet B while ``files.sheet_name`` still
+        says sheet A.
+
+        Returns the updated file row (same column list as ``get_file``), or
+        ``None`` when no row belongs to this user (the route answers 404).
+        Any failure rolls back and re-raises, so a failed switch leaves both
+        rows exactly as they were.
+        """
+        try:
+            cursor = await self.conn.execute(
+                "UPDATE files SET sheet_name = ?, row_count = ? "
+                "WHERE id = ? AND user_id = ?",
+                (sheet_name, row_count, file_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                await self.conn.rollback()
+                return None
+            await self.conn.execute(
+                "INSERT INTO profiles (file_id, schema_json, stats_json, sample_json) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(file_id) DO UPDATE SET "
+                "  schema_json = excluded.schema_json,"
+                "  stats_json = excluded.stats_json,"
+                "  sample_json = excluded.sample_json,"
+                "  generated_at = datetime('now')",
+                (file_id, schema_json, stats_json, sample_json),
+            )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        )
+        return dict(rows[0]) if rows else None
+
     async def list_files(
         self,
         user_id: int,

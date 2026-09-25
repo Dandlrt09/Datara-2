@@ -12,6 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -67,6 +68,18 @@ class ProfileResponse(BaseModel):
 class SheetListResponse(BaseModel):
     sheets: list[str]
     default_sheet: str
+
+
+class SheetSelectRequest(BaseModel):
+    sheet_name: str
+
+
+class SheetSelectResponse(BaseModel):
+    file_id: int
+    filename: str
+    sheet_name: str
+    sheets: list[str]
+    row_count: int | None = None
 
 
 class FileCreateResponse(BaseModel):
@@ -149,6 +162,46 @@ def _validate_extension(filename: str) -> str:
             detail=f"Unsupported file format: {ext}. Supported: csv, tsv, xlsx, json",
         )
     return ext
+
+
+async def _load_owned_xlsx(
+    file_id: int,
+    user_id: int,
+    store: SqliteStore,
+) -> tuple[dict, str]:
+    """Resolve an owned, on-disk XLSX file for a sheet operation.
+
+    Shared by ``GET /files/{id}/sheets`` and ``POST /files/{id}/sheet``. The
+    lookup filters on ``user_id`` so an unknown or cross-user ``file_id`` is
+    a 404. The containment check (Decision D4) is defense in depth: these
+    routes re-open a path read from the DB, so a corrupted/hostile row must
+    never make the server parse an arbitrary file. Uploads only ever land
+    under ``UPLOADS_DIR``, so this is a no-op for real rows.
+
+    Returns ``(file_record, resolved_storage_path)``.
+    """
+    file_record = await store.get_file(file_id, user_id)
+    if file_record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    if file_record.get("format") != "xlsx":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is not an XLSX workbook",
+        )
+    storage_path = file_record.get("storage_path")
+    if not storage_path or not os.path.exists(storage_path):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stored file is missing on disk",
+        )
+    resolved = Path(storage_path).resolve()
+    uploads_root = UPLOADS_DIR.resolve()
+    if not resolved.is_relative_to(uploads_root):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stored file path is outside the uploads directory",
+        )
+    return file_record, str(resolved)
 
 
 @router.post("/sessions/{session_id}/files", status_code=201)
@@ -421,6 +474,138 @@ async def list_all_files(
         )
         for r in rows
     ]
+
+
+@router.get("/files/{file_id}/sheets", response_model=SheetListResponse)
+async def list_file_sheets(
+    file_id: int,
+    user: dict = Depends(current_user),
+    store: SqliteStore = Depends(get_store),
+):
+    """List the sheets of an uploaded XLSX workbook (ownership enforced).
+
+    The sheet list is re-derived from the stored file on demand (Decision
+    D3): the file is the source of truth, so no list is persisted and no
+    migration is needed. Works for workbooks uploaded before this feature.
+    """
+    file_record, storage_path = await _load_owned_xlsx(file_id, user["id"], store)
+    try:
+        sheets = pd.ExcelFile(storage_path).sheet_names
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read workbook: {e}",
+        )
+    if not sheets:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workbook contains no sheets",
+        )
+    stored_sheet = file_record.get("sheet_name")
+    default_sheet = stored_sheet if stored_sheet in sheets else sheets[0]
+    return SheetListResponse(sheets=sheets, default_sheet=default_sheet)
+
+
+@router.post("/files/{file_id}/sheet", response_model=SheetSelectResponse)
+async def select_file_sheet(
+    file_id: int,
+    payload: SheetSelectRequest,
+    user: dict = Depends(current_user),
+    store: SqliteStore = Depends(get_store),
+):
+    """Re-profile a file against the chosen XLSX sheet, in place.
+
+    Re-parses the sheet from the already-stored file (no re-upload, no new
+    ``files`` row, no bytes written to disk), rebuilds the profile, and
+    atomically swaps ``files.sheet_name``/``row_count`` plus the single
+    ``profiles`` row. Selecting the already-active sheet succeeds as a
+    no-op re-profile (Decision D7).
+    """
+    user_id = user["id"]
+    file_record, storage_path = await _load_owned_xlsx(file_id, user_id, store)
+
+    try:
+        sheets = pd.ExcelFile(storage_path).sheet_names
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read workbook: {e}",
+        )
+
+    if payload.sheet_name not in sheets:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Sheet '{payload.sheet_name}' not found. "
+                f"Available: {', '.join(sheets)}"
+            ),
+        )
+
+    limits = get_limits()
+
+    # Same zip-bomb pre-check as the upload route: the stored file was
+    # validated at upload time, but this route re-opens it.
+    try:
+        expanded_bytes = xlsx_uncompressed_size(storage_path)
+    except Exception:
+        expanded_bytes = None
+    if expanded_bytes is not None and expanded_bytes > limits.max_expanded_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"XLSX expands to {expanded_bytes} bytes, over the "
+                f"{limits.max_expanded_bytes}-byte expanded limit."
+            ),
+        )
+
+    # Parse inline in the async handler, exactly like the upload route
+    # (Decision D5 — run_in_executor offload is a separate item).
+    try:
+        df, meta = parse_upload_sheet(storage_path, payload.sheet_name)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse sheet: {e}",
+        )
+
+    # Same post-parse footprint backstop as the upload route.
+    footprint_bytes = int(df.memory_usage(deep=True).sum())
+    if footprint_bytes > limits.max_expanded_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"Parsed data uses {footprint_bytes} bytes in memory, over the "
+                f"{limits.max_expanded_bytes}-byte expanded limit."
+            ),
+        )
+
+    # Build AND serialize BEFORE the DB write, same as upload: a
+    # serialization failure must never leave a partially switched file.
+    profile = build_profile(df, size_bytes=file_record["size_bytes"])
+    schema_json, stats_json, sample_json = serialize_profile(profile)
+
+    updated = await store.reselect_sheet(
+        file_id=file_id,
+        user_id=user_id,
+        sheet_name=payload.sheet_name,
+        row_count=meta.row_count,
+        schema_json=schema_json,
+        stats_json=stats_json,
+        sample_json=sample_json,
+    )
+    if updated is None:
+        # Lost the row between the ownership check and the UPDATE.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    return SheetSelectResponse(
+        file_id=updated["id"],
+        filename=updated["filename"],
+        sheet_name=updated["sheet_name"],
+        sheets=meta.sheets or sheets,
+        row_count=updated["row_count"],
+    )
 
 
 @router.get("/files/{file_id}/profile", response_model=ProfileResponse)

@@ -305,6 +305,19 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
             "dataset with EXACTLY its 'path' value above (absolute path), e.g. "
             "df = pd.read_csv('<path>'). Never invent paths."
         )
+        if any(p.get("sheet_name") for p in profiles):
+            # F3: a selected XLSX sheet must drive the read. Conditional on a
+            # non-null 'sheet_name' so CSV/TSV/JSON sessions keep the exact
+            # read_csv guidance above.
+            system_prompt += (
+                "\n\nIMPORTANT — selected Excel sheet: a dataset whose entry "
+                "above has a non-null 'sheet_name' is an Excel workbook and "
+                "MUST be read with that sheet, e.g. "
+                "df = pd.read_excel('<path>', sheet_name='<sheet_name>') — "
+                "replacing the read_csv example for that dataset. Do NOT use "
+                "read_csv for a dataset that has a 'sheet_name'. Datasets "
+                "with a null 'sheet_name' keep the read_csv example above."
+            )
         system_prompt += (
             "\n\nIMPORTANT — dataset facts (citation discipline): each "
             "dataset has an authoritative 'row_count' = total data rows. "

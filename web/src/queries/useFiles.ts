@@ -9,6 +9,10 @@ export interface UploadedFile {
   size_bytes: number;
   created_at: string;
   has_profile?: boolean;
+  /** Active sheet name (XLSX only); null for other formats. */
+  sheet_name?: string | null;
+  /** All sheet names (XLSX only); null for other formats. */
+  sheets?: string[] | null;
 }
 
 export interface FileListItem extends UploadedFile {
@@ -104,5 +108,52 @@ export function useProfile(fileId: number | null) {
     queryKey: ["profile", fileId],
     queryFn: () => api.get<ProfileSummary>(`/api/files/${fileId}/profile`),
     enabled: !!fileId,
+  });
+}
+
+export interface FileSheets {
+  sheets: string[];
+  default_sheet: string;
+}
+
+/** Lazy sheet list for a file; disabled until the caller opts in so the
+ * picker only fetches when the user opens it. */
+export function useFileSheets(fileId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: ["file-sheets", fileId],
+    queryFn: () => api.get<FileSheets>(`/api/files/${fileId}/sheets`),
+    enabled: enabled && !!fileId,
+  });
+}
+
+export interface SheetSelectResult {
+  file_id: number;
+  filename: string;
+  sheet_name: string;
+  sheets: string[];
+  row_count: number | null;
+}
+
+/** Re-profile an XLSX file against another sheet in place. */
+export function useSelectFileSheet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      fileId,
+      sheetName,
+    }: {
+      fileId: number;
+      sheetName: string;
+    }) =>
+      api.post<SheetSelectResult>(`/api/files/${fileId}/sheet`, {
+        sheet_name: sheetName,
+      }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["files"] });
+      qc.invalidateQueries({ queryKey: ["profile", variables.fileId] });
+      // The per-row picker reads default_sheet from this query; without the
+      // invalidation it would keep offering the pre-switch sheet.
+      qc.invalidateQueries({ queryKey: ["file-sheets", variables.fileId] });
+    },
   });
 }

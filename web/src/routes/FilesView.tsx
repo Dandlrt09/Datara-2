@@ -1,11 +1,19 @@
 import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSessions, useCreateSession } from "../queries/useSessions";
-import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile } from "../queries/useFiles";
+import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets } from "../queries/useFiles";
 import { QueryError } from "../components/ErrorCard";
+import { SheetPicker } from "../components/SheetPicker";
 
 export default function FilesView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Set right after a multi-sheet upload so the picker can be shown before
+  // the user leaves the page; cleared once a sheet is chosen.
+  const [uploadedSheets, setUploadedSheets] = useState<{
+    fileId: number;
+    sheets: string[];
+    sheetName: string | null;
+  } | null>(null);
 
   const sessions = useSessions();
   const globalFiles = useFilesGlobal();
@@ -34,18 +42,30 @@ export default function FilesView() {
   const hasSessions = sessionList.length > 0;
 
   const onDrop = useCallback(
-    (accepted: File[]) => {
+    async (accepted: File[]) => {
       if (!accepted.length || !effectiveSessionId) return;
       if (uploadFileMut.isPending) return; // one upload at a time
       const file = accepted[0];
       if (!file) return;
       const controller = new AbortController();
       uploadAbortRef.current = controller;
-      uploadFileMut.mutate({
-        sessionId: effectiveSessionId,
-        file,
-        signal: controller.signal,
-      });
+      setUploadedSheets(null);
+      try {
+        const result = await uploadFileMut.mutateAsync({
+          sessionId: effectiveSessionId,
+          file,
+          signal: controller.signal,
+        });
+        if (result?.sheets && result.sheets.length > 1) {
+          setUploadedSheets({
+            fileId: result.id,
+            sheets: result.sheets,
+            sheetName: result.sheet_name ?? null,
+          });
+        }
+      } catch {
+        // The upload error banner below renders the failure.
+      }
     },
     [effectiveSessionId, uploadFileMut]
   );
@@ -159,6 +179,17 @@ export default function FilesView() {
         </p>
       )}
 
+      {/* Multi-sheet workbook: warn and let the user pick a sheet right
+          after upload, so the first sheet never silently wins. */}
+      {uploadedSheets && (
+        <SheetPicker
+          fileId={uploadedSheets.fileId}
+          sheets={uploadedSheets.sheets}
+          currentSheet={uploadedSheets.sheetName}
+          onSelected={() => setUploadedSheets(null)}
+        />
+      )}
+
       {/* Global file list */}
       <QueryError error={globalFiles.error as Error | null} onRetry={() => globalFiles.refetch()}>
         {globalFiles.isLoading && <p>Loading files...</p>}
@@ -204,6 +235,12 @@ function FileRow({
   onDelete: () => void;
 }) {
   const { data: profile } = useProfile(file.id);
+  const isXlsx = file.format === "xlsx";
+  // Lazy per-row sheet list: only fetched when the user opens the picker,
+  // so an already-uploaded workbook (possibly pre-F3) can be switched too.
+  const [showSheets, setShowSheets] = useState(false);
+  const sheetsQuery = useFileSheets(isXlsx ? file.id : null, showSheets);
+  const hasMultipleSheets = (sheetsQuery.data?.sheets.length ?? 0) > 1;
 
   return (
     <tr>
@@ -231,6 +268,14 @@ function FileRow({
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{(file.size_bytes / 1024).toFixed(1)} KB</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.session_title ?? "—"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
+        {isXlsx && (
+          <button
+            onClick={() => setShowSheets((v) => !v)}
+            style={{ marginRight: 8 }}
+          >
+            {showSheets ? "Hide sheets" : "Sheets"}
+          </button>
+        )}
         {profile && (
           <details>
             <summary>Profile</summary>
@@ -238,6 +283,22 @@ function FileRow({
               {JSON.stringify(profile, null, 2)}
             </pre>
           </details>
+        )}
+        {showSheets && sheetsQuery.isLoading && !sheetsQuery.data && (
+          <span style={{ marginRight: 8, color: "#777" }}>Reading sheets…</span>
+        )}
+        {showSheets && sheetsQuery.isError && !sheetsQuery.data && (
+          <span style={{ marginRight: 8, color: "red" }}>Could not read sheets</span>
+        )}
+        {showSheets && sheetsQuery.data && !hasMultipleSheets && (
+          <span style={{ marginRight: 8, color: "#777" }}>Only one sheet</span>
+        )}
+        {showSheets && hasMultipleSheets && sheetsQuery.data && (
+          <SheetPicker
+            fileId={file.id}
+            sheets={sheetsQuery.data.sheets}
+            currentSheet={sheetsQuery.data.default_sheet}
+          />
         )}
         <button onClick={onDelete} style={{ marginLeft: 8, color: "red" }}>
           Delete

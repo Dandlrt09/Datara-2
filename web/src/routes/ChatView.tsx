@@ -9,6 +9,7 @@ import { streamChat } from "../lib/sse";
 import { isKnownErrorCode, resolveErrorPresentation } from "../lib/errorCodes";
 import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
+import { SheetPicker } from "../components/SheetPicker";
 
 // Composer attach control: mirrors the server's accepted formats
 // (server/api/routers/files.py ``_SUPPORTED_EXTENSIONS``). ``.tab`` is NOT
@@ -67,6 +68,13 @@ export default function ChatView() {
   const uploadCanceledByUserRef = useRef(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  // Set after attaching a multi-sheet workbook so the picker can be shown
+  // inline before the first sheet silently becomes the analyzed one.
+  const [attachSheets, setAttachSheets] = useState<{
+    fileId: number;
+    sheets: string[];
+    sheetName: string | null;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
@@ -89,6 +97,7 @@ export default function ChatView() {
     // leak it into the next chat.
     setAttachError(null);
     setAttachNotice(null);
+    setAttachSheets(null);
   }, [sessionId]);
 
   // Consume suggested question from location.state (one-shot)
@@ -280,16 +289,24 @@ export default function ChatView() {
 
       setAttachError(null);
       setAttachNotice(null);
+      setAttachSheets(null);
       uploadCanceledByUserRef.current = false;
       const controller = new AbortController();
       uploadAbortRef.current = controller;
       try {
-        await uploadFileMut.mutateAsync({
+        const result = await uploadFileMut.mutateAsync({
           sessionId,
           file,
           signal: controller.signal,
         });
         setAttachNotice(`${file.name} adjuntado a esta sesión.`);
+        if (result?.sheets && result.sheets.length > 1) {
+          setAttachSheets({
+            fileId: result.id,
+            sheets: result.sheets,
+            sheetName: result.sheet_name ?? null,
+          });
+        }
       } catch (e) {
         if ((e as Error)?.name === "AbortError") {
           // Silent when the abort came from leaving the session: the new
@@ -758,6 +775,14 @@ export default function ChatView() {
               </p>
             )}
           </div>
+        )}
+        {attachSheets && (
+          <SheetPicker
+            fileId={attachSheets.fileId}
+            sheets={attachSheets.sheets}
+            currentSheet={attachSheets.sheetName}
+            onSelected={() => setAttachSheets(null)}
+          />
         )}
         <div
           style={{

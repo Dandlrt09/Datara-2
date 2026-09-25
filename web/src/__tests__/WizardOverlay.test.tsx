@@ -44,6 +44,11 @@ vi.mock('../queries/useFiles', () => ({
     mutateAsync: vi.fn().mockResolvedValue({}),
     isPending: false,
   }),
+  useSelectFileSheet: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+  }),
 }));
 
 // Import after mocking

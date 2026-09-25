@@ -21,6 +21,19 @@ from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
 
+_XLSX_MIME = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+def _xlsx_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
+    """Build an in-memory multi-sheet XLSX payload."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for name, df in sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
+    return buffer.getvalue()
+
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
@@ -551,3 +564,199 @@ class TestSameNameReupload:
         assert len(stored) == 1
         assert stored[0].is_file()
         assert stored[0].stat().st_size > 0
+
+
+class TestFileSheets:
+    """Sheet listing + in-place sheet switch (F3).
+
+    A multi-sheet workbook must be visible and switchable without a
+    re-upload: the new profile comes from the stored bytes, the sheet list is
+    re-derived from disk, and exactly one ``files`` row ever exists.
+    """
+
+    def _upload_two_sheet(
+        self,
+        auth_client,
+        session_id,
+        filename="multi.xlsx",
+        second=None,
+    ):
+        sheets = {"Data": pd.DataFrame({"a": [1, 2]})}
+        sheets["Meta"] = second if second is not None else pd.DataFrame({"b": [3, 4]})
+        content = _xlsx_bytes(sheets)
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": (filename, content, _XLSX_MIME)},
+        )
+        assert resp.status_code == 201
+        return resp.json()
+
+    # ── GET /files/{id}/sheets ──────────────────────────────────────────
+    def test_list_sheets(self, auth_client, session_id):
+        data = self._upload_two_sheet(auth_client, session_id)
+        resp = auth_client.get(f"/api/files/{data['id']}/sheets")
+        assert resp.status_code == 200
+        assert resp.json() == {"sheets": ["Data", "Meta"], "default_sheet": "Data"}
+
+    def test_list_sheets_requires_auth(self, client):
+        resp = client.get("/api/files/1/sheets")
+        assert resp.status_code == 401
+
+    def test_list_sheets_unknown_file(self, auth_client):
+        resp = auth_client.get("/api/files/99999/sheets")
+        assert resp.status_code == 404
+
+    def test_list_sheets_cross_user(self, auth_client, session_id, client):
+        data = self._upload_two_sheet(
+            auth_client, session_id, filename="cross_sheets.xlsx"
+        )
+        resp_b = client.post(
+            "/api/auth/register",
+            json={"email": "sheets_b@example.com", "password": "password123"},
+        )
+        cookie_b = resp_b.headers["set-cookie"]
+
+        resp = client.get(
+            f"/api/files/{data['id']}/sheets", headers={"Cookie": cookie_b}
+        )
+        assert resp.status_code == 404
+
+    def test_list_sheets_non_xlsx(self, auth_client, session_id):
+        upload = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("plain.csv", b"a,b\n1,2\n", "text/csv")},
+        )
+        file_id = upload.json()["id"]
+
+        resp = auth_client.get(f"/api/files/{file_id}/sheets")
+        assert resp.status_code == 400
+
+    # ── POST /files/{id}/sheet ──────────────────────────────────────────
+    def test_switch_sheet_reprofiles_in_place(self, auth_client, session_id):
+        data = self._upload_two_sheet(
+            auth_client, session_id, filename="switch.xlsx"
+        )
+        file_id = data["id"]
+        assert data["sheet_name"] == "Data"
+
+        before = auth_client.get(f"/api/files/{file_id}/profile").json()
+        assert [c["name"] for c in before["schema"]["columns"]] == ["a"]
+
+        resp = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Meta"}
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["file_id"] == file_id
+        assert body["filename"] == "switch.xlsx"
+        assert body["sheet_name"] == "Meta"
+        assert body["sheets"] == ["Data", "Meta"]
+        assert body["row_count"] == 2
+
+        after = auth_client.get(f"/api/files/{file_id}/profile").json()
+        assert [c["name"] for c in after["schema"]["columns"]] == ["b"]
+
+        # Exactly one file row, same id and byte size — no re-upload.
+        listing = auth_client.get(f"/api/sessions/{session_id}/files").json()
+        assert len(listing) == 1
+        assert listing[0]["id"] == file_id
+        assert listing[0]["size_bytes"] == data["size_bytes"]
+
+        # The stored active sheet follows the profile.
+        sheets = auth_client.get(f"/api/files/{file_id}/sheets").json()
+        assert sheets["default_sheet"] == "Meta"
+
+    def test_switch_same_sheet_is_idempotent(self, auth_client, session_id):
+        data = self._upload_two_sheet(
+            auth_client, session_id, filename="idem.xlsx"
+        )
+        file_id = data["id"]
+
+        first = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Data"}
+        )
+        assert first.status_code == 200
+        after_first = auth_client.get(f"/api/files/{file_id}/profile").json()
+
+        second = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Data"}
+        )
+        assert second.status_code == 200
+        after_second = auth_client.get(f"/api/files/{file_id}/profile").json()
+
+        # Re-applying the already-active sheet re-profiles the SAME sheet:
+        # the content and row count are unchanged (generated_at is excluded
+        # because a re-profile may bump it).
+        assert after_second["schema"] == after_first["schema"]
+        assert after_second["stats"] == after_first["stats"]
+        assert after_second["sample"] == after_first["sample"]
+        assert [c["name"] for c in after_second["schema"]["columns"]] == ["a"]
+        assert second.json()["row_count"] == first.json()["row_count"]
+
+    def test_switch_unknown_sheet_names_available(self, auth_client, session_id):
+        data = self._upload_two_sheet(
+            auth_client, session_id, filename="unknown.xlsx"
+        )
+        resp = auth_client.post(
+            f"/api/files/{data['id']}/sheet", json={"sheet_name": "Missing"}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "Sheet 'Missing' not found" in detail
+        assert "Data" in detail
+        assert "Meta" in detail
+
+    def test_switch_cross_user_404(self, auth_client, session_id, client):
+        data = self._upload_two_sheet(
+            auth_client, session_id, filename="cross_switch.xlsx"
+        )
+        resp_b = client.post(
+            "/api/auth/register",
+            json={"email": "switch_b@example.com", "password": "password123"},
+        )
+        cookie_b = resp_b.headers["set-cookie"]
+
+        resp = client.post(
+            f"/api/files/{data['id']}/sheet",
+            json={"sheet_name": "Meta"},
+            headers={"Cookie": cookie_b},
+        )
+        assert resp.status_code == 404
+
+    def test_switch_non_xlsx_400(self, auth_client, session_id):
+        upload = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("plain2.csv", b"a,b\n1,2\n", "text/csv")},
+        )
+        file_id = upload.json()["id"]
+
+        resp = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Data"}
+        )
+        assert resp.status_code == 400
+
+    def test_switch_empty_sheet_400_and_nothing_committed(
+        self, auth_client, session_id
+    ):
+        data = self._upload_two_sheet(
+            auth_client,
+            session_id,
+            filename="empty_sheet.xlsx",
+            second=pd.DataFrame({"b": []}),
+        )
+        file_id = data["id"]
+
+        before_profile = auth_client.get(f"/api/files/{file_id}/profile").json()
+        before_sheets = auth_client.get(f"/api/files/{file_id}/sheets").json()
+
+        resp = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Meta"}
+        )
+        assert resp.status_code == 400
+        assert "empty" in resp.json()["detail"].lower()
+
+        # A failed switch leaves the previous profile and active sheet intact.
+        after_profile = auth_client.get(f"/api/files/{file_id}/profile").json()
+        assert after_profile == before_profile
+        assert [c["name"] for c in after_profile["schema"]["columns"]] == ["a"]
+        assert auth_client.get(f"/api/files/{file_id}/sheets").json() == before_sheets

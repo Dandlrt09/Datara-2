@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useCreateSession } from '../../queries/useSessions';
 import { useUploadFile } from '../../queries/useFiles';
+import { SheetPicker } from '../SheetPicker';
 
 interface UploadStepProps {
   onSkip: () => void;
@@ -11,7 +12,14 @@ interface UploadStepProps {
 export function UploadStep({ onSkip, onNext }: UploadStepProps) {
   const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  
+  // Set when the upload resolved to a multi-sheet workbook: the picker is
+  // shown before advancing so the first sheet never silently wins.
+  const [pendingSheets, setPendingSheets] = useState<{
+    fileId: number;
+    sheets: string[];
+    sheetName: string | null;
+  } | null>(null);
+
   const createSessionMut = useCreateSession();
   const uploadFileMut = useUploadFile();
   
@@ -47,14 +55,23 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
         uploadAbortRef.current = controller;
         
         try {
-          await uploadFileMut.mutateAsync({
+          const result = await uploadFileMut.mutateAsync({
             sessionId,
             file,
             signal: controller.signal,
           });
-          
-          // Success - move to next step
-          onNext(sessionId);
+
+          if (result?.sheets && result.sheets.length > 1) {
+            // Multi-sheet workbook: surface the picker before advancing.
+            setPendingSheets({
+              fileId: result.id,
+              sheets: result.sheets,
+              sheetName: result.sheet_name ?? null,
+            });
+          } else {
+            // Success - move to next step
+            onNext(sessionId);
+          }
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') {
             // Upload cancelled - don't show error
@@ -149,6 +166,19 @@ export function UploadStep({ onSkip, onNext }: UploadStepProps) {
         <p style={{ color: '#555', marginBottom: '16px' }}>
           Upload cancelled
         </p>
+      )}
+
+      {/* Multi-sheet workbook: pick a sheet, then advance. */}
+      {pendingSheets && (
+        <SheetPicker
+          fileId={pendingSheets.fileId}
+          sheets={pendingSheets.sheets}
+          currentSheet={pendingSheets.sheetName}
+          onSelected={() => {
+            setPendingSheets(null);
+            if (createdSessionId) onNext(createdSessionId);
+          }}
+        />
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

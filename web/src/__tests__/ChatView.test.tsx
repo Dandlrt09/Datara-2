@@ -135,6 +135,11 @@ const { useUploadFileMock, UploadErrorMock } = vi.hoisted(() => {
 vi.mock("../queries/useFiles", () => ({
   useUploadFile: () => useUploadFileMock(),
   UploadError: UploadErrorMock,
+  useSelectFileSheet: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+  }),
 }));
 
 vi.mock("../lib/sse", () => ({

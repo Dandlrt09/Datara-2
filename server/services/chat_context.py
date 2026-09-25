@@ -56,13 +56,23 @@ async def _ensure_profile(
     if not path or not os.path.exists(path):
         return None
     try:
-        from core.data.parser import parse_upload  # noqa: PLC0415
+        from core.data.parser import parse_upload, parse_upload_sheet  # noqa: PLC0415
         from core.data.profiler import build_profile  # noqa: PLC0415
         from server.services.profile_cache import save_profile  # noqa: PLC0415
 
-        df, _meta = await asyncio.to_thread(
-            parse_upload, path, file_row.get("format")
-        )
+        file_format = file_row.get("format")
+        sheet_name = file_row.get("sheet_name")
+        if file_format == "xlsx" and sheet_name:
+            # Re-profile the file's ACTIVE sheet, not the first one: the
+            # upload/lazy path must not silently analyze a different sheet
+            # than the profile describes (F3).
+            df, _meta = await asyncio.to_thread(
+                parse_upload_sheet, path, sheet_name
+            )
+        else:
+            df, _meta = await asyncio.to_thread(
+                parse_upload, path, file_format
+            )
         rebuilt = await asyncio.to_thread(
             build_profile, df, size_bytes=os.path.getsize(path)
         )
@@ -115,6 +125,10 @@ async def build_chat_context(
                     # without this field the model once cited a column's
                     # unique_count as the row count.
                     "row_count": f.get("row_count"),
+                    # Active sheet for XLSX; ``None`` for CSV/TSV/JSON. The
+                    # system prompt uses this to tell the model to read the
+                    # workbook with pd.read_excel(..., sheet_name=...).
+                    "sheet_name": f.get("sheet_name"),
                     "profile": _serialize_profile(profile),
                 }
             )

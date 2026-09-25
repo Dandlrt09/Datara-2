@@ -3,6 +3,8 @@
 All tests use an in-memory SQLite database with the init schema applied.
 """
 
+import json
+
 import pytest
 
 from server.services.sqlite_store import SqliteStore
@@ -471,3 +473,149 @@ class TestFilesUniqueName:
         )
         assert len(rows) == 1
         assert rows[0]["id"] == first["id"]
+
+
+class TestReselectSheet:
+    """``reselect_sheet`` atomically swaps files.sheet_name/row_count and the
+    single profile row in one transaction, enforcing ownership in the WHERE."""
+
+    async def _seed(self, store, email: str, session_id: str, filename: str):
+        user = await store.create_user(email, "hash")
+        await store.create_chat_session(session_id, user["id"], "S")
+        file = await store.create_file_with_profile(
+            user_id=user["id"],
+            chat_session=session_id,
+            filename=filename,
+            storage_path=f"/tmp/{filename}",
+            size_bytes=10,
+            format_val="xlsx",
+            sheet_name="Data",
+            row_count=1,
+            schema_json='{"columns": [{"name": "a"}]}',
+            stats_json="{}",
+            sample_json="[]",
+        )
+        return user, file
+
+    async def test_reselect_updates_sheet_and_replaces_profile(self, store):
+        user, file = await self._seed(
+            store, "reselect@example.com", "ses_reselect", "book.xlsx"
+        )
+
+        updated = await store.reselect_sheet(
+            file_id=file["id"],
+            user_id=user["id"],
+            sheet_name="Meta",
+            row_count=2,
+            schema_json='{"columns": [{"name": "b"}]}',
+            stats_json="{}",
+            sample_json="[]",
+        )
+
+        assert updated is not None
+        assert updated["id"] == file["id"]
+        assert updated["sheet_name"] == "Meta"
+        assert updated["row_count"] == 2
+
+        profile = await store.get_profile_with_ownership(file["id"], user["id"])
+        assert json.loads(profile["schema_json"]) == {"columns": [{"name": "b"}]}
+
+        # Still exactly one files row and one profile row.
+        file_rows = await store.conn.execute_fetchall(
+            "SELECT id FROM files WHERE user_id = ?", (user["id"],)
+        )
+        assert len(file_rows) == 1
+        profile_rows = await store.conn.execute_fetchall(
+            "SELECT file_id FROM profiles WHERE file_id = ?", (file["id"],)
+        )
+        assert len(profile_rows) == 1
+
+    async def test_reselect_wrong_user_returns_none_and_keeps_state(self, store):
+        user, file = await self._seed(
+            store, "reselect_owner@example.com", "ses_reselect2", "book2.xlsx"
+        )
+        other = await store.create_user("reselect_other@example.com", "hash")
+
+        result = await store.reselect_sheet(
+            file_id=file["id"],
+            user_id=other["id"],
+            sheet_name="Meta",
+            row_count=9,
+            schema_json="{}",
+            stats_json="{}",
+            sample_json="[]",
+        )
+
+        assert result is None
+        unchanged = await store.get_file(file["id"], user["id"])
+        assert unchanged["sheet_name"] == "Data"
+        assert unchanged["row_count"] == 1
+        profile = await store.get_profile_with_ownership(file["id"], user["id"])
+        assert json.loads(profile["schema_json"]) == {"columns": [{"name": "a"}]}
+
+    async def test_reselect_missing_file_returns_none(self, store):
+        user = await store.create_user("reselect_missing@example.com", "hash")
+
+        result = await store.reselect_sheet(
+            file_id=99999,
+            user_id=user["id"],
+            sheet_name="X",
+            row_count=1,
+            schema_json="{}",
+            stats_json="{}",
+            sample_json="[]",
+        )
+
+        assert result is None
+
+    async def test_reselect_failure_after_update_rolls_back_both_rows(
+        self, store, monkeypatch
+    ):
+        """A failure INSIDE the transaction (after the files UPDATE) must
+        leave the files row AND the profile row exactly as they were.
+
+        The profile INSERT is forced to raise, which is the only way to prove
+        the rollback path: the pre-DB parse failure never reaches the store,
+        and a wrong-user reselect returns before writing. Monkeypatching the
+        connection's ``execute`` keeps the test at the real transaction
+        boundary instead of mocking the store method itself.
+        """
+        user, file = await self._seed(
+            store, "reselect_rollback@example.com", "ses_reselect3", "book3.xlsx"
+        )
+        before_file = await store.get_file(file["id"], user["id"])
+        before_profile = await store.get_profile_with_ownership(
+            file["id"], user["id"]
+        )
+        original_execute = store.conn.execute
+
+        async def flaky_execute(sql, *args, **kwargs):
+            if "INSERT INTO profiles" in sql:
+                raise RuntimeError("forced failure after files UPDATE")
+            return await original_execute(sql, *args, **kwargs)
+
+        monkeypatch.setattr(store.conn, "execute", flaky_execute)
+
+        with pytest.raises(RuntimeError, match="forced failure"):
+            await store.reselect_sheet(
+                file_id=file["id"],
+                user_id=user["id"],
+                sheet_name="Meta",
+                row_count=99,
+                schema_json='{"columns": [{"name": "b"}]}',
+                stats_json="{}",
+                sample_json="[]",
+            )
+
+        after_file = await store.get_file(file["id"], user["id"])
+        after_profile = await store.get_profile_with_ownership(
+            file["id"], user["id"]
+        )
+        # The UPDATE was issued inside the transaction, then rolled back.
+        assert after_file["sheet_name"] == "Data"
+        assert after_file["row_count"] == 1
+        assert after_file["sheet_name"] == before_file["sheet_name"]
+        assert after_file["row_count"] == before_file["row_count"]
+        # The profile JSON is byte-identical to before the failed switch.
+        assert after_profile["schema_json"] == before_profile["schema_json"]
+        assert json.loads(after_profile["schema_json"]) == {"columns": [{"name": "a"}]}
