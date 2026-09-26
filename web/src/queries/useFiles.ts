@@ -1,23 +1,48 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
+/** Mirrors server `FileResponse` (server/api/routers/files.py). */
 export interface UploadedFile {
   id: number;
   filename: string;
   format: string;
-  row_count?: number;
   size_bytes: number;
-  created_at: string;
+  row_count?: number | null;
+  created_at?: string | null;
   has_profile?: boolean;
-  /** Active sheet name (XLSX only); null for other formats. */
-  sheet_name?: string | null;
-  /** All sheet names (XLSX only); null for other formats. */
-  sheets?: string[] | null;
 }
 
+/** Mirrors server `FileListItem` (server/api/routers/files.py). */
 export interface FileListItem extends UploadedFile {
   chat_session_id: string;
   session_title: string | null;
+}
+
+/** Mirrors server `FileCreateResponse` (server/api/routers/files.py). */
+export interface FileCreateResult {
+  id: number;
+  filename: string;
+  format: string;
+  size_bytes: number;
+  row_count?: number | null;
+  encoding?: string | null;
+  sheet_name?: string | null;
+  sheets?: string[] | null;
+  created_at?: string | null;
+}
+
+export interface ProfileSchemaColumn {
+  name: string;
+  dtype: string;
+}
+
+/** Mirrors server `ProfileResponse` (server/api/routers/files.py). */
+export interface ProfileSummary {
+  file_id: number;
+  schema: { columns: ProfileSchemaColumn[] };
+  stats: Record<string, unknown>;
+  sample: unknown[];
+  generated_at?: string | null;
 }
 
 /** Upload failure that keeps the HTTP status available to callers. */
@@ -28,12 +53,6 @@ export class UploadError extends Error {
     this.name = "UploadError";
     this.status = status;
   }
-}
-
-interface ProfileSummary {
-  schema: { columns: string[] };
-  stats: Record<string, unknown>;
-  sample: unknown[];
 }
 
 export function useFiles(sessionId: string | null) {
@@ -88,7 +107,7 @@ export function useUploadFile() {
         }
         throw new UploadError(res.status, detail || `Upload failed: ${res.status}`);
       }
-      return res.json() as Promise<UploadedFile & { profile_summary: ProfileSummary }>;
+      return res.json() as Promise<FileCreateResult>;
     },
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["files"] }),

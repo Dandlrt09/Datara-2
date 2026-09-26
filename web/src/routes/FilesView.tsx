@@ -262,7 +262,7 @@ function FileRow({
   onDelete,
   deletePending,
 }: {
-  file: { id: number; filename: string; format: string; row_count?: number; size_bytes: number; session_title: string | null; has_profile?: boolean };
+  file: { id: number; filename: string; format: string; row_count?: number | null; size_bytes: number; session_title: string | null; has_profile?: boolean };
   onDelete: () => void;
   deletePending: boolean;
 }) {

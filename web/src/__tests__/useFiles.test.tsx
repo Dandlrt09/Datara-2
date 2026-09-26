@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, expectTypeOf, vi, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useUploadFile, UploadError, useFileSheets, useSelectFileSheet } from "../queries/useFiles";
+import type { FileCreateResult, ProfileSummary, UploadedFile } from "../queries/useFiles";
 
 function makeWrapper() {
   const qc = new QueryClient({
@@ -119,6 +120,75 @@ describe("useUploadFile", () => {
     expect(caught).toBeInstanceOf(UploadError);
     expect((caught as UploadError).status).toBe(400);
     expect((caught as UploadError).message).toBe("Upload failed: 400");
+  });
+
+  it("resolves the upload to the exact FileCreateResponse payload (no profile_summary)", async () => {
+    // The POST /api/sessions/{id}/files response model is FileCreateResponse.
+    // It never carries a profile_summary, so the mutation result must be the
+    // payload verbatim and must not fabricate a key.
+    const payload = {
+      id: 42,
+      filename: "book.xlsx",
+      format: "xlsx",
+      size_bytes: 2048,
+      row_count: 3,
+      encoding: null,
+      sheet_name: "Data",
+      sheets: ["Data", "Meta"],
+      created_at: "2026-09-25T10:00:00Z",
+    };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => payload,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useUploadFile(), {
+      wrapper: makeWrapper(),
+    });
+
+    const uploaded = await result.current.mutateAsync({
+      sessionId: "ses-1",
+      file: new File(["name,age\nAlice,30\n"], "book.xlsx"),
+    });
+
+    expect(uploaded).toEqual(payload);
+    expect("profile_summary" in uploaded).toBe(false);
+  });
+
+  it("pins the corrected types to their server models", () => {
+    // Type-level pins: compiled by `tsc -b` (tsconfig includes src/), so a
+    // drift back to the old shapes fails `npm run build`, not just this test.
+    // Pin the EXACT key sets, not individual keys: the F7 defect class is a
+    // fabricated field, so an arbitrary added key must fail here too.
+    expectTypeOf<FileCreateResult>().not.toHaveProperty("profile_summary");
+    expectTypeOf<keyof FileCreateResult>().toEqualTypeOf<
+      | "id"
+      | "filename"
+      | "format"
+      | "size_bytes"
+      | "row_count"
+      | "encoding"
+      | "sheet_name"
+      | "sheets"
+      | "created_at"
+    >();
+    expectTypeOf<keyof UploadedFile>().toEqualTypeOf<
+      | "id"
+      | "filename"
+      | "format"
+      | "size_bytes"
+      | "row_count"
+      | "created_at"
+      | "has_profile"
+    >();
+    expectTypeOf<keyof ProfileSummary>().toEqualTypeOf<
+      "file_id" | "schema" | "stats" | "sample" | "generated_at"
+    >();
+    expectTypeOf<ProfileSummary["schema"]["columns"]>().toEqualTypeOf<
+      { name: string; dtype: string }[]
+    >();
   });
 });
 
