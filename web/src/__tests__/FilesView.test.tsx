@@ -3,7 +3,7 @@ import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import FilesView from "../routes/FilesView";
 
-const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock } =
+const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock, useProfileMock } =
   vi.hoisted(() => ({
     useFilesGlobalMock: vi.fn(),
     useSessionsMock: vi.fn(),
@@ -12,13 +12,14 @@ const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMoc
     useCreateSessionMock: vi.fn(),
     useFileSheetsMock: vi.fn(),
     useSelectFileSheetMock: vi.fn(),
+    useProfileMock: vi.fn(),
   }));
 
 vi.mock("../queries/useFiles", () => ({
   useFilesGlobal: () => useFilesGlobalMock(),
   useUploadFile: () => useUploadFileMock(),
   useDeleteFile: () => useDeleteFileMock(),
-  useProfile: () => ({ data: undefined, isLoading: false }),
+  useProfile: () => useProfileMock(),
   useFileSheets: () => useFileSheetsMock(),
   useSelectFileSheet: () => useSelectFileSheetMock(),
 }));
@@ -52,6 +53,7 @@ describe("FilesView", () => {
       isError: false,
     });
     useFileSheetsMock.mockReturnValue({ data: undefined, isLoading: false });
+    useProfileMock.mockReturnValue({ data: undefined, isLoading: false });
     useSelectFileSheetMock.mockReturnValue({
       mutateAsync: vi.fn(),
       isPending: false,
@@ -227,6 +229,39 @@ describe("FilesView", () => {
     });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Not profiled")).toBeTruthy();
+  });
+
+  it("renders the tabular profile when useProfile returns a profile", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [
+        {
+          id: 9,
+          filename: "sales.csv",
+          format: "csv",
+          size_bytes: 1024,
+          created_at: "2024-01-01",
+          chat_session_id: "ses-1",
+          session_title: "Session 1",
+          has_profile: true,
+        },
+      ],
+      isLoading: false,
+    });
+    useProfileMock.mockReturnValue({
+      data: {
+        file_id: 9,
+        schema: { columns: [{ name: "amount", dtype: "int64" }] },
+        stats: { amount: { null_count: 0, unique_count: 2, min: 1, max: 9 } },
+        sample: [],
+        generated_at: "2024-01-01T00:00:00Z",
+      },
+      isLoading: false,
+    });
+
+    renderWithProviders(<FilesView />);
+
+    expect(screen.getByRole("columnheader", { name: "Tipo" })).toBeTruthy();
+    expect(screen.getByText("amount")).toBeTruthy();
   });
 
   it("shows the sheet warning for a multi-sheet xlsx row", () => {

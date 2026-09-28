@@ -5,6 +5,7 @@ import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets
 import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ProfileTable } from "../components/ProfileTable";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
 
 export default function FilesView() {
@@ -311,9 +312,7 @@ function FileRow({
         {profile && (
           <details>
             <summary>Profile</summary>
-            <pre style={{ fontSize: "0.85em", maxHeight: 200, overflow: "auto" }}>
-              {JSON.stringify(profile, null, 2)}
-            </pre>
+            <ProfileTable profile={profile} />
           </details>
         )}
         {showSheets && sheetsQuery.isLoading && !sheetsQuery.data && (
