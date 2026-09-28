@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 
 import pandas as pd
 import pytest
@@ -760,3 +761,157 @@ class TestFileSheets:
         assert after_profile == before_profile
         assert [c["name"] for c in after_profile["schema"]["columns"]] == ["a"]
         assert auth_client.get(f"/api/files/{file_id}/sheets").json() == before_sheets
+
+
+class TestCpuBoundOffload:
+    """F8: CPU-bound pandas work must run off the event-loop thread.
+
+    Proof is by thread identity, not timing (ODD decision D4): each
+    offloaded target is wrapped by a spy that records
+    ``threading.get_ident()`` and delegates to the real function, while an
+    inline call known to run on the loop right after it records the loop
+    thread. The two idents must differ.
+    """
+
+    @staticmethod
+    def _spy(monkeypatch, name, real, records):
+        """Wrap ``files_router.<name>`` to record the calling thread ident."""
+
+        def _recording_spy(*args, **kwargs):
+            records.append(threading.get_ident())
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(files_router, name, _recording_spy)
+        return _recording_spy
+
+    def test_upload_parse_footprint_and_profile_offloaded(
+        self, auth_client, session_id, monkeypatch
+    ):
+        parse_idents: list[int] = []
+        footprint_idents: list[int] = []
+        profile_idents: list[int] = []
+        loop_idents: list[int] = []
+        self._spy(monkeypatch, "parse_upload", files_router.parse_upload, parse_idents)
+        self._spy(
+            monkeypatch,
+            "_dataframe_footprint",
+            files_router._dataframe_footprint,
+            footprint_idents,
+        )
+        self._spy(
+            monkeypatch, "build_profile", files_router.build_profile, profile_idents
+        )
+        # serialize_profile runs inline on the event loop, right after the
+        # profile is built, so it pins the loop thread for comparison.
+        self._spy(
+            monkeypatch,
+            "serialize_profile",
+            files_router.serialize_profile,
+            loop_idents,
+        )
+
+        resp = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("offload.csv", b"name,age\nAlice,30\nBob,25\n", "text/csv")},
+        )
+        assert resp.status_code == 201
+
+        assert parse_idents and footprint_idents and profile_idents and loop_idents
+        loop_ident = loop_idents[0]
+        assert parse_idents[0] != loop_ident
+        assert footprint_idents[0] != loop_ident
+        assert profile_idents[0] != loop_ident
+
+    def test_sheet_select_parse_and_profile_offloaded(
+        self, auth_client, session_id, monkeypatch
+    ):
+        content = _xlsx_bytes(
+            {
+                "Data": pd.DataFrame({"a": [1, 2]}),
+                "Meta": pd.DataFrame({"b": [3, 4]}),
+            }
+        )
+        upload = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("offload_switch.xlsx", content, _XLSX_MIME)},
+        )
+        assert upload.status_code == 201
+        file_id = upload.json()["id"]
+
+        parse_idents: list[int] = []
+        footprint_idents: list[int] = []
+        profile_idents: list[int] = []
+        loop_idents: list[int] = []
+        self._spy(
+            monkeypatch,
+            "parse_upload_sheet",
+            files_router.parse_upload_sheet,
+            parse_idents,
+        )
+        self._spy(
+            monkeypatch,
+            "_dataframe_footprint",
+            files_router._dataframe_footprint,
+            footprint_idents,
+        )
+        self._spy(
+            monkeypatch, "build_profile", files_router.build_profile, profile_idents
+        )
+        self._spy(
+            monkeypatch,
+            "serialize_profile",
+            files_router.serialize_profile,
+            loop_idents,
+        )
+
+        resp = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": "Meta"}
+        )
+        assert resp.status_code == 200
+
+        assert parse_idents and footprint_idents and profile_idents and loop_idents
+        loop_ident = loop_idents[0]
+        assert parse_idents[0] != loop_ident
+        assert footprint_idents[0] != loop_ident
+        assert profile_idents[0] != loop_ident
+
+    def test_list_sheets_offloaded(self, auth_client, session_id, monkeypatch):
+        content = _xlsx_bytes(
+            {
+                "Data": pd.DataFrame({"a": [1, 2]}),
+                "Meta": pd.DataFrame({"b": [3, 4]}),
+            }
+        )
+        upload = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("offload_list.xlsx", content, _XLSX_MIME)},
+        )
+        assert upload.status_code == 201
+        file_id = upload.json()["id"]
+
+        sheet_idents: list[int] = []
+        loop_idents: list[int] = []
+        self._spy(
+            monkeypatch,
+            "_xlsx_sheet_names",
+            files_router._xlsx_sheet_names,
+            sheet_idents,
+        )
+
+        # The response model is constructed inline on the event loop after
+        # the sheet read, so wrapping it pins the loop thread.
+        real_response = files_router.SheetListResponse
+
+        def _response_spy(*args, **kwargs):
+            loop_idents.append(threading.get_ident())
+            return real_response(*args, **kwargs)
+
+        monkeypatch.setattr(files_router, "SheetListResponse", _response_spy)
+
+        resp = auth_client.get(f"/api/files/{file_id}/sheets")
+        assert resp.status_code == 200
+        assert resp.json() == {"sheets": ["Data", "Meta"], "default_sheet": "Data"}
+
+        assert sheet_idents and loop_idents
+        assert sheet_idents[0] != loop_idents[0]
+

@@ -6,6 +6,7 @@ query-level user_id filtering (Decision #14).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -40,6 +41,16 @@ _CHUNK_BYTES = 1024 * 1024
 # deployments and test harnesses can relocate it (tests point this at a
 # per-test tmp directory; no test may write into the real server/uploads/).
 UPLOADS_DIR = Path(os.environ.get("DATARA_UPLOADS_DIR", str(_DEFAULT_UPLOADS_DIR)))
+
+
+def _xlsx_sheet_names(path: str) -> list[str]:
+    """Return the sheet names of an XLSX workbook (blocking, run via to_thread)."""
+    return pd.ExcelFile(path).sheet_names
+
+
+def _dataframe_footprint(df: pd.DataFrame) -> int:
+    """Return the DataFrame's in-memory footprint in bytes (blocking, run via to_thread)."""
+    return int(df.memory_usage(deep=True).sum())
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
@@ -342,9 +353,12 @@ async def upload_file(
                 ),
             )
 
-    # Parse (CPU-bound — would be offloaded via run_in_executor in production)
+    # Parse in a worker thread: CPU-bound pandas work must not block the
+    # event loop for every concurrent request (matches chat_context precedent).
     try:
-        df, meta = parse_upload(str(dest_path), format_hint=format_hint)
+        df, meta = await asyncio.to_thread(
+            parse_upload, str(dest_path), format_hint=format_hint
+        )
     except Exception as e:
         # Clean up the file on parse failure
         dest_path.unlink(missing_ok=True)
@@ -357,7 +371,7 @@ async def upload_file(
     # cannot prevent the memory spike — the raw byte cap above is what bounds
     # the input. It catches a DataFrame whose in-memory footprint is still
     # over the expanded-size budget.
-    footprint_bytes = int(df.memory_usage(deep=True).sum())
+    footprint_bytes = await asyncio.to_thread(_dataframe_footprint, df)
     if footprint_bytes > limits.max_expanded_bytes:
         dest_path.unlink(missing_ok=True)
         raise HTTPException(
@@ -370,7 +384,7 @@ async def upload_file(
 
     # Build AND serialize the profile BEFORE any DB write: a serialization
     # failure must never leave a committed file row without its profile.
-    profile = build_profile(df, size_bytes=size_bytes)
+    profile = await asyncio.to_thread(build_profile, df, size_bytes=size_bytes)
     schema_json, stats_json, sample_json = serialize_profile(profile)
 
     # The client may have cancelled while parsing/profiling a large file —
@@ -490,7 +504,7 @@ async def list_file_sheets(
     """
     file_record, storage_path = await _load_owned_xlsx(file_id, user["id"], store)
     try:
-        sheets = pd.ExcelFile(storage_path).sheet_names
+        sheets = await asyncio.to_thread(_xlsx_sheet_names, storage_path)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -525,7 +539,7 @@ async def select_file_sheet(
     file_record, storage_path = await _load_owned_xlsx(file_id, user_id, store)
 
     try:
-        sheets = pd.ExcelFile(storage_path).sheet_names
+        sheets = await asyncio.to_thread(_xlsx_sheet_names, storage_path)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -558,10 +572,12 @@ async def select_file_sheet(
             ),
         )
 
-    # Parse inline in the async handler, exactly like the upload route
-    # (Decision D5 — run_in_executor offload is a separate item).
+    # Parse in a worker thread, exactly like the upload route: CPU-bound
+    # pandas work must not block the event loop.
     try:
-        df, meta = parse_upload_sheet(storage_path, payload.sheet_name)
+        df, meta = await asyncio.to_thread(
+            parse_upload_sheet, storage_path, payload.sheet_name
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -571,7 +587,7 @@ async def select_file_sheet(
         )
 
     # Same post-parse footprint backstop as the upload route.
-    footprint_bytes = int(df.memory_usage(deep=True).sum())
+    footprint_bytes = await asyncio.to_thread(_dataframe_footprint, df)
     if footprint_bytes > limits.max_expanded_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
@@ -583,7 +599,9 @@ async def select_file_sheet(
 
     # Build AND serialize BEFORE the DB write, same as upload: a
     # serialization failure must never leave a partially switched file.
-    profile = build_profile(df, size_bytes=file_record["size_bytes"])
+    profile = await asyncio.to_thread(
+        build_profile, df, size_bytes=file_record["size_bytes"]
+    )
     schema_json, stats_json, sample_json = serialize_profile(profile)
 
     updated = await store.reselect_sheet(
