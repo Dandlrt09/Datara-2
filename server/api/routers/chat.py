@@ -868,7 +868,7 @@ async def chat_stream(
                         plotly_payload = {}
                 artifacts.append({"kind": "figure", "name": fig.get("name", ""), "payload": plotly_payload})
             for tbl in sandbox_result.get("tables", []):
-                artifacts.append({"kind": "table", "name": tbl.get("name", ""), "payload": {"columns": tbl.get("columns", []), "rows": tbl.get("rows", [])}})
+                artifacts.append({"kind": "table", "name": tbl.get("name", ""), "payload": {"columns": tbl.get("columns", []), "rows": tbl.get("rows", []), "total_rows": tbl.get("total_rows")}})
             # Printed results reach the chat: the sandbox captures print()
             # stdout, but figures/tables alone left numeric answers invisible
             # ("los resultados se imprimen en consola"). Cap to keep the SSE

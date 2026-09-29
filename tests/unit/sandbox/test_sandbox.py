@@ -228,6 +228,33 @@ df_result = pd.DataFrame({
         assert tbl["rows"][1] == [None, None, None]
         json.dumps(result, allow_nan=False)  # must not raise
 
+    def test_df_result_reports_full_total_rows_when_truncated(self):
+        """A >20-row frame captures head(20) but reports the full length.
+
+        The UI warns "mostrando las primeras 20 de N filas" using
+        total_rows, so it must be the FULL frame length, not the head.
+        """
+        code = (
+            "import pandas as pd\n"
+            "df_result = pd.DataFrame({'n': list(range(25))})\n"
+        )
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        tbl = result["tables"][0]
+        assert len(tbl["rows"]) == 20
+        assert tbl["total_rows"] == 25
+
+    def test_df_result_total_rows_equals_rows_when_small(self):
+        """A frame under the cap reports total_rows == captured rows."""
+        code = (
+            "import pandas as pd\n"
+            "df_result = pd.DataFrame({'n': [1, 2, 3]})\n"
+        )
+        result = _run_direct(code)
+        assert result["status"] == "ok"
+        tbl = result["tables"][0]
+        assert tbl["total_rows"] == len(tbl["rows"]) == 3
+
     def test_datetime_columns_serialize(self):
         """Timestamp/datetime cells must become ISO strings.
 

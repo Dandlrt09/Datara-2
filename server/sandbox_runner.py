@@ -385,6 +385,9 @@ def _execute_code(code: str, limits: dict) -> dict:
                             "name": name,
                             "columns": columns,
                             "rows": rows,
+                            # Full frame length (not the head) so the UI can
+                            # warn when the 20-row capture truncated the data.
+                            "total_rows": int(len(val)),
                         })
                 except Exception:
                     pass

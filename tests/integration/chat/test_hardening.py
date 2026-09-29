@@ -493,6 +493,11 @@ class TestStdoutSuppression:
         assert "text" not in kinds, (
             f"stdout box must be suppressed when a table renders: {kinds}"
         )
+        table_artifacts = [a for a in artifacts if a["kind"] == "table"]
+        assert len(table_artifacts) == 1
+        table_payload = table_artifacts[0]["payload"]
+        # df_result has 2 rows; the persisted payload must carry the full length.
+        assert table_payload["total_rows"] == 2, table_payload
 
 
 class TestGroundingTableContext:
