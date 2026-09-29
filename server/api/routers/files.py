@@ -55,6 +55,10 @@ _MEDIA_TYPES: dict[str, str] = {
 }
 _DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
+# Rename bound (D3). Deliberately its own constant: session titles cap at 200
+# (sessions.py), which is unrelated to a filesystem filename.
+FILE_NAME_MAX_LENGTH = 255
+
 
 def _xlsx_sheet_names(path: str) -> list[str]:
     """Return the sheet names of an XLSX workbook (blocking, run via to_thread)."""
@@ -96,6 +100,10 @@ class SheetListResponse(BaseModel):
 
 class SheetSelectRequest(BaseModel):
     sheet_name: str
+
+
+class RenameFileRequest(BaseModel):
+    filename: str
 
 
 class SheetSelectResponse(BaseModel):
@@ -166,16 +174,63 @@ def remove_session_uploads(user_id: int, chat_session: str) -> None:
 _SUPPORTED_EXTENSIONS = frozenset({".csv", ".tsv", ".xlsx", ".json"})
 
 
-def _duplicate_name_detail(safe_filename: str) -> str:
+def _duplicate_name_detail(existing_filename: str) -> str:
     """Shared 409 detail for a same-name collision.
 
     Both the pre-check and the insert-time UNIQUE violation use this so the
-    two collision paths can never drift apart.
+    two collision paths can never drift apart. The pre-check passes the
+    filename of the row that actually exists (which may differ in case from
+    the attempted name), so a case-variant attempt is told the spelling the
+    table shows; the race path can only name the attempted name because the
+    winner's identity is unknowable there.
     """
     return (
-        f"A file named '{safe_filename}' already exists in this session. "
+        f"A file named '{existing_filename}' already exists in this session. "
         "Delete it first before uploading a file with the same name."
     )
+
+
+def _invalid_filename(message: str) -> HTTPException:
+    """Build the 422 rename-validation error (D3 shape, mirrors sessions.py)."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"code": "invalid_filename", "message": message},
+    )
+
+
+def _validate_new_filename(new_filename: str, current_filename: str) -> str:
+    """Validate an explicit rename target, returning the trimmed name.
+
+    Divergence from upload (D3b): path separators are REJECTED rather than
+    silently stripped. Upload sanitizes with ``Path(file.filename).name``
+    because the client must not control paths; a rename is direct user intent,
+    so quietly rewriting ``a/b.csv`` to ``b.csv`` would hide it instead of
+    telling the user.
+
+    The extension must equal the stored filename's extension, compared
+    case-insensitively (D2): ``format`` is frozen at upload and drives the
+    download media type, xlsx gating and profiling, while ``filename`` drives
+    display and staging — a divergent extension would silently desync them.
+    """
+    name = new_filename.strip()
+    if not name:
+        raise _invalid_filename("El nombre del archivo no puede estar vacío.")
+    if len(name) > FILE_NAME_MAX_LENGTH:
+        raise _invalid_filename(
+            "El nombre del archivo no puede superar los "
+            f"{FILE_NAME_MAX_LENGTH} caracteres."
+        )
+    if "/" in name or "\\" in name:
+        raise _invalid_filename(
+            "El nombre del archivo no puede contener separadores de ruta."
+        )
+    if any(ord(ch) < 0x20 for ch in name):
+        raise _invalid_filename(
+            "El nombre del archivo no puede contener caracteres de control."
+        )
+    if Path(name).suffix.lower() != Path(current_filename).suffix.lower():
+        raise _invalid_filename("La extensión del archivo no puede cambiar.")
+    return name
 
 
 def _validate_extension(filename: str) -> str:
@@ -291,7 +346,7 @@ async def upload_file(
     if duplicate is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_duplicate_name_detail(safe_filename),
+            detail=_duplicate_name_detail(duplicate["filename"]),
         )
 
     # Quota check (best-effort soft cap, checked before any disk write). Two
@@ -723,6 +778,61 @@ async def download_file(
         path=str(resolved),
         media_type=media_type,
         filename=file_record["filename"],
+    )
+
+
+@router.patch("/files/{file_id}", response_model=FileResponse)
+async def rename_file(
+    file_id: int,
+    payload: RenameFileRequest,
+    user: dict = Depends(current_user),
+    store: SqliteStore = Depends(get_store),
+):
+    """Rename an uploaded file owned by the current user.
+
+    Order: resolve ownership (404) → validate the new name (422) → duplicate
+    pre-check within the session (409) → persist (404 if the row vanished, 409
+    if the UNIQUE index rejects the race). Not-owned and unknown ids are the
+    same 404 (D1), so no existence leaks.
+
+    Renaming to the current name, or to a case-variant of it, is a 200 no-op
+    that never trips the 409: the pre-check matches the same row, and the
+    NOCASE index does not conflict with a row's own entry (F12.1/D7).
+    """
+    user_id = user["id"]
+    row = await store.get_file(file_id, user_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    new_name = _validate_new_filename(payload.filename, row["filename"])
+
+    existing = await store.get_file_by_name(user_id, row["chat_session"], new_name)
+    if existing is not None and existing["id"] != file_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_duplicate_name_detail(existing["filename"]),
+        )
+
+    try:
+        updated = await store.rename_file(file_id, user_id, new_name)
+    except DuplicateError:
+        # Lost the race after the pre-check: answer with the same 409 the
+        # pre-check emits, never a hand-written variant (F2 requirement).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_duplicate_name_detail(new_name),
+        )
+    if updated is None:
+        # The row vanished between the ownership check and the UPDATE.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    return FileResponse(
+        id=updated["id"],
+        filename=updated["filename"],
+        format=updated["format"],
+        size_bytes=updated["size_bytes"],
+        row_count=updated.get("row_count"),
+        created_at=updated.get("created_at"),
     )
 
 

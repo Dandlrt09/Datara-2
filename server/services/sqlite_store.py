@@ -674,6 +674,46 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
+    async def rename_file(
+        self,
+        file_id: int,
+        user_id: int,
+        new_filename: str,
+    ) -> dict[str, Any] | None:
+        """Rename an uploaded file owned by *user_id*.
+
+        Ownership is enforced in the WHERE clause (same pattern as
+        ``rename_chat_session``). Returns the updated row, or ``None`` when the
+        file does not exist or belongs to another user — the caller maps that
+        to 404 without leaking existence. A collision with
+        ``idx_files_unique_name`` (same session + name) is mapped to
+        ``DuplicateError`` exactly like ``create_file``, so the insert-race path
+        answers the same 409 the route's pre-check does.
+
+        ``storage_path`` and the bytes on disk are never touched: only the
+        persisted ``filename`` changes.
+        """
+        try:
+            cursor = await self.conn.execute(
+                "UPDATE files SET filename = ? WHERE id = ? AND user_id = ?",
+                (new_filename, file_id, user_id),
+            )
+            await self.conn.commit()
+        except aiosqlite.IntegrityError:
+            await self.conn.rollback()
+            raise DuplicateError(
+                f"file already exists: {new_filename}"
+            )
+        if cursor.rowcount == 0:
+            return None
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, chat_session, filename, storage_path, "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "FROM files WHERE id = ?",
+            (file_id,),
+        )
+        return dict(rows[0]) if rows else None
+
     async def list_files(
         self,
         user_id: int,
@@ -767,20 +807,34 @@ class SqliteStore:
         chat_session: str,
         filename: str,
     ) -> dict[str, Any] | None:
-        """Get a file by exact filename within one session (ownership enforced).
+        """Get a file by case-insensitive filename within one session.
 
-        Used by the upload endpoint to reject same-name re-uploads in the
-        same session (the Files UI provides deletion, so the user deletes
-        the old file first instead of silently duplicating rows).
+        The name match uses :meth:`str.casefold` (Unicode-correct) rather than
+        SQL ``COLLATE NOCASE``/``lower()``: SQLite folds ASCII only and has no
+        ICU, so a NOCASE comparison would not collide ``AÑO.csv`` with
+        ``año.csv``. This method is the single choke point shared by the upload
+        and rename pre-checks, so both paths enforce the same broader rule.
+
+        Layering: this application rule is a SUPERSET of the DB's ASCII-only
+        ``NOCASE`` unique index (migration 0004), which is the race backstop.
+        The app therefore never ALLOWS a name the index would reject.
+
+        Ownership is enforced by the ``user_id`` filter. Used to reject a
+        same-name re-upload/rename in the same session (the Files UI provides
+        deletion, so the user deletes the old file first instead of silently
+        duplicating rows).
         """
         rows = await self.conn.execute_fetchall(
             "SELECT id, user_id, chat_session, filename, storage_path, "
             "size_bytes, format, encoding, sheet_name, row_count, created_at "
-            "FROM files WHERE user_id = ? AND chat_session = ? AND filename = ? "
-            "LIMIT 1",
-            (user_id, chat_session, filename),
+            "FROM files WHERE user_id = ? AND chat_session = ?",
+            (user_id, chat_session),
         )
-        return dict(rows[0]) if rows else None
+        wanted = filename.casefold()
+        for row in rows:
+            if row["filename"].casefold() == wanted:
+                return dict(row)
+        return None
 
     async def total_size_by_user(
         self,

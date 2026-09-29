@@ -579,6 +579,38 @@ class TestSameNameReupload:
         assert rows[0]["id"] == first_id
         assert rows[0]["size_bytes"] == len(b"a\n1\n")
 
+    def test_case_variant_reupload_rejected_and_names_existing(
+        self, auth_client, session_id
+    ):
+        """F12.1: uniqueness is case-insensitive (``CASE.csv`` vs ``case.csv``).
+
+        The pre-existing upload hole let a single capital letter dodge the
+        duplicate rule. The 409 must name the spelling that actually exists in
+        the table, not the one the client typed, and no new row may appear.
+        """
+        first = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("CASE.csv", b"a\n1\n", "text/csv")},
+        )
+        assert first.status_code == 201
+        first_id = first.json()["id"]
+
+        second = auth_client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": ("case.csv", b"a\n2\n", "text/csv")},
+        )
+        assert second.status_code == 409
+        assert second.json()["detail"] == files_router._duplicate_name_detail(
+            "CASE.csv"
+        )
+
+        # The rejected upload did not grow the session's row count.
+        listing = auth_client.get(f"/api/sessions/{session_id}/files")
+        rows = listing.json()
+        assert len(rows) == 1
+        assert rows[0]["id"] == first_id
+        assert rows[0]["filename"] == "CASE.csv"
+
     def test_rejected_reupload_keeps_original_profile(self, auth_client, session_id):
         first = auth_client.post(
             f"/api/sessions/{session_id}/files",
@@ -669,6 +701,84 @@ class TestSameNameReupload:
         assert len(stored) == 1
         assert stored[0].is_file()
         assert stored[0].stat().st_size > 0
+
+
+class TestGetFileByNameCasefold:
+    """M2: the shared uniqueness choke point folds with ``str.casefold()``.
+
+    It must be case-insensitive for ASCII and for non-ASCII (``AÑO.csv`` /
+    ``año.csv``), which SQLite's own NOCASE/lower() cannot do without ICU, and
+    it must stay scoped to one ``(user_id, chat_session)``.
+    """
+
+    def test_matches_ascii_and_non_ascii_case_variants(
+        self, app, store, user_id, session_id
+    ):
+        async def _seed():
+            await store.create_file(
+                user_id, session_id, "AÑO.csv", "/tmp/ano.csv", 10, "csv"
+            )
+            await store.create_file(
+                user_id, session_id, "Report.csv", "/tmp/report.csv", 10, "csv"
+            )
+
+        asyncio.run(_seed())
+
+        non_ascii = asyncio.run(
+            store.get_file_by_name(user_id, session_id, "año.csv")
+        )
+        assert non_ascii is not None
+        assert non_ascii["filename"] == "AÑO.csv"
+
+        ascii_match = asyncio.run(
+            store.get_file_by_name(user_id, session_id, "REPORT.csv")
+        )
+        assert ascii_match is not None
+        assert ascii_match["filename"] == "Report.csv"
+
+    def test_does_not_match_across_sessions_or_users(
+        self, app, store, user_id, session_id
+    ):
+        async def _seed():
+            await store.create_file(
+                user_id, session_id, "Mine.csv", "/tmp/mine.csv", 10, "csv"
+            )
+            other_user = await store.create_user(
+                "casefold-other@example.com", "hash"
+            )
+            other_session = "casefold-other-session"
+            await store.create_chat_session(other_session, other_user["id"], "Other")
+            await store.create_file(
+                other_user["id"],
+                other_session,
+                "Theirs.csv",
+                "/tmp/theirs.csv",
+                10,
+                "csv",
+            )
+            another_session = "casefold-another-session"
+            await store.create_chat_session(another_session, user_id, "Another")
+
+        asyncio.run(_seed())
+
+        # Same name in ANOTHER session of the same user: not a match.
+        assert (
+            asyncio.run(
+                store.get_file_by_name(
+                    user_id, "casefold-another-session", "Mine.csv"
+                )
+            )
+            is None
+        )
+        # Same name in ANOTHER user's session: ownership filter, not a match.
+        assert (
+            asyncio.run(
+                store.get_file_by_name(
+                    user_id, "casefold-other-session", "Theirs.csv"
+                )
+            )
+            is None
+        )
 
 
 class TestFileSheets:
