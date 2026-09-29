@@ -6,6 +6,7 @@ response model. Uploads go via the existing session-scoped endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import io
 
 import pandas as pd
@@ -87,12 +88,53 @@ def session_id(auth_client):
     return resp.json()["id"]
 
 
+@pytest.fixture
+def store():
+    from server.api import store as api_store  # noqa: PLC0415
+    return api_store._store
+
+
+@pytest.fixture
+def user_id(auth_client):
+    """The authenticated user's id (for direct store seeding)."""
+    resp = auth_client.get("/api/auth/me")
+    assert resp.status_code == 200
+    return resp.json()["id"]
+
+
 def _upload_csv(auth_client, session_id, name="test.csv", content=b"x\n1\n"):
     """Helper: upload a CSV to a session and return the response."""
     return auth_client.post(
         f"/api/sessions/{session_id}/files",
         files={"file": (name, content, "text/csv")},
     )
+
+
+def _seed_files(store, user_id, session_id, count, prefix="seed"):
+    """Insert *count* file rows directly and return their ids (ascending).
+
+    Pagination tests need more rows than a full upload round-trip makes
+    practical; the list query only reads these columns, so a direct store
+    write is the honest fixture (no parse/profiling under test here).
+    """
+    async def _run():
+        ids: list[int] = []
+        for i in range(count):
+            row = await store.create_file_with_profile(
+                user_id=user_id,
+                chat_session=session_id,
+                filename=f"{prefix}{i}.csv",
+                storage_path=f"/tmp/{prefix}{i}.csv",
+                size_bytes=10,
+                format_val="csv",
+                schema_json="{}",
+                stats_json="{}",
+                sample_json="[]",
+            )
+            ids.append(row["id"])
+        return ids
+
+    return asyncio.run(_run())
 
 
 class TestGlobalFileList:
@@ -159,6 +201,86 @@ class TestGlobalFileList:
         assert resp.status_code == 200
         data = resp.json()
         assert all(f["id"] != file_id for f in data)
+
+
+class TestGlobalFilesPagination:
+    """F10: GET /api/files cursor pagination (mirrors chat-history keyset)."""
+
+    def test_limit_bounds_reject_out_of_range(self, auth_client):
+        assert auth_client.get("/api/files?limit=0").status_code == 422
+        assert auth_client.get("/api/files?limit=500").status_code == 422
+
+    def test_omitted_limit_defaults_to_50(
+        self, auth_client, session_id, store, user_id
+    ):
+        _seed_files(store, user_id, session_id, 55)
+        resp = auth_client.get("/api/files")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 50
+
+    def test_limit_returns_newest_first(self, auth_client, session_id, store, user_id):
+        ids = _seed_files(store, user_id, session_id, 5)
+        resp = auth_client.get("/api/files?limit=2")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        # created_at DESC, id DESC: seeded rows share a second and their ids
+        # increase with insertion, so the newest first is a strict descent.
+        assert [f["id"] for f in data] == [ids[-1], ids[-2]]
+
+    def test_before_walk_visits_every_file_once(
+        self, auth_client, session_id, store, user_id
+    ):
+        ids = _seed_files(store, user_id, session_id, 5)
+        page_size = 2
+        seen: list[int] = []
+        before: int | None = None
+        while True:
+            url = f"/api/files?limit={page_size}"
+            if before is not None:
+                url += f"&before={before}"
+            data = auth_client.get(url).json()
+            seen.extend(f["id"] for f in data)
+            if len(data) < page_size:
+                break
+            before = data[-1]["id"]
+        # No overlap, no gap: each page is strictly older and every file is
+        # visited exactly once, newest-first.
+        assert seen == sorted(ids, reverse=True)
+        assert len(seen) == len(set(seen)) == len(ids)
+
+    def test_before_never_leaks_another_users_files(
+        self,
+        auth_client,
+        client,
+        second_user_cookie,
+        session_id,
+        store,
+        user_id,
+    ):
+        # User B seeds FIRST so its file ids are lower than user A's. A `before`
+        # cursor pointing at A's oldest id must not widen the user filter and
+        # surface B's lower-id rows.
+        b_user = client.get(
+            "/api/auth/me", headers={"Cookie": second_user_cookie}
+        ).json()
+        b_session = client.post(
+            "/api/sessions",
+            json={"title": "B session"},
+            headers={"Cookie": second_user_cookie},
+        ).json()["id"]
+        b_ids = _seed_files(store, b_user["id"], b_session, 3, prefix="b")
+
+        a_ids = _seed_files(store, user_id, session_id, 3, prefix="a")
+        assert max(b_ids) < min(a_ids)
+
+        resp = auth_client.get(f"/api/files?limit=50&before={min(a_ids)}")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+        # Sanity: without a cursor A sees exactly its own files.
+        all_ids = {f["id"] for f in auth_client.get("/api/files").json()}
+        assert all_ids == set(a_ids)
 
 
 class TestSessionDeleteUploadCleanup:

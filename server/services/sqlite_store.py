@@ -678,36 +678,58 @@ class SqliteStore:
         self,
         user_id: int,
         chat_session: str | None = None,
+        *,
+        limit: int | None = None,
+        before_id: int | None = None,
     ) -> list[dict[str, Any]]:
+        """List files for a user, optionally scoped to one chat session.
+
+        ``limit``/``before_id`` are the F10 keyset-pagination knobs and are
+        keyword-only. Both default to ``None`` = unlimited, so internal
+        callers that need the FULL list (``chat_context``, the archive
+        export) keep today's behavior; only the API routes bound the query.
+        ``before_id`` returns files with ``id < before_id`` (the oldest id of
+        the previous page) and ordering is ``created_at DESC, id DESC`` so the
+        id tiebreaker keeps rows deterministic across pages.
+        """
+        sql = (
+            "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
+            "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
+            "(p.file_id IS NOT NULL) AS has_profile "
+            "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
+            "WHERE f.user_id = ?"
+        )
+        params: list[Any] = [user_id]
         if chat_session:
-            rows = await self.conn.execute_fetchall(
-                "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
-                "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
-                "(p.file_id IS NOT NULL) AS has_profile "
-                "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
-                "WHERE f.user_id = ? AND f.chat_session = ? ORDER BY f.created_at DESC",
-                (user_id, chat_session),
-            )
-        else:
-            rows = await self.conn.execute_fetchall(
-                "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
-                "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
-                "(p.file_id IS NOT NULL) AS has_profile "
-                "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
-                "WHERE f.user_id = ? ORDER BY f.created_at DESC",
-                (user_id,),
-            )
+            sql += " AND f.chat_session = ?"
+            params.append(chat_session)
+        if before_id is not None:
+            sql += " AND f.id < ?"
+            params.append(before_id)
+        sql += " ORDER BY f.created_at DESC, f.id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = await self.conn.execute_fetchall(sql, tuple(params))
         return [dict(r) for r in rows]
 
     async def list_files_with_session(
-        self, user_id: int
+        self,
+        user_id: int,
+        *,
+        limit: int | None = None,
+        before_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """List files with session title via LEFT JOIN.
 
         Returns all files for the user across sessions, with the session
         title from chat_sessions (NULL when the session was deleted).
+
+        ``limit``/``before_id`` mirror ``list_files`` (F10 keyset
+        pagination) and both default to ``None`` = unlimited, so callers that
+        need the full list are unaffected.
         """
-        rows = await self.conn.execute_fetchall(
+        sql = (
             "SELECT f.id, f.filename, f.format, f.row_count, "
             "       f.size_bytes, f.created_at, f.chat_session, "
             "       cs.title AS session_title, "
@@ -716,10 +738,17 @@ class SqliteStore:
             "LEFT JOIN chat_sessions cs "
             "  ON cs.id = f.chat_session AND cs.user_id = ? "
             "LEFT JOIN profiles p ON p.file_id = f.id "
-            "WHERE f.user_id = ? "
-            "ORDER BY f.created_at DESC",
-            (user_id, user_id),
+            "WHERE f.user_id = ?"
         )
+        params: list[Any] = [user_id, user_id]
+        if before_id is not None:
+            sql += " AND f.id < ?"
+            params.append(before_id)
+        sql += " ORDER BY f.created_at DESC, f.id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = await self.conn.execute_fetchall(sql, tuple(params))
         return [dict(r) for r in rows]
 
     async def get_file(self, file_id: int, user_id: int) -> dict[str, Any] | None:

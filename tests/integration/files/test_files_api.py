@@ -5,6 +5,7 @@ Uses FastAPI TestClient with a fresh in-memory SQLite store per test.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import tempfile
@@ -79,6 +80,41 @@ def client(app):
 def store():
     from server.api import store as api_store  # noqa: PLC0415
     return api_store._store
+
+
+@pytest.fixture
+def user_id(auth_client):
+    """The authenticated user's id (for direct store seeding)."""
+    resp = auth_client.get("/api/auth/me")
+    assert resp.status_code == 200
+    return resp.json()["id"]
+
+
+def _seed_files(store, user_id, session_id, count, prefix="seed"):
+    """Insert *count* file rows directly and return their ids (ascending).
+
+    Pagination tests need more rows than a full upload round-trip makes
+    practical; the list query only reads these columns, so a direct store
+    write is the honest fixture (no parse/profiling under test here).
+    """
+    async def _run():
+        ids: list[int] = []
+        for i in range(count):
+            row = await store.create_file_with_profile(
+                user_id=user_id,
+                chat_session=session_id,
+                filename=f"{prefix}{i}.csv",
+                storage_path=f"/tmp/{prefix}{i}.csv",
+                size_bytes=10,
+                format_val="csv",
+                schema_json="{}",
+                stats_json="{}",
+                sample_json="[]",
+            )
+            ids.append(row["id"])
+        return ids
+
+    return asyncio.run(_run())
 
 
 @pytest.fixture
@@ -209,6 +245,74 @@ class TestFileList:
     def test_list_files_requires_auth(self, client):
         resp = client.get("/api/sessions/fake/files")
         assert resp.status_code == 401
+
+
+class TestSessionFilesPagination:
+    """F10: GET /api/sessions/{id}/files cursor pagination."""
+
+    def test_limit_bounds_reject_out_of_range(self, auth_client, session_id):
+        base = f"/api/sessions/{session_id}/files"
+        assert auth_client.get(f"{base}?limit=0").status_code == 422
+        assert auth_client.get(f"{base}?limit=500").status_code == 422
+
+    def test_omitted_limit_defaults_to_50(
+        self, auth_client, session_id, store, user_id
+    ):
+        _seed_files(store, user_id, session_id, 55)
+        resp = auth_client.get(f"/api/sessions/{session_id}/files")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 50
+
+    def test_limit_returns_newest_first(self, auth_client, session_id, store, user_id):
+        ids = _seed_files(store, user_id, session_id, 5)
+        resp = auth_client.get(f"/api/sessions/{session_id}/files?limit=2")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert [f["id"] for f in data] == [ids[-1], ids[-2]]
+
+    def test_before_walk_visits_every_file_once(
+        self, auth_client, session_id, store, user_id
+    ):
+        ids = _seed_files(store, user_id, session_id, 5)
+        base = f"/api/sessions/{session_id}/files"
+        page_size = 2
+        seen: list[int] = []
+        before: int | None = None
+        while True:
+            url = f"{base}?limit={page_size}"
+            if before is not None:
+                url += f"&before={before}"
+            data = auth_client.get(url).json()
+            seen.extend(f["id"] for f in data)
+            if len(data) < page_size:
+                break
+            before = data[-1]["id"]
+        assert seen == sorted(ids, reverse=True)
+        assert len(seen) == len(set(seen)) == len(ids)
+
+    def test_unknown_session_still_404s_with_cursor(self, auth_client):
+        resp = auth_client.get("/api/sessions/does-not-exist/files?limit=2")
+        assert resp.status_code == 404
+
+    def test_foreign_session_still_404s_with_cursor(
+        self, auth_client, client, session_id
+    ):
+        # User B owns a different session; user A must not list its files,
+        # cursor or not.
+        resp_b = client.post(
+            "/api/auth/register",
+            json={"email": "b_files@example.com", "password": "password123"},
+        )
+        cookie_b = resp_b.headers["set-cookie"]
+        b_session = client.post(
+            "/api/sessions",
+            json={"title": "B session"},
+            headers={"Cookie": cookie_b},
+        ).json()["id"]
+
+        resp = auth_client.get(f"/api/sessions/{b_session}/files?limit=2")
+        assert resp.status_code == 404
 
 
 class TestFileProfile:

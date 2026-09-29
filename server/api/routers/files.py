@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed_size
@@ -441,10 +441,18 @@ async def upload_file(
 @router.get("/sessions/{session_id}/files", response_model=list[FileResponse])
 async def list_files(
     session_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    before: int | None = Query(None, alias="before"),
     user: dict = Depends(current_user),
     store: SqliteStore = Depends(get_store),
 ):
-    """List files for a chat session (ownership enforced)."""
+    """List files for a chat session (ownership enforced).
+
+    Cursor-based pagination mirroring the chat-history keyset contract:
+    ``before=<file_id>`` returns older files (``id < before``), newest-first
+    (``created_at DESC, id DESC``), at most ``limit`` rows. The response stays
+    a bare list; the client infers ``hasMore`` from ``len === limit``.
+    """
     user_id = user["id"]
 
     # Verify session ownership
@@ -452,7 +460,9 @@ async def list_files(
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    files = await store.list_files(user_id, chat_session=session_id)
+    files = await store.list_files(
+        user_id, chat_session=session_id, limit=limit, before_id=before
+    )
     return [
         FileResponse(
             id=f["id"],
@@ -469,11 +479,21 @@ async def list_files(
 
 @router.get("/files", response_model=list[FileListItem])
 async def list_all_files(
+    limit: int = Query(50, ge=1, le=200),
+    before: int | None = Query(None, alias="before"),
     user: dict = Depends(current_user),
     store: SqliteStore = Depends(get_store),
 ):
-    """List ALL files for the current user across all chat sessions."""
-    rows = await store.list_files_with_session(user["id"])
+    """List ALL files for the current user across all chat sessions.
+
+    Cursor-based pagination mirroring the chat-history keyset contract:
+    ``before=<file_id>`` returns older files (``id < before``), newest-first
+    (``created_at DESC, id DESC``), at most ``limit`` rows. The response stays
+    a bare list; the client infers ``hasMore`` from ``len === limit``.
+    """
+    rows = await store.list_files_with_session(
+        user["id"], limit=limit, before_id=before
+    )
     return [
         FileListItem(
             id=r["id"],
