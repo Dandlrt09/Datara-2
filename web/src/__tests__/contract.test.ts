@@ -36,6 +36,7 @@ const EXPECTED_ROUTES: RouteEntry[] = [
   { method: "GET", pattern: "/api/files", present: true }, // new global endpoint
   { method: "DELETE", pattern: "/api/files/", present: true }, // /{file_id}
   { method: "GET", pattern: "/api/files/", present: true }, // /{file_id}/profile
+  { method: "GET", pattern: "/api/files/{file_id}/download", present: true }, // raw bytes (F11)
 
   // Archives
   { method: "GET", pattern: "/api/archives", present: true },

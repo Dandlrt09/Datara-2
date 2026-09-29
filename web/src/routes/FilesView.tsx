@@ -348,6 +348,13 @@ function FileRow({
             currentSheet={sheetsQuery.data.default_sheet}
           />
         )}
+        <a
+          href={`/api/files/${file.id}/download`}
+          download={file.filename}
+          style={{ marginLeft: 8 }}
+        >
+          Descargar
+        </a>
         <button
           onClick={onDelete}
           disabled={deletePending}

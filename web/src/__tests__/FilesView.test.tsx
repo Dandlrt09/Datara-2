@@ -455,4 +455,62 @@ describe("FilesView", () => {
     const button = screen.getByRole("button", { name: "Cargando…" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
   });
+
+  it("renders a 'Descargar' link per row pointing at the download endpoint", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [deletableFile],
+      isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
+    });
+
+    renderWithProviders(<FilesView />);
+    const link = screen.getByRole("link", { name: "Descargar" }) as HTMLAnchorElement;
+
+    expect(link.getAttribute("href")).toBe("/api/files/42/download");
+    expect(link.getAttribute("download")).toBe("sales.csv");
+  });
+
+  it("keeps the Sheets/Profile/Delete actions alongside Descargar", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [
+        {
+          id: 43,
+          filename: "book.xlsx",
+          format: "xlsx",
+          size_bytes: 2048,
+          created_at: "2024-01-01",
+          chat_session_id: "ses-1",
+          session_title: "Session 1",
+          has_profile: true,
+        },
+      ],
+      isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
+    });
+    useProfileMock.mockReturnValue({
+      data: {
+        file_id: 43,
+        schema: { columns: [{ name: "amount", dtype: "int64" }] },
+        stats: { amount: { null_count: 0, unique_count: 2, min: 1, max: 9 } },
+        sample: [],
+        generated_at: "2024-01-01T00:00:00Z",
+      },
+      isLoading: false,
+    });
+    useFileSheetsMock.mockReturnValue({
+      data: { sheets: ["Data", "Meta"], default_sheet: "Data" },
+      isLoading: false,
+    });
+
+    renderWithProviders(<FilesView />);
+
+    expect(screen.getByRole("link", { name: "Descargar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sheets" })).toBeTruthy();
+    expect(screen.getByText("Profile")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  });
 });
