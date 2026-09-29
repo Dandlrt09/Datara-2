@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import FilesView from "../routes/FilesView";
+import { ApiError } from "../lib/api";
 
-const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock, useProfileMock } =
+const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock, useProfileMock, useRenameFileMock } =
   vi.hoisted(() => ({
     useFilesGlobalMock: vi.fn(),
     useSessionsMock: vi.fn(),
@@ -13,6 +14,7 @@ const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMoc
     useFileSheetsMock: vi.fn(),
     useSelectFileSheetMock: vi.fn(),
     useProfileMock: vi.fn(),
+    useRenameFileMock: vi.fn(),
   }));
 
 vi.mock("../queries/useFiles", () => ({
@@ -22,6 +24,7 @@ vi.mock("../queries/useFiles", () => ({
   useProfile: () => useProfileMock(),
   useFileSheets: () => useFileSheetsMock(),
   useSelectFileSheet: () => useSelectFileSheetMock(),
+  useRenameFile: () => useRenameFileMock(),
 }));
 
 vi.mock("../queries/useSessions", () => ({
@@ -58,6 +61,13 @@ describe("FilesView", () => {
       mutateAsync: vi.fn(),
       isPending: false,
       isError: false,
+    });
+    useRenameFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      reset: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
     });
   });
 
@@ -512,5 +522,128 @@ describe("FilesView", () => {
     expect(screen.getByRole("button", { name: "Sheets" })).toBeTruthy();
     expect(screen.getByText("Profile")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+  });
+
+  it("Renombrar opens an inline editor prefilled with the current name", () => {
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+
+    const input = screen.getByLabelText("Nuevo nombre del archivo") as HTMLInputElement;
+    expect(input.value).toBe("sales.csv");
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeTruthy();
+  });
+
+  it("Guardar sends the trimmed name and closes the editor on success", () => {
+    const mutate = vi.fn((_vars: unknown, opts?: { onSuccess?: () => void }) =>
+      opts?.onSuccess?.(),
+    );
+    useRenameFileMock.mockReturnValue({
+      mutate,
+      reset: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    fireEvent.change(screen.getByLabelText("Nuevo nombre del archivo"), {
+      target: { value: "  renamed.csv  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      { fileId: 42, filename: "renamed.csv" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(screen.queryByLabelText("Nuevo nombre del archivo")).toBeNull();
+  });
+
+  it("Cancelar closes the editor without sending a request", () => {
+    const mutate = vi.fn();
+    useRenameFileMock.mockReturnValue({
+      mutate,
+      reset: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByLabelText("Nuevo nombre del archivo")).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("Cancelar clears the rename error so it cannot linger", () => {
+    const resetMock = vi.fn();
+    useRenameFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      reset: resetMock,
+      isPending: false,
+      isError: true,
+      error: new ApiError(409, {
+        detail: "A file named 'a.csv' already exists in this session.",
+      }),
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+    // Opening the editor already resets once; clear that call so the assertion
+    // isolates the Cancelar path. The mocked hook's isError is static, so we
+    // cannot assert the alert disappears — we pin the reset mechanism instead.
+    fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
+    resetMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(resetMock).toHaveBeenCalled();
+  });
+
+  it("surfaces a rename failure inline", () => {
+    useRenameFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      reset: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new ApiError(409, {
+        detail: "A file named 'a.csv' already exists in this session.",
+      }),
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+
+    expect(
+      screen.getByText("A file named 'a.csv' already exists in this session."),
+    ).toBeTruthy();
+  });
+
+  it("surfaces a rename failure inline for the 422 object detail shape", () => {
+    useRenameFileMock.mockReturnValue({
+      mutate: vi.fn(),
+      reset: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new ApiError(422, {
+        detail: {
+          code: "invalid_filename",
+          message: "La extensión del archivo no puede cambiar.",
+        },
+      }),
+    });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+
+    renderWithProviders(<FilesView />);
+
+    expect(
+      screen.getByText("La extensión del archivo no puede cambiar."),
+    ).toBeTruthy();
   });
 });

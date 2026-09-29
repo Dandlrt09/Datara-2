@@ -189,6 +189,16 @@ export function useDeleteFile() {
   });
 }
 
+/** Rename a file. Mirrors `useRenameSession` (useSessions.ts). */
+export function useRenameFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fileId, filename }: { fileId: number; filename: string }) =>
+      api.patch<UploadedFile>(`/api/files/${fileId}`, { filename }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["files"] }),
+  });
+}
+
 export function useProfile(fileId: number | null) {
   return useQuery({
     queryKey: ["profile", fileId],

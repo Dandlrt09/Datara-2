@@ -13,7 +13,7 @@ import { describe, it, expect } from "vitest";
  * backend route changes, this test fails and surfaces the mismatch.
  */
 interface RouteEntry {
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   pattern: string;
   present: boolean;
 }
@@ -37,6 +37,7 @@ const EXPECTED_ROUTES: RouteEntry[] = [
   { method: "DELETE", pattern: "/api/files/", present: true }, // /{file_id}
   { method: "GET", pattern: "/api/files/", present: true }, // /{file_id}/profile
   { method: "GET", pattern: "/api/files/{file_id}/download", present: true }, // raw bytes (F11)
+  { method: "PATCH", pattern: "/api/files/", present: true }, // /{file_id} rename (F12)
 
   // Archives
   { method: "GET", pattern: "/api/archives", present: true },

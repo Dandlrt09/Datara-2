@@ -1,12 +1,36 @@
 import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSessions, useCreateSession } from "../queries/useSessions";
-import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets } from "../queries/useFiles";
+import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets, useRenameFile } from "../queries/useFiles";
 import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileTable } from "../components/ProfileTable";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
+
+/**
+ * Extract a human-readable message from an ApiError-shaped failure.
+ * Falls back through: body.detail (string) -> body.detail.message ->
+ * error.message -> a generic Spanish rename message.
+ */
+function renameErrorMessage(error: unknown): string {
+  const fallback = "No se pudo renombrar el archivo";
+  if (!error || typeof error !== "object") return fallback;
+
+  const body = (error as { body?: unknown }).body;
+  if (body && typeof body === "object") {
+    const detail = (body as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (detail && typeof detail === "object") {
+      const message = (detail as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
+  }
+
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === "string" && message.trim()) return message;
+  return fallback;
+}
 
 export default function FilesView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -292,25 +316,86 @@ function FileRow({
   const sheetsQuery = useFileSheets(isXlsx ? file.id : null, showSheets);
   const hasMultipleSheets = (sheetsQuery.data?.sheets.length ?? 0) > 1;
 
+  // Inline rename editor, mirroring the session-rename precedent (ChatView).
+  const renameFile = useRenameFile();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+
+  const startRename = () => {
+    setRenameValue(file.filename);
+    renameFile.reset();
+    setIsRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setRenameValue("");
+    renameFile.reset();
+  };
+
+  const submitRename = () => {
+    const filename = renameValue.trim();
+    if (!filename) return;
+    renameFile.mutate(
+      { fileId: file.id, filename },
+      { onSuccess: () => cancelRename() },
+    );
+  };
+
   return (
     <tr>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-        {file.filename}
-        {file.has_profile === false && (
-          <span
-            title="This file has no profile and is not ready for chat"
-            style={{
-              marginLeft: 8,
-              padding: "2px 6px",
-              fontSize: "0.75em",
-              borderRadius: 4,
-              background: "#fff3cd",
-              color: "#856404",
-              border: "1px solid #ffeeba",
+        {isRenaming ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitRename();
             }}
+            style={{ display: "flex", gap: 4, alignItems: "center" }}
           >
-            Not profiled
-          </span>
+            <input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelRename();
+              }}
+              autoFocus
+              maxLength={255}
+              aria-label="Nuevo nombre del archivo"
+              style={{ flex: 1, minWidth: 0, padding: "2px 6px", fontSize: "inherit" }}
+            />
+            <button type="submit" disabled={!renameValue.trim() || renameFile.isPending}>
+              Guardar
+            </button>
+            <button type="button" onClick={cancelRename}>
+              Cancelar
+            </button>
+          </form>
+        ) : (
+          <>
+            {file.filename}
+            {file.has_profile === false && (
+              <span
+                title="This file has no profile and is not ready for chat"
+                style={{
+                  marginLeft: 8,
+                  padding: "2px 6px",
+                  fontSize: "0.75em",
+                  borderRadius: 4,
+                  background: "#fff3cd",
+                  color: "#856404",
+                  border: "1px solid #ffeeba",
+                }}
+              >
+                Not profiled
+              </span>
+            )}
+          </>
+        )}
+        {renameFile.isError && (
+          <p role="alert" style={{ color: "red", margin: "4px 0 0" }}>
+            {renameErrorMessage(renameFile.error)}
+          </p>
         )}
       </td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.format}</td>
@@ -355,6 +440,12 @@ function FileRow({
         >
           Descargar
         </a>
+        <button
+          onClick={startRename}
+          style={{ marginLeft: 8 }}
+        >
+          Renombrar
+        </button>
         <button
           onClick={onDelete}
           disabled={deletePending}
