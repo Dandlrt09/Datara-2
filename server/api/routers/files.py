@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse as RawFileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.data.parser import parse_upload, parse_upload_sheet, xlsx_uncompressed_size
@@ -41,6 +42,18 @@ _CHUNK_BYTES = 1024 * 1024
 # deployments and test harnesses can relocate it (tests point this at a
 # per-test tmp directory; no test may write into the real server/uploads/).
 UPLOADS_DIR = Path(os.environ.get("DATARA_UPLOADS_DIR", str(_DEFAULT_UPLOADS_DIR)))
+
+# Content-Type for a download, derived from the persisted ``format`` column.
+# There is no ``content_type`` column (Decision D3): the format is the source
+# of truth and anything unknown falls back to a binary stream so the browser
+# never guesses from the extension.
+_MEDIA_TYPES: dict[str, str] = {
+    "csv": "text/csv",
+    "tsv": "text/tab-separated-values",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+}
+_DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
 
 def _xlsx_sheet_names(path: str) -> list[str]:
@@ -668,6 +681,48 @@ async def get_file_profile(
         stats=profile["stats"],
         sample=profile["sample"],
         generated_at=profile.get("generated_at"),
+    )
+
+
+@router.get("/files/{file_id}/download")
+async def download_file(
+    file_id: int,
+    user: dict = Depends(current_user),
+    store: SqliteStore = Depends(get_store),
+):
+    """Stream the original uploaded bytes back to their owner (F11).
+
+    Ownership is enforced by ``get_file(file_id, user_id)`` (Decision D1), so
+    an unknown id and another user's id are indistinguishable 404s. The
+    storage path is re-validated against ``UPLOADS_DIR`` (defense in depth)
+    and only then checked for existence; a miss on either is a 404, never a
+    400 (Decision D4). The media type is derived from the persisted ``format``
+    (Decision D3) and ``filename`` is handed to Starlette so it builds an
+    encoded ``Content-Disposition`` instead of concatenating the header here
+    (Decision D2).
+    """
+    user_id = user["id"]
+    file_record = await store.get_file(file_id, user_id)
+    if file_record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    storage_path = file_record.get("storage_path")
+    if not storage_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    resolved = Path(storage_path).resolve()
+    if not resolved.is_relative_to(UPLOADS_DIR.resolve()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    if not os.path.exists(resolved):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    media_type = _MEDIA_TYPES.get(
+        file_record.get("format", ""), _DEFAULT_MEDIA_TYPE
+    )
+    return RawFileResponse(
+        path=str(resolved),
+        media_type=media_type,
+        filename=file_record["filename"],
     )
 
 
