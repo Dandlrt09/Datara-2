@@ -51,7 +51,15 @@ describe("AppShell wizard trigger", () => {
     useWizardStore.setState({ open: false, engaged: false, manual: false, dismissed: false });
     useChatStore.setState({ isStreaming: false });
     useSessionsMock.mockReturnValue({ data: [], isLoading: false, isSuccess: true, isError: false });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, isSuccess: true, isError: false });
+    useFilesGlobalMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      hasMore: false,
+      loadMore: vi.fn(),
+      isLoadingMore: false,
+    });
   });
 
   afterEach(() => cleanup());
@@ -74,7 +82,7 @@ describe("AppShell wizard trigger", () => {
   });
 
   it("hides with 1+ files", async () => {
-    useFilesGlobalMock.mockReturnValue({ data: [{ id: 1, filename: "test.csv", format: "csv", size_bytes: 1024 }], isLoading: false, isSuccess: true });
+    useFilesGlobalMock.mockReturnValue({ data: [{ id: 1, filename: "test.csv", format: "csv", size_bytes: 1024 }], isLoading: false, isSuccess: true, hasMore: false, loadMore: vi.fn(), isLoadingMore: false });
     renderAppShell();
     await expectWizardVisible(false);
   });
@@ -86,7 +94,7 @@ describe("AppShell wizard trigger", () => {
   });
 
   it("hides while files loading", () => {
-    useFilesGlobalMock.mockReturnValue({ data: undefined, isLoading: true, isSuccess: false });
+    useFilesGlobalMock.mockReturnValue({ data: undefined, isLoading: true, isSuccess: false, hasMore: false, loadMore: vi.fn(), isLoadingMore: false });
     renderAppShell();
     expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
   });

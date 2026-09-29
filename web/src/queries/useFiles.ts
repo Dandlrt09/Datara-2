@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { api } from "../lib/api";
 
 /** Mirrors server `FileResponse` (server/api/routers/files.py). */
@@ -55,20 +56,86 @@ export class UploadError extends Error {
   }
 }
 
+/** Page size for files keyset pagination. The backend clamps the `limit`
+ * query param to 1..200 and defaults to 50 — this matches it. */
+export const FILES_PAGE_SIZE = 50;
+
+/** First page only (D5): no load-more surface, because the app has no
+ * per-session files consumer. The endpoint is paginated; this hook requests
+ * exactly one page at FILES_PAGE_SIZE. */
 export function useFiles(sessionId: string | null) {
   return useQuery({
     queryKey: ["files", sessionId],
     queryFn: () =>
-      api.get<UploadedFile[]>(`/api/sessions/${sessionId}/files`),
+      api.get<UploadedFile[]>(
+        `/api/sessions/${sessionId}/files?limit=${FILES_PAGE_SIZE}`,
+      ),
     enabled: !!sessionId,
   });
 }
 
-export function useFilesGlobal() {
-  return useQuery({
+/** One raw page: newest-first (`created_at DESC, id DESC`) at most
+ * FILES_PAGE_SIZE rows, all with `id < before` when `before` is given. */
+async function fetchFilesPage(before?: number): Promise<FileListItem[]> {
+  const cursor = before === undefined ? "" : `&before=${before}`;
+  return api.get<FileListItem[]>(
+    `/api/files?limit=${FILES_PAGE_SIZE}${cursor}`,
+  );
+}
+
+export interface UseFilesGlobalResult {
+  /** Flattened pages, newest-first (page 1 first, older pages appended). */
+  data: FileListItem[];
+  isLoading: boolean;
+  isSuccess: boolean;
+  error: Error | null;
+  refetch: () => Promise<unknown>;
+  /** True while another older page may exist (last page filled the size). */
+  hasMore: boolean;
+  /** Fetches and appends the next older page; no-op when exhausted. */
+  loadMore: () => Promise<void>;
+  isLoadingMore: boolean;
+}
+
+/** Global files list, accumulated across cursor pages.
+ *
+ * `useInfiniteQuery` keeps the pages under the `["files","global"]` key, so
+ * the upload/delete invalidations (which target `["files"]`) refetch every
+ * loaded page coherently — no stale older window survives a delete. The
+ * returned `data` stays a flat newest-first `FileListItem[]` so existing
+ * consumers (FilesView, the AppShell wizard trigger) are unchanged. */
+export function useFilesGlobal(): UseFilesGlobalResult {
+  const query = useInfiniteQuery({
     queryKey: ["files", "global"],
-    queryFn: () => api.get<FileListItem[]>("/api/files"),
+    queryFn: ({ pageParam }) => fetchFilesPage(pageParam),
+    initialPageParam: undefined as number | undefined,
+    // A page that filled the size may have an older sibling: the keyset
+    // cursor is that page's oldest id. A short page ends the walk.
+    getNextPageParam: (lastPage) =>
+      lastPage.length === FILES_PAGE_SIZE
+        ? lastPage[lastPage.length - 1]?.id
+        : undefined,
   });
+
+  const data = useMemo(
+    () => (query.data?.pages ?? []).flat(),
+    [query.data],
+  );
+
+  return {
+    data,
+    isLoading: query.isLoading,
+    isSuccess: query.isSuccess,
+    error: query.error,
+    refetch: query.refetch,
+    hasMore: query.hasNextPage,
+    loadMore: async () => {
+      if (query.hasNextPage && !query.isFetchingNextPage) {
+        await query.fetchNextPage();
+      }
+    },
+    isLoadingMore: query.isFetchingNextPage,
+  };
 }
 
 export function useUploadFile() {

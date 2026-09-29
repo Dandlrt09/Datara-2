@@ -62,19 +62,19 @@ describe("FilesView", () => {
   });
 
   it("renders the heading", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Files")).toBeTruthy();
   });
 
   it("shows empty state when no files", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("No files uploaded yet.")).toBeTruthy();
   });
 
   it("renders the session picker", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Session 1")).toBeTruthy();
   });
@@ -85,6 +85,9 @@ describe("FilesView", () => {
       isLoading: false,
       error: new Error("Network error"),
       refetch: vi.fn(),
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     renderWithProviders(<FilesView />);
     expect(screen.getByRole("alert")).toBeTruthy();
@@ -92,7 +95,7 @@ describe("FilesView", () => {
   });
 
   it("shows upload error inline (R-ErrorUI-2)", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     useUploadFileMock.mockReturnValue({
       mutate: vi.fn(),
       isError: true,
@@ -105,7 +108,7 @@ describe("FilesView", () => {
   });
 
   it("shows Cancel button while upload is pending", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     useUploadFileMock.mockReturnValue({
       mutate: vi.fn(),
       isError: false,
@@ -117,7 +120,7 @@ describe("FilesView", () => {
   });
 
   it("shows 'Upload cancelled' instead of failure when aborted", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     const abortError = new Error("The operation was aborted.");
     abortError.name = "AbortError";
     useUploadFileMock.mockReturnValue({
@@ -139,6 +142,9 @@ describe("FilesView", () => {
       isLoading: false,
       error: new Error("Failed to load files"),
       refetch: vi.fn(),
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     useSessionsMock.mockReturnValue({
       data: undefined,
@@ -157,7 +163,7 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     
     renderWithProviders(<FilesView />);
     
@@ -174,7 +180,7 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     
     const errorMessage = "Network error";
     useCreateSessionMock.mockReturnValue({
@@ -194,7 +200,7 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     
     useCreateSessionMock.mockReturnValue({
       mutate: vi.fn(),
@@ -226,6 +232,9 @@ describe("FilesView", () => {
         },
       ],
       isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Not profiled")).toBeTruthy();
@@ -246,6 +255,9 @@ describe("FilesView", () => {
         },
       ],
       isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     useProfileMock.mockReturnValue({
       data: {
@@ -279,6 +291,9 @@ describe("FilesView", () => {
         },
       ],
       isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     useFileSheetsMock.mockReturnValue({
       data: { sheets: ["Data", "Meta"], default_sheet: "Data" },
@@ -309,6 +324,9 @@ describe("FilesView", () => {
         },
       ],
       isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
     });
     useFileSheetsMock.mockReturnValue({
       data: { sheets: ["Only"], default_sheet: "Only" },
@@ -336,7 +354,7 @@ describe("FilesView", () => {
   it("clicking Delete opens the confirmation dialog and sends no request", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -349,7 +367,7 @@ describe("FilesView", () => {
   it("confirming the dialog deletes the file with its id", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -362,7 +380,7 @@ describe("FilesView", () => {
   it("cancelling the dialog sends no request", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -374,7 +392,7 @@ describe("FilesView", () => {
 
   it("disables the row delete trigger while a delete is pending", () => {
     useDeleteFileMock.mockReturnValue({ mutate: vi.fn(), isError: false, isPending: true });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
 
     renderWithProviders(<FilesView />);
 
@@ -383,7 +401,7 @@ describe("FilesView", () => {
   });
 
   it("renders a file input whose accept list excludes .tab (F6)", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false });
+    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
 
     const { container } = renderWithProviders(<FilesView />);
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
@@ -392,5 +410,49 @@ describe("FilesView", () => {
     const accept = input?.getAttribute("accept") ?? "";
     expect(accept).not.toContain(".tab");
     expect(accept).toContain(".tsv");
+  });
+
+  it("shows 'Cargar más' when more pages exist and calls loadMore on click", () => {
+    const loadMore = vi.fn();
+    useFilesGlobalMock.mockReturnValue({
+      data: [deletableFile],
+      isLoading: false,
+      hasMore: true,
+      isLoadingMore: false,
+      loadMore,
+    });
+
+    renderWithProviders(<FilesView />);
+    const button = screen.getByRole("button", { name: "Cargar más" });
+
+    fireEvent.click(button);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides 'Cargar más' when there are no more pages", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [deletableFile],
+      isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
+    });
+
+    renderWithProviders(<FilesView />);
+    expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
+  });
+
+  it("disables the button and shows 'Cargando…' while loading more", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [deletableFile],
+      isLoading: false,
+      hasMore: true,
+      isLoadingMore: true,
+      loadMore: vi.fn(),
+    });
+
+    renderWithProviders(<FilesView />);
+    const button = screen.getByRole("button", { name: "Cargando…" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
   });
 });

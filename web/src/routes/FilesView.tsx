@@ -234,6 +234,23 @@ export default function FilesView() {
         )}
       </QueryError>
 
+      {/* Older-pages affordance: only rendered while another page may
+          exist, so a small account never sees it. */}
+      {globalFiles.hasMore && (
+        <div style={{ marginTop: 12 }}>
+          <button
+            onClick={() => globalFiles.loadMore()}
+            disabled={globalFiles.isLoadingMore}
+            style={{
+              padding: "8px 16px",
+              cursor: globalFiles.isLoadingMore ? "not-allowed" : "pointer",
+            }}
+          >
+            {globalFiles.isLoadingMore ? "Cargando…" : "Cargar más"}
+          </button>
+        </div>
+      )}
+
       {/* Delete mutation error */}
       {deleteFileMut.isError && (
         <p role="alert" style={{ color: "red", marginTop: 16 }}>

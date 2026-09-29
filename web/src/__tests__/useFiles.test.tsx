@@ -1,9 +1,9 @@
 import { describe, it, expect, expectTypeOf, vi, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useUploadFile, UploadError, useFileSheets, useSelectFileSheet } from "../queries/useFiles";
-import type { FileCreateResult, ProfileSummary, UploadedFile } from "../queries/useFiles";
+import { useUploadFile, UploadError, useFileSheets, useSelectFileSheet, useFilesGlobal, FILES_PAGE_SIZE } from "../queries/useFiles";
+import type { FileCreateResult, FileListItem, ProfileSummary, UploadedFile } from "../queries/useFiles";
 
 function makeWrapper() {
   const qc = new QueryClient({
@@ -189,6 +189,98 @@ describe("useUploadFile", () => {
     expectTypeOf<ProfileSummary["schema"]["columns"]>().toEqualTypeOf<
       { name: string; dtype: string }[]
     >();
+  });
+});
+
+describe("useFilesGlobal pagination", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function fileOf(id: number): FileListItem {
+    return {
+      id,
+      filename: `f${id}.csv`,
+      format: "csv",
+      size_bytes: 10,
+      created_at: "2026-09-28T10:00:00Z",
+      chat_session_id: "ses-1",
+      session_title: "Session 1",
+      has_profile: true,
+    };
+  }
+
+  function jsonResponse(body: unknown) {
+    return { ok: true, status: 200, json: async () => body };
+  }
+
+  it("fetches the first page at FILES_PAGE_SIZE without a cursor", async () => {
+    const firstPage = Array.from({ length: FILES_PAGE_SIZE }, (_, i) =>
+      fileOf(FILES_PAGE_SIZE * 2 - i),
+    );
+    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse(firstPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useFilesGlobal(), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data.length).toBe(FILES_PAGE_SIZE));
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/files?limit=${FILES_PAGE_SIZE}`);
+    // A page that filled the size means an older page may exist.
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  it("loadMore appends the next older page using the oldest id as cursor", async () => {
+    const firstPage = Array.from({ length: FILES_PAGE_SIZE }, (_, i) =>
+      fileOf(FILES_PAGE_SIZE * 2 - i),
+    );
+    const secondPage = [fileOf(3), fileOf(2), fileOf(1)];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockResolvedValueOnce(jsonResponse(secondPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useFilesGlobal(), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data.length).toBe(FILES_PAGE_SIZE));
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    const oldestOnFirstPage = firstPage[firstPage.length - 1].id;
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `/api/files?limit=${FILES_PAGE_SIZE}&before=${oldestOnFirstPage}`,
+    );
+    await waitFor(() =>
+      expect(result.current.data.length).toBe(FILES_PAGE_SIZE + 3),
+    );
+    // Flattened newest-first with no duplicate across the page boundary.
+    expect(new Set(result.current.data.map((f) => f.id)).size).toBe(
+      FILES_PAGE_SIZE + 3,
+    );
+    expect(result.current.data[0].id).toBe(firstPage[0].id);
+    expect(result.current.data[result.current.data.length - 1].id).toBe(1);
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("a short first page reports no more pages and blocks further loads", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse([fileOf(2), fileOf(1)]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useFilesGlobal(), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data.length).toBe(2));
+    expect(result.current.hasMore).toBe(false);
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
