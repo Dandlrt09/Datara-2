@@ -1,8 +1,14 @@
 import { useMemo, useState } from "react";
+import { formatNumberEs, formatTableValue } from "../lib/formatNumbers";
 
 interface DataFrameTableProps {
   columns: string[];
   rows: unknown[][];
+  /** Full frame length when known. A value greater than the captured rows means
+   * the table is truncated (the sandbox keeps only the first 20) and drives the
+   * "showing the first N of M" notice. `null`/absent (legacy artifacts) shows no
+   * notice. */
+  totalRows?: number | null;
 }
 
 /** Escape a single CSV field: quote and double-quote fields that contain
@@ -41,7 +47,11 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   a.remove();
 }
 
-export default function DataFrameTable({ columns, rows }: DataFrameTableProps) {
+export default function DataFrameTable({
+  columns,
+  rows,
+  totalRows,
+}: DataFrameTableProps) {
   const [sortKey, setSortKey] = useState<number | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -123,24 +133,44 @@ export default function DataFrameTable({ columns, rows }: DataFrameTableProps) {
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((cell, ci) => (
-                <td
-                  key={ci}
-                  style={{
-                    padding: "6px 12px",
-                    borderBottom: "1px solid #eee",
-                  }}
-                >
-                  {cell == null ? "—" : String(cell)}
-                </td>
-              ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td
+                colSpan={Math.max(columns.length, 1)}
+                style={{
+                  padding: "6px 12px",
+                  borderBottom: "1px solid #eee",
+                  color: "#777",
+                }}
+              >
+                Sin resultados
+              </td>
             </tr>
-          ))}
+          ) : (
+            sortedRows.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((cell, ci) => (
+                  <td
+                    key={ci}
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px solid #eee",
+                    }}
+                  >
+                    {formatTableValue(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
       </div>
+      {totalRows != null && totalRows > rows.length && (
+        <p style={{ margin: "4px 0 0", color: "#777", fontSize: "0.8em" }}>
+          {`Mostrando las primeras ${rows.length} de ${formatNumberEs(totalRows)} filas.`}
+        </p>
+      )}
     </div>
   );
 }

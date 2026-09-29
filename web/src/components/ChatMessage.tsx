@@ -372,12 +372,17 @@ export default function ChatMessage({
             );
           }
           if (art.kind === "table") {
-            const p = art.payload as { columns?: string[]; rows?: unknown[][] };
+            const p = art.payload as {
+              columns?: string[];
+              rows?: unknown[][];
+              total_rows?: number | null;
+            };
             return (
               <DataFrameTable
                 key={i}
                 columns={p.columns ?? []}
                 rows={p.rows ?? []}
+                totalRows={p.total_rows ?? null}
               />
             );
           }

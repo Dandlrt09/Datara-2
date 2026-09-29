@@ -7,6 +7,7 @@ import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileTable } from "../components/ProfileTable";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
+import { formatNumberEs } from "../lib/formatNumbers";
 
 /**
  * Extract a human-readable message from an ApiError-shaped failure.
@@ -399,8 +400,8 @@ function FileRow({
         )}
       </td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.format}</td>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.row_count ?? "—"}</td>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{(file.size_bytes / 1024).toFixed(1)} KB</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.row_count == null ? "—" : formatNumberEs(file.row_count)}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{formatNumberEs(file.size_bytes / 1024, 1) + " KB"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.session_title ?? "—"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
         {isXlsx && (

@@ -482,6 +482,33 @@ describe("FilesView", () => {
     expect(link.getAttribute("download")).toBe("sales.csv");
   });
 
+  it("formats the Rows and Size cells with Spanish separators", () => {
+    useFilesGlobalMock.mockReturnValue({
+      data: [
+        {
+          id: 55,
+          filename: "big.csv",
+          format: "csv",
+          row_count: 1234567,
+          size_bytes: 1536000,
+          created_at: "2024-01-01",
+          chat_session_id: "ses-1",
+          session_title: "Session 1",
+          has_profile: true,
+        },
+      ],
+      isLoading: false,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
+    });
+
+    renderWithProviders(<FilesView />);
+
+    expect(screen.getByText("1.234.567")).toBeTruthy();
+    expect(screen.getByText("1.500 KB")).toBeTruthy();
+  });
+
   it("keeps the Sheets/Profile/Delete actions alongside Descargar", () => {
     useFilesGlobalMock.mockReturnValue({
       data: [

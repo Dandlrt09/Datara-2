@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { ProfileSummary } from "../queries/useFiles";
+import { formatTableValue } from "../lib/formatNumbers";
 
 /** Defensive view of one column's stats: any field may be absent. */
 interface ColumnStats {
@@ -12,17 +13,13 @@ interface ColumnStats {
 /**
  * Render one stat cell deterministically.
  *
- * D4: `null`/`undefined`/non-finite → em dash; finite numbers → grouped with up
- * to 6 fraction digits; anything else → `String(v)`. Kept module-local so the
- * formatting rule is unit-testable and shared by every cell.
+ * D4: delegates to the shared `formatTableValue` — `null`/`undefined`/non-finite
+ * → em dash; finite numbers → Spanish separators with up to 6 fraction digits;
+ * anything else → `String(v)`. Kept exported so the formatting rule stays
+ * unit-testable and shared by every cell.
  */
 export function formatStat(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return "—";
-    return Number(value).toLocaleString("en-US", { maximumFractionDigits: 6 });
-  }
-  return String(value);
+  return formatTableValue(value);
 }
 
 export interface ProfileTableProps {

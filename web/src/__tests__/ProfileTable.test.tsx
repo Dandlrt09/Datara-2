@@ -39,9 +39,9 @@ describe("ProfileTable", () => {
     const cells = within(row as HTMLElement);
     expect(cells.getByText("int64")).toBeTruthy();
     expect(cells.getByText("3")).toBeTruthy();
-    expect(cells.getByText("1,200")).toBeTruthy();
+    expect(cells.getByText("1.200")).toBeTruthy();
     expect(cells.getByText("1")).toBeTruthy();
-    expect(cells.getByText("1,234.5")).toBeTruthy();
+    expect(cells.getByText("1.234,5")).toBeTruthy();
   });
 
   it("renders an em dash for null or missing stat values", () => {

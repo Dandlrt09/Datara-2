@@ -31,6 +31,39 @@ describe("buildCsv", () => {
   });
 });
 
+describe("DataFrameTable display", () => {
+  it("renders an empty state when there are no rows", () => {
+    render(<DataFrameTable columns={["a", "b"]} rows={[]} />);
+    expect(screen.getByText("Sin resultados")).toBeTruthy();
+    // Header stays visible so the columns are still informative.
+    expect(screen.getByText("a")).toBeTruthy();
+  });
+
+  it("shows the truncation notice when totalRows exceeds the captured rows", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => [i]);
+    render(<DataFrameTable columns={["n"]} rows={rows} totalRows={25} />);
+    expect(
+      screen.getByText("Mostrando las primeras 20 de 25 filas."),
+    ).toBeTruthy();
+  });
+
+  it("shows no notice when totalRows equals the captured rows", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => [i]);
+    render(<DataFrameTable columns={["n"]} rows={rows} totalRows={20} />);
+    expect(screen.queryByText(/Mostrando las primeras/)).toBeNull();
+  });
+
+  it("shows no notice for a legacy artifact without totalRows", () => {
+    render(<DataFrameTable columns={["n"]} rows={[[1], [2]]} />);
+    expect(screen.queryByText(/Mostrando las primeras/)).toBeNull();
+  });
+
+  it("formats numeric cells with Spanish separators", () => {
+    render(<DataFrameTable columns={["monto"]} rows={[[1234.5]]} />);
+    expect(screen.getByText("1.234,5")).toBeTruthy();
+  });
+});
+
 describe("DataFrameTable CSV download", () => {
   const createObjectURL = vi.fn((_blob: Blob) => "blob:mock-url");
   const revokeObjectURL = vi.fn();
