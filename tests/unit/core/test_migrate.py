@@ -180,3 +180,109 @@ class TestApplyMigrations:
         finally:
             import os
             os.unlink(db_path)
+
+
+class TestMigration0004CaseInsensitiveFiles:
+    """F12.1: 0004 recreates ``idx_files_unique_name`` with COLLATE NOCASE.
+
+    Three properties: the index folds case; a pre-existing case-variant pair
+    survives the guard (both rows kept, the non-lowest id renamed, none
+    deleted); and the recreated index rejects a new case-variant insert.
+    """
+
+    @pytest.fixture
+    def conn(self):
+        return sqlite3.connect(":memory:")
+
+    def _apply_through_0003(self, conn):
+        """Apply migrations 1-3 and record them, leaving a version-3 DB."""
+        from server.migrate import MIGRATIONS_DIR
+
+        for version, name in (
+            (1, "0001_init.sql"),
+            (2, "0002_provider_settings.sql"),
+            (3, "0003_files_unique_name.sql"),
+        ):
+            conn.executescript(
+                (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS migrations ("
+                "  version INTEGER PRIMARY KEY,"
+                "  name TEXT NOT NULL,"
+                "  applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")"
+            )
+            conn.execute(
+                "INSERT INTO migrations (version, name) VALUES (?, ?)",
+                (version, name),
+            )
+        conn.commit()
+
+    def _seed_case_variant_pair(self, conn):
+        """Insert CASE.csv (lowest id) + case.csv in one session; return ids."""
+        conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES ('case@example.com', 'h')"
+        )
+        user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO chat_sessions (id, user_id) VALUES ('s1', ?)", (user_id,)
+        )
+        conn.execute(
+            "INSERT INTO files (user_id, chat_session, filename, storage_path, "
+            "size_bytes, format) VALUES (?, 's1', 'CASE.csv', '/tmp/1.csv', 1, 'csv')",
+            (user_id,),
+        )
+        first_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO files (user_id, chat_session, filename, storage_path, "
+            "size_bytes, format) VALUES (?, 's1', 'case.csv', '/tmp/2.csv', 1, 'csv')",
+            (user_id,),
+        )
+        second_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+        return user_id, first_id, second_id
+
+    def test_index_sql_contains_collate_nocase(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            apply_migrations(db_path)
+            conn = sqlite3.connect(db_path)
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='index' AND name='idx_files_unique_name'"
+            ).fetchone()
+            assert row is not None
+            assert "COLLATE NOCASE" in row[0]
+            conn.close()
+        finally:
+            import os
+            os.unlink(db_path)
+
+    def test_guard_renames_case_variant_pair_and_deletes_nothing(self, conn):
+        self._apply_through_0003(conn)
+        _, first_id, second_id = self._seed_case_variant_pair(conn)
+
+        run_pending_migrations(conn)
+
+        rows = dict(conn.execute("SELECT id, filename FROM files").fetchall())
+        # BOTH rows survive — the guard renames, it never deletes.
+        assert len(rows) == 2
+        assert rows[first_id] == "CASE.csv"
+        assert rows[second_id] == f"case.csv (dup-{second_id})"
+        assert 4 in get_applied_versions(conn)
+
+    def test_new_case_variant_insert_is_rejected_after_0004(self, conn):
+        self._apply_through_0003(conn)
+        user_id, _, _ = self._seed_case_variant_pair(conn)
+
+        run_pending_migrations(conn)
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO files (user_id, chat_session, filename, "
+                "storage_path, size_bytes, format) "
+                "VALUES (?, 's1', 'Case.CSV', '/tmp/3.csv', 1, 'csv')",
+                (user_id,),
+            )
