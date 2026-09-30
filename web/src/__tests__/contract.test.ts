@@ -70,12 +70,17 @@ describe("Frontend-backend route contract (R-TestWall-4)", () => {
   });
 
   it("documents the queryFn URL for useFiles(sessionId)", () => {
-    // useFiles(sessionId) → api.get<UploadedFile[]>(
-    //   `/api/sessions/${sessionId}/files?limit=${FILES_PAGE_SIZE}`)
+    // useFiles(sessionId) → fetchSessionFilesPage → api.get<UploadedFile[]>(
+    //   `/api/sessions/${sessionId}/files?limit=${FILES_PAGE_SIZE}` +
+    //   `&before=<id>` for older pages)
     const sessionId = "ses-test";
     const url = `/api/sessions/${sessionId}/files?limit=50`;
     expect(url).toContain("/api/sessions/");
     expect(url).toContain("/files");
+    // Cursor shape for older pages, mirroring the global endpoint.
+    expect(`${url}&before=42`).toBe(
+      `/api/sessions/${sessionId}/files?limit=50&before=42`,
+    );
   });
 
   it("documents the queryFn URL for upload", () => {

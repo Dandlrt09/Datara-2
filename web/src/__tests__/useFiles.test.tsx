@@ -2,7 +2,7 @@ import { describe, it, expect, expectTypeOf, vi, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useUploadFile, UploadError, useFileSheets, useSelectFileSheet, useFilesGlobal, FILES_PAGE_SIZE } from "../queries/useFiles";
+import { useUploadFile, UploadError, useFileSheets, useSelectFileSheet, useFiles, useFilesGlobal, FILES_PAGE_SIZE } from "../queries/useFiles";
 import type { FileCreateResult, FileListItem, ProfileSummary, UploadedFile } from "../queries/useFiles";
 
 function makeWrapper() {
@@ -281,6 +281,87 @@ describe("useFilesGlobal pagination", () => {
       await result.current.loadMore();
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useFiles session pagination", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The session endpoint returns `FileResponse`, which has no session fields.
+  function fileOf(id: number): UploadedFile {
+    return {
+      id,
+      filename: `f${id}.csv`,
+      format: "csv",
+      size_bytes: 10,
+      created_at: "2026-09-28T10:00:00Z",
+      has_profile: true,
+    };
+  }
+
+  function jsonResponse(body: unknown) {
+    return { ok: true, status: 200, json: async () => body };
+  }
+
+  it("fetches the selected session's first page without a cursor", async () => {
+    const firstPage = Array.from({ length: FILES_PAGE_SIZE }, (_, i) =>
+      fileOf(FILES_PAGE_SIZE * 2 - i),
+    );
+    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse(firstPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useFiles("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data.length).toBe(FILES_PAGE_SIZE));
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `/api/sessions/ses-1/files?limit=${FILES_PAGE_SIZE}`,
+    );
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  it("loadMore appends the next older page using the oldest id as cursor", async () => {
+    const firstPage = Array.from({ length: FILES_PAGE_SIZE }, (_, i) =>
+      fileOf(FILES_PAGE_SIZE * 2 - i),
+    );
+    const secondPage = [fileOf(3), fileOf(2), fileOf(1)];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(firstPage))
+      .mockResolvedValueOnce(jsonResponse(secondPage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useFiles("ses-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data.length).toBe(FILES_PAGE_SIZE));
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    const oldestOnFirstPage = firstPage[firstPage.length - 1].id;
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `/api/sessions/ses-1/files?limit=${FILES_PAGE_SIZE}&before=${oldestOnFirstPage}`,
+    );
+    await waitFor(() =>
+      expect(result.current.data.length).toBe(FILES_PAGE_SIZE + 3),
+    );
+    expect(result.current.data[0].id).toBe(firstPage[0].id);
+    expect(result.current.data[result.current.data.length - 1].id).toBe(1);
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("does not fetch while the session id is null", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderHook(() => useFiles(null), { wrapper: makeWrapper() });
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

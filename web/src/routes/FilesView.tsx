@@ -1,13 +1,22 @@
 import { useCallback, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSessions, useCreateSession } from "../queries/useSessions";
-import { useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets, useRenameFile } from "../queries/useFiles";
+import { useFiles, useFilesGlobal, useUploadFile, useDeleteFile, useProfile, useFileSheets, useRenameFile } from "../queries/useFiles";
+import type { UploadedFile } from "../queries/useFiles";
 import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileTable } from "../components/ProfileTable";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
 import { formatNumberEs } from "../lib/formatNumbers";
+
+/** Row shape rendered by the table. `FileListItem` already satisfies it; the
+ * per-session endpoint returns `FileResponse` (no `session_title`), so the
+ * session view fills that column from the selected session. */
+type FileRowModel = UploadedFile & { session_title: string | null };
+
+/** The two mutually exclusive list sources. */
+type FilesViewFilter = "session" | "all";
 
 /**
  * Extract a human-readable message from an ApiError-shaped failure.
@@ -35,6 +44,10 @@ function renameErrorMessage(error: unknown): string {
 
 export default function FilesView() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // Default to the selected session: the user complaint is that the list
+  // ignored the session picker. "Todas las sesiones" restores the cross-
+  // session management the page already offered.
+  const [viewFilter, setViewFilter] = useState<FilesViewFilter>("session");
   // Set right after a multi-sheet upload so the picker can be shown before
   // the user leaves the page; cleared once a sheet is chosen.
   const [uploadedSheets, setUploadedSheets] = useState<{
@@ -71,6 +84,28 @@ export default function FilesView() {
   const effectiveSessionId = selectedSessionId ?? sessionList[0]?.id ?? null;
 
   const hasSessions = sessionList.length > 0;
+
+  // Both sources are queried unconditionally so "Todas las sesiones" renders
+  // instantly from cache and the AppShell wizard trigger (which shares the
+  // global query) is untouched. The session hook disables itself when there is
+  // no session to scope to.
+  const sessionFiles = useFiles(effectiveSessionId);
+
+  // D6: one active list drives error, loading, pagination and the empty state.
+  const activeList = viewFilter === "session" ? sessionFiles : globalFiles;
+
+  const selectedSessionTitle =
+    sessionList.find((s) => s.id === effectiveSessionId)?.title ?? null;
+
+  // D5: the session endpoint omits `session_title`; fill it from the selected
+  // session so the Session column stays populated in both views.
+  const rows: FileRowModel[] =
+    viewFilter === "session"
+      ? (sessionFiles.data ?? []).map((f) => ({
+          ...f,
+          session_title: selectedSessionTitle,
+        }))
+      : globalFiles.data;
 
   const onDrop = useCallback(
     async (accepted: File[]) => {
@@ -146,6 +181,31 @@ export default function FilesView() {
           ))}
         </select>
       </div>
+
+      {/* View filter: explicit and visible, so the two list modes are obvious. */}
+      <fieldset style={{ marginBottom: 16, border: "none", padding: 0 }}>
+        <legend style={{ marginBottom: 4 }}>Ver archivos:</legend>
+        <label style={{ marginRight: 16 }}>
+          <input
+            type="radio"
+            name="files-view"
+            value="session"
+            checked={viewFilter === "session"}
+            onChange={() => setViewFilter("session")}
+          />{" "}
+          Solo esta sesión
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="files-view"
+            value="all"
+            checked={viewFilter === "all"}
+            onChange={() => setViewFilter("all")}
+          />{" "}
+          Todas las sesiones
+        </label>
+      </fieldset>
 
       {/* Upload zone */}
       <div
@@ -227,13 +287,15 @@ export default function FilesView() {
         />
       )}
 
-      {/* Global file list */}
-      <QueryError error={globalFiles.error as Error | null} onRetry={() => globalFiles.refetch()}>
-        {globalFiles.isLoading && <p>Loading files...</p>}
-        {globalFiles.data && globalFiles.data.length === 0 && (
-          <p>No files uploaded yet.</p>
+      {/* Active view file list (session or all) */}
+      <QueryError error={activeList.error as Error | null} onRetry={() => activeList.refetch()}>
+        {activeList.isLoading && <p>Loading files...</p>}
+        {!activeList.isLoading && rows.length === 0 && (
+          viewFilter === "session"
+            ? effectiveSessionId !== null && <p>No hay archivos en esta sesión.</p>
+            : <p>No files uploaded yet.</p>
         )}
-        {globalFiles.data && globalFiles.data.length > 0 && (
+        {rows.length > 0 && (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
@@ -246,7 +308,7 @@ export default function FilesView() {
               </tr>
             </thead>
             <tbody>
-              {globalFiles.data.map((f) => (
+              {rows.map((f) => (
                 <FileRow
                   key={f.id}
                   file={f}
@@ -259,19 +321,19 @@ export default function FilesView() {
         )}
       </QueryError>
 
-      {/* Older-pages affordance: only rendered while another page may
-          exist, so a small account never sees it. */}
-      {globalFiles.hasMore && (
+      {/* Older-pages affordance: only rendered while the ACTIVE view has
+          another page, so each view keeps its own cursor walk. */}
+      {activeList.hasMore && (
         <div style={{ marginTop: 12 }}>
           <button
-            onClick={() => globalFiles.loadMore()}
-            disabled={globalFiles.isLoadingMore}
+            onClick={() => activeList.loadMore()}
+            disabled={activeList.isLoadingMore}
             style={{
               padding: "8px 16px",
-              cursor: globalFiles.isLoadingMore ? "not-allowed" : "pointer",
+              cursor: activeList.isLoadingMore ? "not-allowed" : "pointer",
             }}
           >
-            {globalFiles.isLoadingMore ? "Cargando…" : "Cargar más"}
+            {activeList.isLoadingMore ? "Cargando…" : "Cargar más"}
           </button>
         </div>
       )}

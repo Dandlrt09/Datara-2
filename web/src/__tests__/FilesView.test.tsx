@@ -4,8 +4,9 @@ import { renderWithProviders } from "./test-utils";
 import FilesView from "../routes/FilesView";
 import { ApiError } from "../lib/api";
 
-const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock, useProfileMock, useRenameFileMock } =
+const { useFilesMock, useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMock, useCreateSessionMock, useFileSheetsMock, useSelectFileSheetMock, useProfileMock, useRenameFileMock } =
   vi.hoisted(() => ({
+    useFilesMock: vi.fn(),
     useFilesGlobalMock: vi.fn(),
     useSessionsMock: vi.fn(),
     useUploadFileMock: vi.fn(),
@@ -18,6 +19,7 @@ const { useFilesGlobalMock, useSessionsMock, useUploadFileMock, useDeleteFileMoc
   }));
 
 vi.mock("../queries/useFiles", () => ({
+  useFiles: (sessionId: string | null) => useFilesMock(sessionId),
   useFilesGlobal: () => useFilesGlobalMock(),
   useUploadFile: () => useUploadFileMock(),
   useDeleteFile: () => useDeleteFileMock(),
@@ -32,6 +34,45 @@ vi.mock("../queries/useSessions", () => ({
   useCreateSession: () => useCreateSessionMock(),
 }));
 
+/** Shape returned by both paged file hooks (`useFiles` / `useFilesGlobal`). */
+function listResult(overrides: Record<string, unknown> = {}) {
+  return {
+    data: [],
+    isLoading: false,
+    isSuccess: true,
+    error: null,
+    refetch: vi.fn(),
+    hasMore: false,
+    isLoadingMore: false,
+    loadMore: vi.fn(),
+    ...overrides,
+  };
+}
+
+/** Switch the visible list to the cross-session view. */
+function selectAllView() {
+  fireEvent.click(screen.getByRole("radio", { name: "Todas las sesiones" }));
+}
+
+// The per-session endpoint returns `FileResponse` (no session metadata); the
+// session view fills the Session column from the selected session.
+const sessionFile = {
+  id: 42,
+  filename: "sales.csv",
+  format: "csv",
+  row_count: 10,
+  size_bytes: 2048,
+  created_at: "2024-01-01",
+  has_profile: true,
+};
+
+// The global endpoint returns `FileListItem` (carries the session metadata).
+const globalFile = {
+  ...sessionFile,
+  chat_session_id: "ses-1",
+  session_title: "Session 1",
+};
+
 describe("FilesView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -40,6 +81,10 @@ describe("FilesView", () => {
       data: [{ id: "ses-1", title: "Session 1" }],
       isLoading: false,
     });
+    // Default: both list sources resolved and empty; the view defaults to the
+    // session source, so most tests override `useFilesMock`.
+    useFilesMock.mockReturnValue(listResult());
+    useFilesGlobalMock.mockReturnValue(listResult());
     useUploadFileMock.mockReturnValue({
       mutate: vi.fn(),
       isError: false,
@@ -72,40 +117,127 @@ describe("FilesView", () => {
   });
 
   it("renders the heading", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Files")).toBeTruthy();
   });
 
-  it("shows empty state when no files", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+  it("defaults to 'Solo esta sesión' and queries the selected session", () => {
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
     renderWithProviders(<FilesView />);
+
+    const sessionRadio = screen.getByRole("radio", {
+      name: "Solo esta sesión",
+    }) as HTMLInputElement;
+    expect(sessionRadio.checked).toBe(true);
+    expect(useFilesMock).toHaveBeenCalledWith("ses-1");
+    expect(screen.getByText("sales.csv")).toBeTruthy();
+  });
+
+  it("shows 'No hay archivos en esta sesión.' when the selected session has none", () => {
+    renderWithProviders(<FilesView />);
+    expect(screen.getByText("No hay archivos en esta sesión.")).toBeTruthy();
+    expect(screen.queryByText("No files uploaded yet.")).toBeNull();
+  });
+
+  it("shows 'No files uploaded yet.' in 'Todas las sesiones'", () => {
+    renderWithProviders(<FilesView />);
+    selectAllView();
     expect(screen.getByText("No files uploaded yet.")).toBeTruthy();
+    expect(screen.queryByText("No hay archivos en esta sesión.")).toBeNull();
   });
 
   it("renders the session picker", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Session 1")).toBeTruthy();
   });
 
-  it("shows error card and retry on query failure (R-ErrorUI-1)", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: undefined,
+  it("switching the session selector reacts without a reload", () => {
+    useSessionsMock.mockReturnValue({
+      data: [
+        { id: "ses-1", title: "Session 1" },
+        { id: "ses-2", title: "Session 2" },
+      ],
       isLoading: false,
-      error: new Error("Network error"),
-      refetch: vi.fn(),
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
     });
+    useFilesMock.mockImplementation((id: string | null) =>
+      id === "ses-2"
+        ? listResult({
+            data: [{ ...sessionFile, id: 99, filename: "second.csv" }],
+          })
+        : listResult({ data: [sessionFile] }),
+    );
+
     renderWithProviders(<FilesView />);
+    expect(screen.getByText("sales.csv")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "ses-2" },
+    });
+
+    expect(screen.getByText("second.csv")).toBeTruthy();
+    expect(screen.queryByText("sales.csv")).toBeNull();
+    expect(useFilesMock).toHaveBeenLastCalledWith("ses-2");
+  });
+
+  it("fills the Session column with the selected session's title in session view", () => {
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Alpha" }],
+      isLoading: false,
+    });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
+    renderWithProviders(<FilesView />);
+
+    // Role-scoped to the table cell, so the picker option does not collide.
+    expect(screen.getByRole("cell", { name: "Alpha" })).toBeTruthy();
+  });
+
+  it("renders no list empty state when there are no sessions", () => {
+    useSessionsMock.mockReturnValue({ data: [], isLoading: false });
+    renderWithProviders(<FilesView />);
+
+    expect(screen.queryByText("No hay archivos en esta sesión.")).toBeNull();
+    expect(screen.queryByText("No files uploaded yet.")).toBeNull();
+  });
+
+  it("'Todas las sesiones' renders the global rows", () => {
+    useFilesGlobalMock.mockReturnValue(listResult({ data: [globalFile] }));
+    renderWithProviders(<FilesView />);
+    selectAllView();
+
+    expect(screen.getByText("sales.csv")).toBeTruthy();
+  });
+
+  it("shows the active view's error and retries that view", () => {
+    const refetch = vi.fn();
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [],
+        error: new Error("Session files failed"),
+        refetch,
+      }),
+    );
+    renderWithProviders(<FilesView />);
+
+    expect(screen.getByText("Session files failed")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the global error and retry in 'Todas las sesiones' (R-ErrorUI-1)", () => {
+    useFilesGlobalMock.mockReturnValue(
+      listResult({
+        data: [],
+        error: new Error("Failed to load files"),
+      }),
+    );
+    renderWithProviders(<FilesView />);
+    selectAllView();
+
+    expect(screen.getByText("Failed to load files")).toBeTruthy();
     expect(screen.getByRole("alert")).toBeTruthy();
-    expect(screen.getByText("Retry")).toBeTruthy();
   });
 
   it("shows upload error inline (R-ErrorUI-2)", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     useUploadFileMock.mockReturnValue({
       mutate: vi.fn(),
       isError: true,
@@ -118,7 +250,6 @@ describe("FilesView", () => {
   });
 
   it("shows Cancel button while upload is pending", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     useUploadFileMock.mockReturnValue({
       mutate: vi.fn(),
       isError: false,
@@ -130,7 +261,6 @@ describe("FilesView", () => {
   });
 
   it("shows 'Upload cancelled' instead of failure when aborted", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
     const abortError = new Error("The operation was aborted.");
     abortError.name = "AbortError";
     useUploadFileMock.mockReturnValue({
@@ -146,16 +276,14 @@ describe("FilesView", () => {
   });
 
   it("__all__ regression: all endpoints reject → error + retry visible (R-TestWall-2)", () => {
-    // Both global files and sessions fail
-    useFilesGlobalMock.mockReturnValue({
-      data: undefined,
-      isLoading: false,
-      error: new Error("Failed to load files"),
-      refetch: vi.fn(),
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    // Both global files and sessions fail; the global error surfaces in the
+    // cross-session view (the session picker has no error surface).
+    useFilesGlobalMock.mockReturnValue(
+      listResult({
+        data: [],
+        error: new Error("Failed to load files"),
+      }),
+    );
     useSessionsMock.mockReturnValue({
       data: undefined,
       isLoading: false,
@@ -163,6 +291,7 @@ describe("FilesView", () => {
       refetch: vi.fn(),
     });
     renderWithProviders(<FilesView />);
+    selectAllView();
     // Must render error, never blank
     expect(screen.getByText("Failed to load files")).toBeTruthy(); // from ErrorCard message
     expect(screen.getByRole("alert")).toBeTruthy();
@@ -173,10 +302,9 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
-    
+
     renderWithProviders(<FilesView />);
-    
+
     // Should show the create session button
     expect(screen.getByText("Create a chat session")).toBeTruthy();
     // Should NOT show the old dead-end text
@@ -190,8 +318,7 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
-    
+
     const errorMessage = "Network error";
     useCreateSessionMock.mockReturnValue({
       mutate: vi.fn(),
@@ -199,9 +326,9 @@ describe("FilesView", () => {
       isError: true,
       error: new Error(errorMessage),
     });
-    
+
     renderWithProviders(<FilesView />);
-    
+
     expect(screen.getByText(`Failed to create session: ${errorMessage}`)).toBeTruthy();
   });
 
@@ -210,16 +337,15 @@ describe("FilesView", () => {
       data: [],
       isLoading: false,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
-    
+
     useCreateSessionMock.mockReturnValue({
       mutate: vi.fn(),
       isPending: true,
       isError: false,
     });
-    
+
     renderWithProviders(<FilesView />);
-    
+
     expect(screen.getByText("Creating session...")).toBeTruthy();
     // The button should be disabled
     const button = screen.getByRole("button", { name: /Creating session.../ }) as HTMLButtonElement;
@@ -228,47 +354,39 @@ describe("FilesView", () => {
   });
 
   it("renders a 'Not profiled' badge when a file has no profile", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 1,
-          filename: "broken.xlsx",
-          format: "xlsx",
-          size_bytes: 1024,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: false,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 1,
+            filename: "broken.xlsx",
+            format: "xlsx",
+            size_bytes: 1024,
+            created_at: "2024-01-01",
+            has_profile: false,
+          },
+        ],
+      }),
+    );
     renderWithProviders(<FilesView />);
     expect(screen.getByText("Not profiled")).toBeTruthy();
   });
 
   it("renders the tabular profile when useProfile returns a profile", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 9,
-          filename: "sales.csv",
-          format: "csv",
-          size_bytes: 1024,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: true,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 9,
+            filename: "sales.csv",
+            format: "csv",
+            size_bytes: 1024,
+            created_at: "2024-01-01",
+            has_profile: true,
+          },
+        ],
+      }),
+    );
     useProfileMock.mockReturnValue({
       data: {
         file_id: 9,
@@ -287,24 +405,20 @@ describe("FilesView", () => {
   });
 
   it("shows the sheet warning for a multi-sheet xlsx row", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 7,
-          filename: "book.xlsx",
-          format: "xlsx",
-          size_bytes: 2048,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: true,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 7,
+            filename: "book.xlsx",
+            format: "xlsx",
+            size_bytes: 2048,
+            created_at: "2024-01-01",
+            has_profile: true,
+          },
+        ],
+      }),
+    );
     useFileSheetsMock.mockReturnValue({
       data: { sheets: ["Data", "Meta"], default_sheet: "Data" },
       isLoading: false,
@@ -320,24 +434,20 @@ describe("FilesView", () => {
   });
 
   it("does not show the sheet warning for a single-sheet xlsx row", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 8,
-          filename: "one.xlsx",
-          format: "xlsx",
-          size_bytes: 1024,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: true,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 8,
+            filename: "one.xlsx",
+            format: "xlsx",
+            size_bytes: 1024,
+            created_at: "2024-01-01",
+            has_profile: true,
+          },
+        ],
+      }),
+    );
     useFileSheetsMock.mockReturnValue({
       data: { sheets: ["Only"], default_sheet: "Only" },
       isLoading: false,
@@ -349,22 +459,10 @@ describe("FilesView", () => {
     expect(screen.queryByText(/This workbook has/)).toBeNull();
   });
 
-  const deletableFile = {
-    id: 42,
-    filename: "sales.csv",
-    format: "csv",
-    row_count: 10,
-    size_bytes: 2048,
-    created_at: "2024-01-01",
-    chat_session_id: "ses-1",
-    session_title: "Session 1",
-    has_profile: true,
-  };
-
   it("clicking Delete opens the confirmation dialog and sends no request", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -377,7 +475,7 @@ describe("FilesView", () => {
   it("confirming the dialog deletes the file with its id", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -390,7 +488,7 @@ describe("FilesView", () => {
   it("cancelling the dialog sends no request", () => {
     const mutate = vi.fn();
     useDeleteFileMock.mockReturnValue({ mutate, isError: false, isPending: false });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -402,7 +500,7 @@ describe("FilesView", () => {
 
   it("disables the row delete trigger while a delete is pending", () => {
     useDeleteFileMock.mockReturnValue({ mutate: vi.fn(), isError: false, isPending: true });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
 
@@ -411,8 +509,6 @@ describe("FilesView", () => {
   });
 
   it("renders a file input whose accept list excludes .tab (F6)", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
-
     const { container } = renderWithProviders(<FilesView />);
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
 
@@ -422,15 +518,11 @@ describe("FilesView", () => {
     expect(accept).toContain(".tsv");
   });
 
-  it("shows 'Cargar más' when more pages exist and calls loadMore on click", () => {
+  it("shows 'Cargar más' for the active session view and calls its loadMore", () => {
     const loadMore = vi.fn();
-    useFilesGlobalMock.mockReturnValue({
-      data: [deletableFile],
-      isLoading: false,
-      hasMore: true,
-      isLoadingMore: false,
-      loadMore,
-    });
+    useFilesMock.mockReturnValue(
+      listResult({ data: [sessionFile], hasMore: true, loadMore }),
+    );
 
     renderWithProviders(<FilesView />);
     const button = screen.getByRole("button", { name: "Cargar más" });
@@ -439,27 +531,29 @@ describe("FilesView", () => {
     expect(loadMore).toHaveBeenCalledTimes(1);
   });
 
-  it("hides 'Cargar más' when there are no more pages", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [deletableFile],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+  it("'Todas las sesiones' paginates the global list", () => {
+    const loadMore = vi.fn();
+    useFilesGlobalMock.mockReturnValue(
+      listResult({ data: [globalFile], hasMore: true, loadMore }),
+    );
+
+    renderWithProviders(<FilesView />);
+    selectAllView();
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides 'Cargar más' when the active view has no more pages", () => {
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
   });
 
   it("disables the button and shows 'Cargando…' while loading more", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [deletableFile],
-      isLoading: false,
-      hasMore: true,
-      isLoadingMore: true,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({ data: [sessionFile], hasMore: true, isLoadingMore: true }),
+    );
 
     renderWithProviders(<FilesView />);
     const button = screen.getByRole("button", { name: "Cargando…" }) as HTMLButtonElement;
@@ -467,13 +561,7 @@ describe("FilesView", () => {
   });
 
   it("renders a 'Descargar' link per row pointing at the download endpoint", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [deletableFile],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     const link = screen.getByRole("link", { name: "Descargar" }) as HTMLAnchorElement;
@@ -483,25 +571,21 @@ describe("FilesView", () => {
   });
 
   it("formats the Rows and Size cells with Spanish separators", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 55,
-          filename: "big.csv",
-          format: "csv",
-          row_count: 1234567,
-          size_bytes: 1536000,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: true,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 55,
+            filename: "big.csv",
+            format: "csv",
+            row_count: 1234567,
+            size_bytes: 1536000,
+            created_at: "2024-01-01",
+            has_profile: true,
+          },
+        ],
+      }),
+    );
 
     renderWithProviders(<FilesView />);
 
@@ -510,24 +594,20 @@ describe("FilesView", () => {
   });
 
   it("keeps the Sheets/Profile/Delete actions alongside Descargar", () => {
-    useFilesGlobalMock.mockReturnValue({
-      data: [
-        {
-          id: 43,
-          filename: "book.xlsx",
-          format: "xlsx",
-          size_bytes: 2048,
-          created_at: "2024-01-01",
-          chat_session_id: "ses-1",
-          session_title: "Session 1",
-          has_profile: true,
-        },
-      ],
-      isLoading: false,
-      hasMore: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-    });
+    useFilesMock.mockReturnValue(
+      listResult({
+        data: [
+          {
+            id: 43,
+            filename: "book.xlsx",
+            format: "xlsx",
+            size_bytes: 2048,
+            created_at: "2024-01-01",
+            has_profile: true,
+          },
+        ],
+      }),
+    );
     useProfileMock.mockReturnValue({
       data: {
         file_id: 43,
@@ -552,7 +632,7 @@ describe("FilesView", () => {
   });
 
   it("Renombrar opens an inline editor prefilled with the current name", () => {
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
@@ -574,7 +654,7 @@ describe("FilesView", () => {
       isError: false,
       error: null,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
@@ -599,7 +679,7 @@ describe("FilesView", () => {
       isError: false,
       error: null,
     });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     fireEvent.click(screen.getByRole("button", { name: "Renombrar" }));
@@ -620,7 +700,7 @@ describe("FilesView", () => {
         detail: "A file named 'a.csv' already exists in this session.",
       }),
     });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
     // Opening the editor already resets once; clear that call so the assertion
@@ -643,7 +723,7 @@ describe("FilesView", () => {
         detail: "A file named 'a.csv' already exists in this session.",
       }),
     });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
 
@@ -665,7 +745,7 @@ describe("FilesView", () => {
         },
       }),
     });
-    useFilesGlobalMock.mockReturnValue({ data: [deletableFile], isLoading: false, hasMore: false, isLoadingMore: false, loadMore: vi.fn() });
+    useFilesMock.mockReturnValue(listResult({ data: [sessionFile] }));
 
     renderWithProviders(<FilesView />);
 
