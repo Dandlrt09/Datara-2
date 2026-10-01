@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useCallback } from "react";
 import { Routes, Route, useNavigate, Link } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useIsMutating } from "@tanstack/react-query";
 import { useMe, useLogout } from "../queries/useAuth";
 import { useSessions } from "../queries/useSessions";
 import { useFilesGlobal } from "../queries/useFiles";
@@ -66,12 +66,20 @@ export default function AppShell() {
   const { open: wizardOpen } = wizard;
 
   // First-run wizard trigger derivation
-  // Design contract: triggerHolds = !!user && queries resolved && 0 sessions && 0 files && !isStreaming && !dismissed
+  // Design contract: triggerHolds = !!user && queries resolved && 0 sessions && 0 files
+  //   && !isStreaming && !dismissed && no in-flight session creation
+  // `sessionCreating` is observed globally via the shared ["createSession"] key:
+  // react-query v5 mutation state is per-hook-instance, so a local isPending in
+  // AppShell could not see the mutation started by a view (e.g. FilesView). While
+  // it is pending the sessions cache still reads [] with isSuccess === true, so
+  // without this term the auto-open effect would fire for the whole request window.
+  const sessionCreating = useIsMutating({ mutationKey: ["createSession"] }) > 0;
   const triggerHolds = !!user
     && sessionsQuery.isSuccess && filesQuery.isSuccess
     && (sessionsQuery.data ?? []).length === 0
     && (filesQuery.data ?? []).length === 0
-    && !isStreaming && !wizard.dismissed;
+    && !isStreaming && !wizard.dismissed
+    && !sessionCreating;
 
   // Auto-open effect: when triggerHolds becomes true and wizard isn't already open
   useEffect(() => {

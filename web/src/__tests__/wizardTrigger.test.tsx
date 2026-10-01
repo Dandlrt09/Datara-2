@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, cleanup, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "../routes/AppShell";
@@ -27,13 +27,16 @@ vi.mock("../queries/useSessions", () => ({ useSessions: () => useSessionsMock() 
 vi.mock("../queries/useFiles", () => ({ useFilesGlobal: () => useFilesGlobalMock() }));
 vi.mock("../lib/useSessionEvents", () => ({ useSessionEvents: () => {} }));
 
-// Helper
-const renderAppShell = () => {
-  const queryClient = new QueryClient({
+// Helper — accepts an optional pre-built QueryClient so a test can register
+// mutations (e.g. an in-flight ["createSession"]) BEFORE AppShell mounts, which
+// is the literal spec precondition "trigger conditions appear met while a
+// session creation is in flight".
+const renderAppShell = (prebuiltClient?: QueryClient) => {
+  const queryClient = prebuiltClient ?? new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/app/chat"]}>
         <Routes>
@@ -42,7 +45,32 @@ const renderAppShell = () => {
       </MemoryRouter>
     </QueryClientProvider>
   );
+
+  return { ...result, queryClient };
 };
+
+const makeQueryClient = () =>
+  new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+/**
+ * Register a still-pending mutation under the shared ["createSession"] key so
+ * AppShell's `useIsMutating` can observe it, mirroring a view (e.g. FilesView)
+ * that started the session creation from its own hook instance.
+ */
+function startPendingCreateSession(queryClient: QueryClient) {
+  let settle: () => void = () => {};
+  const mutation = queryClient.getMutationCache().build(queryClient, {
+    mutationKey: ["createSession"],
+    mutationFn: () =>
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+  });
+  void mutation.execute(undefined);
+  return { settle };
+}
 
 describe("AppShell wizard trigger", () => {
   beforeEach(() => {
@@ -102,6 +130,42 @@ describe("AppShell wizard trigger", () => {
   it("hides while streaming", async () => {
     useChatStore.setState({ isStreaming: true });
     renderAppShell();
+    await expectWizardVisible(false);
+  });
+
+  it("does not auto-open while a session creation is in flight, and stays closed once the session lands", async () => {
+    // Register the pending mutation on the shared cache BEFORE AppShell mounts,
+    // so the very first render already sees an in-flight session creation. This
+    // is the literal spec precondition: trigger conditions appear met (resolved
+    // empty caches) WHILE a session creation is in flight.
+    const queryClient = makeQueryClient();
+    const { settle } = startPendingCreateSession(queryClient);
+    await waitFor(() =>
+      expect(queryClient.isMutating({ mutationKey: ["createSession"] })).toBe(1),
+    );
+
+    renderAppShell(queryClient);
+
+    // The mutation is globally visible under ["createSession"] even though it was
+    // not started by AppShell's own hook instance (react-query v5 state is per-instance).
+    expect(queryClient.isMutating({ mutationKey: ["createSession"] })).toBe(1);
+    // Resolved-empty caches would normally trigger the auto-open on mount; the
+    // pending session creation must suppress it for the whole flight window.
+    await expectWizardVisible(false);
+
+    // Simulate the created session landing in the cache, then settle the mutation.
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-new", title: "New session" }],
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    });
+    await act(async () => {
+      settle();
+      await Promise.resolve();
+    });
+
+    // The session is present, so the wizard stays closed after the settle.
     await expectWizardVisible(false);
   });
 

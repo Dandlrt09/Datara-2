@@ -26,6 +26,10 @@ export function useSessions() {
 export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({
+    // Shared key so observers elsewhere (e.g. AppShell's wizard trigger) can
+    // detect this mutation globally with useIsMutating; react-query v5 mutation
+    // state is per-hook-instance, so a local isPending would not be visible.
+    mutationKey: ["createSession"],
     mutationFn: (title?: string) =>
       api.post<ChatSession>("/api/sessions", { title }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
