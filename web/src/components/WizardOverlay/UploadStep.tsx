@@ -8,7 +8,7 @@ import { UPLOAD_ACCEPT_MAP } from '../../lib/uploadFormats';
 
 interface UploadStepProps {
   onSkip: () => void;
-  onNext: (sessionId: string) => void;
+  onNext: (sessionId: string, fileId: number) => void;
   /** Shared abort channel owned by the parent wizard. */
   abortRef: MutableRefObject<AbortController | null>;
 }
@@ -85,7 +85,7 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
               });
             } else {
               // Success - move to next step
-              onNext(sessionId);
+              onNext(sessionId, result.id);
             }
           } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
@@ -189,8 +189,9 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
           sheets={pendingSheets.sheets}
           currentSheet={pendingSheets.sheetName}
           onSelected={() => {
+            const selectedFileId = pendingSheets.fileId;
             setPendingSheets(null);
-            if (createdSessionId) onNext(createdSessionId);
+            if (createdSessionId) onNext(createdSessionId, selectedFileId);
           }}
         />
       )}

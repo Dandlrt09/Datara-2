@@ -1,13 +1,20 @@
-import { useState } from 'react';
-import { SUGGESTIONS } from './suggestions';
+import { useMemo, useState } from 'react';
+import { useProfile } from '../../queries/useFiles';
+import { buildSuggestions } from './suggestions';
 
 interface QuestionStepProps {
   onSkip: () => void;
   onNext: (selectedQuestion: string) => void;
+  fileId: number | null;
 }
 
-export function QuestionStep({ onSkip, onNext }: QuestionStepProps) {
+export function QuestionStep({ onSkip, onNext, fileId }: QuestionStepProps) {
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
+  const { data: profile } = useProfile(fileId);
+  // Deterministic, LLM-free derivation from the already-uploaded profile. While
+  // the profile is loading (or absent) this returns the generic fallbacks, so
+  // the step never flashes dataset-specific copy that does not match.
+  const suggestions = useMemo(() => buildSuggestions(profile ?? null), [profile]);
 
   const handleSelect = (question: string) => {
     setSelectedQuestion(question);
@@ -30,7 +37,7 @@ export function QuestionStep({ onSkip, onNext }: QuestionStepProps) {
       </p>
 
       <div style={{ marginBottom: '32px' }}>
-        {SUGGESTIONS.map((question, index) => (
+        {suggestions.map((question, index) => (
           <button
             key={index}
             onClick={() => handleSelect(question)}

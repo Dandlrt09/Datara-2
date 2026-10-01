@@ -80,9 +80,19 @@ vi.mock('../queries/useSessions', async () => {
 // AbortSignal handed to it, and flips isPending so the dropzone reflects a real
 // in-flight upload. Assertions read the signal's `aborted` flag — the receipt the
 // component can actually observe through the hook.
+// By default the upload promise NEVER settles (tests drive the abort). A test can
+// opt into a resolved upload by setting `resolvedValue`, which drives the wizard
+// past Upload into Question; `profileCalls` then records every fileId handed to
+// useProfile so the propagation assertion can distinguish 42 from null.
 const uploadHarness = vi.hoisted(() => ({
   signals: [] as AbortSignal[],
   calls: 0,
+  resolvedValue: null as null | {
+    id: number;
+    sheets?: string[] | null;
+    sheet_name?: string | null;
+  },
+  profileCalls: [] as Array<number | null>,
 }));
 
 vi.mock('../queries/useFiles', async () => {
@@ -93,6 +103,10 @@ vi.mock('../queries/useFiles', async () => {
       const mutateAsync = React.useCallback((args: { signal?: AbortSignal }) => {
         if (args.signal) uploadHarness.signals.push(args.signal);
         uploadHarness.calls += 1;
+        if (uploadHarness.resolvedValue) {
+          // Opt-in path: resolve with the uploaded file so UploadStep advances.
+          return Promise.resolve(uploadHarness.resolvedValue);
+        }
         setIsPending(true);
         return new Promise<Record<string, never>>(() => {
           // Intentionally never settles: the test drives the abort.
@@ -105,6 +119,11 @@ vi.mock('../queries/useFiles', async () => {
       isPending: false,
       isError: false,
     }),
+    // QuestionStep calls useProfile once the wizard reaches the Question step.
+    useProfile: (fileId: number | null) => {
+      uploadHarness.profileCalls.push(fileId);
+      return { data: null, isLoading: false, isError: false };
+    },
   };
 });
 
@@ -141,6 +160,8 @@ async function goToUploadWithPendingUpload() {
 beforeEach(() => {
   uploadHarness.signals.length = 0;
   uploadHarness.calls = 0;
+  uploadHarness.resolvedValue = null;
+  uploadHarness.profileCalls.length = 0;
   createSessionHarness.deferred = null;
   engagedAtCreateSessionStart.value = false;
   wizardRuntime.engaged = false;
@@ -286,5 +307,29 @@ describe('WizardOverlay', () => {
     const accept = input?.getAttribute('accept') ?? '';
     expect(accept).not.toContain('.tab');
     expect(accept).toContain('.tsv');
+  });
+
+  it('fetches the profile for the uploaded file id once the Question step is reached', async () => {
+    // Opt into a resolved upload so the wizard advances past Upload. A single-sheet
+    // result (no `sheets`) takes the direct onNext path with the uploaded id.
+    uploadHarness.resolvedValue = { id: 42, sheets: undefined };
+
+    renderWithProviders(<WizardOverlay />);
+    fireEvent.click(screen.getByText('Get started'));
+
+    const dropzone = getDropzone();
+    await act(async () => {
+      fireDrop(dropzone);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText('What would you like to know?')).toBeTruthy(),
+    );
+
+    // Discriminating assertion: the id threaded through handleUploadSuccess must
+    // reach useProfile. A regression passing fileId={null} would make this list
+    // `[null]` and fail both expectations.
+    expect(uploadHarness.profileCalls).toContain(42);
+    expect(uploadHarness.profileCalls).not.toContain(null);
   });
 });

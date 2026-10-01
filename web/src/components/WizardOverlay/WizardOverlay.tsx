@@ -14,6 +14,7 @@ export function WizardOverlay() {
   
   const [currentStep, setCurrentStep] = useState<'welcome' | 'upload' | 'question' | 'finish'>('welcome');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [fileId, setFileId] = useState<number | null>(null);
   const [selectedQuestion, setSelectedQuestion] = useState<string | null>(null);
   
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -38,8 +39,9 @@ export function WizardOverlay() {
     uploadAbortRef.current?.abort();
   }, []);
 
-  const handleUploadSuccess = useCallback((newSessionId: string) => {
+  const handleUploadSuccess = useCallback((newSessionId: string, newFileId: number) => {
     setSessionId(newSessionId);
+    setFileId(newFileId);
     setCurrentStep('question');
   }, []);
 
@@ -84,6 +86,7 @@ export function WizardOverlay() {
           <QuestionStep
             onSkip={handleSkip}
             onNext={handleQuestionSelect}
+            fileId={fileId}
           />
         );
       case 'finish':
