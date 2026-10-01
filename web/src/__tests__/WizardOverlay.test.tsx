@@ -11,22 +11,36 @@ vi.mock('react-router-dom', async (importOriginal: () => Promise<typeof import('
   };
 });
 
-const { setEngagedMock } = vi.hoisted(() => ({ setEngagedMock: vi.fn() }));
+const { setEngagedMock, wizardRuntime } = vi.hoisted(() => ({
+  setEngagedMock: vi.fn(),
+  // Minimal shared runtime backing the mocked store: tests inspect the latch the
+  // same way production does, through useWizardStore.getState().engaged.
+  wizardRuntime: { engaged: false },
+}));
 
-vi.mock('../stores/useWizardStore', () => ({
-  useWizardStore: (selector?: (s: Record<string, unknown>) => unknown) => {
+type WizardHook = ((selector?: (s: Record<string, unknown>) => unknown) => unknown) & {
+  getState: () => { engaged: boolean };
+};
+
+vi.mock('../stores/useWizardStore', () => {
+  const useWizardStore = ((selector?: (s: Record<string, unknown>) => unknown) => {
     const state = {
       open: true,
-      engaged: false,
+      engaged: wizardRuntime.engaged,
       manual: false,
       dismissed: false,
       openWizard: vi.fn(),
       closeWizard: vi.fn(),
-      setEngaged: setEngagedMock,
+      setEngaged: () => {
+        wizardRuntime.engaged = true;
+        setEngagedMock();
+      },
     };
     return selector ? selector(state) : state;
-  },
-}));
+  }) as WizardHook;
+  useWizardStore.getState = () => ({ engaged: wizardRuntime.engaged });
+  return { useWizardStore };
+});
 
 vi.mock('../lib/wizardStorage', () => ({
   writeWizardFlags: vi.fn(),
@@ -35,25 +49,32 @@ vi.mock('../lib/wizardStorage', () => ({
 // Session-creation harness: lets a test defer session creation so it can leave
 // the wizard while the request is still in flight. When `deferred` is null the
 // mutation resolves immediately (default behaviour, keeps existing tests green).
-const { createSessionHarness } = vi.hoisted(() => ({
+const { createSessionHarness, engagedAtCreateSessionStart } = vi.hoisted(() => ({
   createSessionHarness: {
     deferred: null as null | {
       promise: Promise<{ id: string }>;
       resolve: (v: { id: string }) => void;
     },
   },
+  // Captured at the instant the session-creation mutation is invoked: proves the
+  // engagement latch was flipped synchronously on drop, BEFORE the first await.
+  engagedAtCreateSessionStart: { value: false as boolean },
 }));
 
-vi.mock('../queries/useSessions', () => ({
-  useCreateSession: () => ({
-    mutateAsync: vi.fn(() =>
-      createSessionHarness.deferred
-        ? createSessionHarness.deferred.promise
-        : Promise.resolve({ id: 'ses-123' })
-    ),
-    isPending: false,
-  }),
-}));
+vi.mock('../queries/useSessions', async () => {
+  const { useWizardStore } = await import('../stores/useWizardStore');
+  return {
+    useCreateSession: () => ({
+      mutateAsync: vi.fn(() => {
+        engagedAtCreateSessionStart.value = useWizardStore.getState().engaged;
+        return createSessionHarness.deferred
+          ? createSessionHarness.deferred.promise
+          : Promise.resolve({ id: 'ses-123' });
+      }),
+      isPending: false,
+    }),
+  };
+});
 
 // Upload harness: the mocked mutation returns a promise we control, captures the
 // AbortSignal handed to it, and flips isPending so the dropzone reflects a real
@@ -121,6 +142,8 @@ beforeEach(() => {
   uploadHarness.signals.length = 0;
   uploadHarness.calls = 0;
   createSessionHarness.deferred = null;
+  engagedAtCreateSessionStart.value = false;
+  wizardRuntime.engaged = false;
 });
 
 describe('WizardOverlay', () => {
@@ -148,6 +171,29 @@ describe('WizardOverlay', () => {
 
     expect(screen.getByText('Upload your dataset')).toBeTruthy();
     expect(setEngagedMock).toHaveBeenCalled();
+  });
+
+  it('engages the latch when a file is dropped on the Upload step', async () => {
+    renderWithProviders(<WizardOverlay />);
+    fireEvent.click(screen.getByText('Get started'));
+
+    // Reset both the spy and the store latch so the drop handler is the only
+    // thing that can flip engagement. Production already engaged on Welcome, but
+    // this isolates D3's "or drops a file" clause.
+    setEngagedMock.mockClear();
+    wizardRuntime.engaged = false;
+
+    const dropzone = getDropzone();
+    await act(async () => {
+      fireDrop(dropzone);
+    });
+
+    expect(setEngagedMock).toHaveBeenCalledTimes(1);
+    // Discriminating assertion: at the moment the session-creation mutation is
+    // invoked, the latch must already be engaged — i.e. setEngaged() ran BEFORE
+    // the first await. Moving it after `await createSessionMut.mutateAsync(...)`
+    // leaves this false and fails the test.
+    expect(engagedAtCreateSessionStart.value).toBe(true);
   });
 
   it('has dialog ARIA attributes', () => {

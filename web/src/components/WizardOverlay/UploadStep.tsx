@@ -2,6 +2,7 @@ import { useCallback, useState, type MutableRefObject } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useCreateSession } from '../../queries/useSessions';
 import { useUploadFile } from '../../queries/useFiles';
+import { useWizardStore } from '../../stores/useWizardStore';
 import { SheetPicker } from '../SheetPicker';
 import { UPLOAD_ACCEPT_MAP } from '../../lib/uploadFormats';
 
@@ -25,6 +26,7 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
 
   const createSessionMut = useCreateSession();
   const uploadFileMut = useUploadFile();
+  const setEngaged = useWizardStore((s) => s.setEngaged);
 
   const isUploadPending = uploadFileMut.isPending || createSessionMut.isPending;
 
@@ -35,6 +37,12 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (!acceptedFiles.length || isUploadPending) return;
+
+      // Flip the engagement latch synchronously on drop, before the first await
+      // (D3: the latch engages on advance past Welcome OR on a file drop). Setting
+      // it after the create-session await would leave the un-engaged auto-close
+      // window open while session creation is in flight.
+      setEngaged();
 
       const file = acceptedFiles[0];
       setUploadError(null);
@@ -92,7 +100,7 @@ export function UploadStep({ onSkip, onNext, abortRef }: UploadStepProps) {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [createdSessionId, createSessionMut, uploadFileMut, onNext, isUploadPending, abortRef]
+    [createdSessionId, createSessionMut, uploadFileMut, onNext, isUploadPending, abortRef, setEngaged]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
