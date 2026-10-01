@@ -181,6 +181,100 @@ class TestApplyMigrations:
             import os
             os.unlink(db_path)
 
+    def test_migration_0005_preserves_archives_and_survives_session_delete(self):
+        """0005 makes archives outlive their chat session.
+
+        Apply 0001 only, seed a user/session/archive under the OLD schema, then
+        run the pending migrations and assert: (a) the archive row survived
+        unchanged, (b) deleting the session sets ``chat_session`` to NULL and
+        the archive still exists, (c) the lookup index exists, and (d) the
+        ``chat_session`` column is nullable.
+        """
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        try:
+            from server.migrate import MIGRATIONS_DIR, run_pending_migrations
+
+            conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.executescript(
+                (MIGRATIONS_DIR / "0001_init.sql").read_text(encoding="utf-8")
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS migrations ("
+                "  version INTEGER PRIMARY KEY,"
+                "  name TEXT NOT NULL,"
+                "  applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")"
+            )
+            conn.execute(
+                "INSERT INTO migrations (version, name) VALUES (?, ?)",
+                (1, "0001_init.sql"),
+            )
+
+            # Seed with the OLD schema (chat_session NOT NULL, ON DELETE CASCADE).
+            conn.execute(
+                "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+                ("archives@example.com", "hash123"),
+            )
+            user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)",
+                ("s1", user_id, "Session"),
+            )
+            conn.execute(
+                "INSERT INTO archives (user_id, name, chat_session, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, "My archive", "s1", '{"v": 1}', "2026-01-01 00:00:00"),
+            )
+            archive_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+
+            run_pending_migrations(conn)
+
+            # (a) The row survived byte-for-byte, ids included.
+            row = conn.execute(
+                "SELECT id, user_id, name, chat_session, payload_json, created_at "
+                "FROM archives WHERE id = ?",
+                (archive_id,),
+            ).fetchone()
+            assert row == (
+                archive_id, user_id, "My archive", "s1",
+                '{"v": 1}', "2026-01-01 00:00:00",
+            )
+
+            # (c) The new lookup index exists.
+            index = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND name='idx_archives_user_created'"
+            ).fetchone()
+            assert index is not None
+
+            # (d) chat_session is nullable (PRAGMA notnull == 0).
+            columns = {
+                c[1]: c for c in conn.execute("PRAGMA table_info(archives)").fetchall()
+            }
+            assert columns["chat_session"][3] == 0
+
+            # (b) Deleting the session nulls chat_session and keeps the archive.
+            conn.execute("DELETE FROM chat_sessions WHERE id = 's1'")
+            conn.commit()
+            row = conn.execute(
+                "SELECT chat_session FROM archives WHERE id = ?", (archive_id,)
+            ).fetchone()
+            assert row is not None
+            assert row[0] is None
+
+            assert 5 in get_applied_versions(conn)
+            conn.close()
+        finally:
+            import os
+            os.unlink(db_path)
+
 
 class TestMigration0004CaseInsensitiveFiles:
     """F12.1: 0004 recreates ``idx_files_unique_name`` with COLLATE NOCASE.

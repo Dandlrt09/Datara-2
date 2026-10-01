@@ -344,34 +344,42 @@ class SqliteStore:
         user_id: int,
         chat_session: str,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
         before_id: int | None = None,
+        ascending: bool = False,
     ) -> list[dict[str, Any]]:
         """List messages for a chat session with pagination.
 
         ``before_id``: return messages with id < before_id (earlier).
-        Results are ordered by created_at DESC, id DESC (newest first; the
-        id tiebreaker keeps same-second messages deterministic), so the
-        client reverses them for display.
+        Default results are ordered by created_at DESC, id DESC (newest first;
+        the id tiebreaker keeps same-second messages deterministic), so the
+        client reverses them for display. ``ascending=True`` flips both the
+        ordering and its id tiebreaker to ASC (oldest first). ``limit=None``
+        omits the LIMIT clause entirely, returning every matching row.
         """
+        order = "created_at ASC, id ASC" if ascending else "created_at DESC, id DESC"
         if before_id is not None:
-            rows = await self.conn.execute_fetchall(
+            sql = (
                 "SELECT id, user_id, chat_session, role, content_text, code, "
                 "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
                 "FROM messages "
                 "WHERE user_id = ? AND chat_session = ? AND id < ? "
-                "ORDER BY created_at DESC, id DESC LIMIT ?",
-                (user_id, chat_session, before_id, limit),
+                f"ORDER BY {order}"
             )
+            params: list[Any] = [user_id, chat_session, before_id]
         else:
-            rows = await self.conn.execute_fetchall(
+            sql = (
                 "SELECT id, user_id, chat_session, role, content_text, code, "
                 "artifacts_json, model, provider, tokens_in, tokens_out, cost_usd, created_at "
                 "FROM messages "
                 "WHERE user_id = ? AND chat_session = ? "
-                "ORDER BY created_at DESC, id DESC LIMIT ?",
-                (user_id, chat_session, limit),
+                f"ORDER BY {order}"
             )
+            params = [user_id, chat_session]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = await self.conn.execute_fetchall(sql, params)
         return [dict(r) for r in rows]
 
     async def delete_messages_from(

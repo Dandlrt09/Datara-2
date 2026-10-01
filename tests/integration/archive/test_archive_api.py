@@ -17,7 +17,6 @@ from server.api.routers import sessions as sessions_router
 from server.services.sqlite_store import SqliteStore
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
-INIT_SQL_PATH = MIGRATIONS_DIR / "0001_init.sql"
 
 
 @pytest.fixture
@@ -35,8 +34,10 @@ def app():
 
     async def _setup():
         await s.connect()
-        init_sql = INIT_SQL_PATH.read_text(encoding="utf-8")
-        await s.conn.executescript(init_sql)
+        # Apply ALL migrations in sorted order so the tests exercise the real
+        # schema (0005 makes archives survive session deletion).
+        for sql_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            await s.conn.executescript(sql_path.read_text(encoding="utf-8"))
         await s.conn.commit()
 
     asyncio.run(_setup())
@@ -46,6 +47,14 @@ def app():
 
     asyncio.run(s.close())
     api_store._store = None
+
+
+@pytest.fixture
+def store(app):
+    """The live SqliteStore backing the test app (for direct seeding)."""
+    from server.api import store as api_store  # noqa: PLC0415
+
+    return api_store._store
 
 
 @pytest.fixture
@@ -134,6 +143,109 @@ class TestArchiveCreate:
             headers={"Cookie": other_cookie},
         )
         assert resp.status_code == 404
+
+    def test_create_archive_empty_name(self, client, auth_cookie, session_id):
+        """Whitespace-only name → 422."""
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "   "},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 422
+
+    def test_create_archive_name_too_long(self, client, auth_cookie, session_id):
+        """Name above ARCHIVE_NAME_MAX_LENGTH → 422."""
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "x" * 201},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 422
+
+    def test_create_archive_name_at_max_length(self, client, auth_cookie, session_id):
+        """Exactly ARCHIVE_NAME_MAX_LENGTH chars is allowed (boundary)."""
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "x" * archive_router.ARCHIVE_NAME_MAX_LENGTH},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+        assert len(resp.json()["name"]) == archive_router.ARCHIVE_NAME_MAX_LENGTH
+
+    def test_create_archive_name_is_trimmed(self, client, auth_cookie, session_id):
+        """Leading/trailing whitespace is stripped before persistence."""
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "  Trimmed  "},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "Trimmed"
+
+    def test_create_archive_payload_too_large(self, client, auth_cookie, session_id, monkeypatch):
+        """Serialized payload above ARCHIVE_PAYLOAD_MAX_BYTES → 413."""
+        monkeypatch.setattr(archive_router, "ARCHIVE_PAYLOAD_MAX_BYTES", 1)
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "Too big"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 413
+
+    def test_snapshot_is_ascending_and_complete(self, client, auth_cookie, session_id, store):
+        """Snapshot keeps every message in chronological order (no 500 cap)."""
+        import asyncio
+
+        total = 501  # above the old `limit=500`, proving the snapshot is complete
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            for i in range(total):
+                role = "user" if i % 2 == 0 else "assistant"
+                await store.create_message(user["id"], session_id, role, f"m{i}")
+
+        asyncio.run(_seed())
+
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "Snapshot"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+        payload = resp.json()["payload"]
+        assert payload["message_count"] == total
+        assert payload["truncated"] is False
+        assert [m["content_text"] for m in payload["messages"]] == [
+            f"m{i}" for i in range(total)
+        ]
+
+    def test_archive_survives_session_delete(self, client, auth_cookie, session_id):
+        """Deleting the chat session keeps the archive and nulls chat_session."""
+        create_resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "Durable"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert create_resp.status_code == 201
+        archive_id = create_resp.json()["id"]
+
+        delete_resp = client.delete(
+            f"/api/sessions/{session_id}", headers={"Cookie": auth_cookie}
+        )
+        assert delete_resp.status_code == 204
+
+        listing = client.get("/api/archives", headers={"Cookie": auth_cookie})
+        assert listing.status_code == 200
+        items = listing.json()
+        assert len(items) == 1
+        assert items[0]["id"] == archive_id
+        assert items[0]["chat_session"] is None
+
+        detail = client.get(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        )
+        assert detail.status_code == 200
+        assert detail.json()["chat_session"] is None
 
 
 class TestArchiveList:

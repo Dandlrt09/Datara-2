@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/archives", tags=["archives"])
 
+# Validation bounds (mirror SESSION_TITLE_MAX_LENGTH in sessions.py).
+ARCHIVE_NAME_MAX_LENGTH = 200
+# Sanity ceiling for the serialized snapshot payload (8 MiB). Not truncation:
+# an oversized snapshot is rejected, never silently cut.
+ARCHIVE_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
+
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -32,14 +38,14 @@ class CreateArchiveRequest(BaseModel):
 class ArchiveListItem(BaseModel):
     id: int
     name: str
-    chat_session: str
+    chat_session: str | None = None
     created_at: str | None = None
 
 
 class ArchiveDetail(BaseModel):
     id: int
     name: str
-    chat_session: str
+    chat_session: str | None = None
     payload: dict[str, Any] | None = None
     created_at: str | None = None
 
@@ -56,16 +62,43 @@ async def create_archive(
     """Create an archive from a chat session.
 
     Snapshot the session's messages and file references as the payload.
+    Validation: the name is trimmed and must be non-empty and at most
+    ``ARCHIVE_NAME_MAX_LENGTH`` characters (422 otherwise). The serialized
+    payload must fit ``ARCHIVE_PAYLOAD_MAX_BYTES`` (413 otherwise).
     """
     user_id = user["id"]
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_name",
+                "message": "El nombre no puede estar vacío.",
+            },
+        )
+    if len(name) > ARCHIVE_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_name",
+                "message": (
+                    "El nombre no puede superar los "
+                    f"{ARCHIVE_NAME_MAX_LENGTH} caracteres."
+                ),
+            },
+        )
 
     # Verify the session exists and belongs to the user
     session = await store.get_chat_session(body.chat_session, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    # Build the payload: messages + file refs
-    messages = await store.list_messages(user_id, body.chat_session, limit=500)
+    # Build the payload: messages + file refs. ASC + no LIMIT = a complete
+    # chronological snapshot (not the newest-first, last-500 view the UI pages).
+    messages = await store.list_messages(
+        user_id, body.chat_session, limit=None, ascending=True
+    )
     files = await store.list_files(user_id, chat_session=body.chat_session)
 
     payload: dict[str, Any] = {
@@ -94,13 +127,28 @@ async def create_archive(
             }
             for f in files
         ],
+        "message_count": len(messages),
+        "truncated": False,
     }
+
+    payload_json = json.dumps(payload)
+    if len(payload_json.encode("utf-8")) > ARCHIVE_PAYLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "payload_too_large",
+                "message": (
+                    "El análisis supera el tamaño máximo permitido "
+                    f"({ARCHIVE_PAYLOAD_MAX_BYTES} bytes)."
+                ),
+            },
+        )
 
     archive = await store.create_archive(
         user_id=user_id,
-        name=body.name,
+        name=name,
         chat_session=body.chat_session,
-        payload_json=json.dumps(payload),
+        payload_json=payload_json,
     )
 
     return ArchiveDetail(
