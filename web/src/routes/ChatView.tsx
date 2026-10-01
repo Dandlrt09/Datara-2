@@ -76,8 +76,6 @@ export default function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
-  // Ref to track if we've consumed the suggested question from location.state
-  const consumedSuggestedQuestionRef = useRef(false);
   // Viewport restore after "load older": captured before the fetch, applied
   // once the prepended messages commit (see the effect below).
   const pendingScrollRestoreRef = useRef<{
@@ -98,12 +96,14 @@ export default function ChatView() {
     setAttachSheets(null);
   }, [sessionId]);
 
-  // Consume suggested question from location.state (one-shot)
+  // Populate the composer from a wizard handoff. Keyed on `location.state`:
+  // each wizard finish performs a fresh navigation carrying a new state object,
+  // so a second (or third) wizard run re-populates the field. Plain re-renders
+  // keep the same state identity, so they never clobber what the user is typing.
   useEffect(() => {
     const suggestedQuestion = (location.state as { suggestedQuestion?: string } | null)?.suggestedQuestion;
-    if (suggestedQuestion && !consumedSuggestedQuestionRef.current) {
+    if (suggestedQuestion) {
       setQuestion(suggestedQuestion);
-      consumedSuggestedQuestionRef.current = true;
     }
   }, [location.state]);
 

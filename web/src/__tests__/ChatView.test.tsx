@@ -7,7 +7,7 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useChatStore } from "../stores/useChatStore";
 import { renderWithProviders } from "./test-utils";
@@ -516,14 +516,77 @@ describe("ChatView component", () => {
     expect(openWizardMock).toHaveBeenCalledWith(true);
   });
 
-  it("consumes suggested question from location.state and populates textarea", () => {
-    renderWithProviders(<ChatView />, {
-      route: "/app/chat",
-    });
+  it("re-applies each suggested question from location.state across navigations", () => {
+    // Raw MemoryRouter so this test owns both the initial entry state and a
+    // second navigate() carrying fresh state. Mirrors the mocking approach of
+    // the other ChatView tests: the query mocks from beforeEach resolve, and
+    // the QueryClient disables retries so a rejected query cannot flake.
+    function Harness() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <ChatView />
+          <button
+            type="button"
+            onClick={() =>
+              navigate("/app/chat/ses-2", {
+                state: { suggestedQuestion: "Second question?" },
+              })
+            }
+          >
+            go-second-session
+          </button>
+        </>
+      );
+    }
 
-    // The test would need to simulate navigation with state, which is complex
-    // For now, we'll verify the effect logic is present by checking the component renders
-    expect(screen.getByText("Select a chat or create a new one")).toBeTruthy();
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: "/app/chat/ses-1",
+              state: { suggestedQuestion: "First question?" },
+            },
+          ]}
+        >
+          <Routes>
+            <Route path="/app/chat/:sessionId" element={<Harness />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const textarea = screen.getByPlaceholderText(
+      /Ask a question/,
+    ) as HTMLTextAreaElement;
+
+    // Initial entry state seeds the composer.
+    expect(textarea.value).toBe("First question?");
+
+    // Clear the field, then navigate again with DIFFERENT state. Under the old
+    // one-shot latch the second suggestion was silently ignored.
+    fireEvent.change(textarea, { target: { value: "" } });
+    expect(textarea.value).toBe("");
+
+    fireEvent.click(screen.getByText("go-second-session"));
+
+    // Discriminating assertion: the second navigation re-applies its state.
+    // Re-query to stay robust against node replacement, while still asserting
+    // on the SAME mounted ChatView (a remount would reset the latch too).
+    const afterNav = screen.getByPlaceholderText(
+      /Ask a question/,
+    ) as HTMLTextAreaElement;
+    expect(afterNav.value).toBe("Second question?");
   });
 
   // ── Stop-turn button (Detener) ─────────────────────────────────────────────
