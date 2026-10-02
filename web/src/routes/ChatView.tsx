@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { useSessions, useCreateSession, useDeleteSession, useRenameSession } from "../queries/useSessions";
 import { useMessages } from "../queries/useMessages";
 import { useUploadFile, UploadError } from "../queries/useFiles";
+import { useCreateArchive } from "../queries/useArchives";
+import { ApiError } from "../lib/api";
 import { useChatStore } from "../stores/useChatStore";
 import { useWizardStore } from "../stores/useWizardStore";
 import { streamChat } from "../lib/sse";
@@ -13,6 +15,27 @@ import { SUPPORTED_UPLOAD_EXTENSIONS, UPLOAD_ACCEPT_ATTR } from "../lib/uploadFo
 import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
+import { SaveAnalysisDialog } from "../components/SaveAnalysisDialog";
+
+/**
+ * Maps a failed create-archive request to user-facing neutral Spanish copy.
+ * 413 and 422 carry a server message worth surfacing; anything else degrades
+ * to a generic retry hint.
+ */
+function resolveSaveAnalysisError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 413) {
+      return "El análisis supera el tamaño máximo permitido.";
+    }
+    if (e.status === 422) {
+      const detail = (e.body as { detail?: { message?: string } } | null)?.detail;
+      if (detail && typeof detail.message === "string") return detail.message;
+      return "El nombre no es válido.";
+    }
+    if (e.status === 404) return "No se encontró la sesión.";
+  }
+  return "No se pudo guardar el análisis. Inténtalo de nuevo.";
+}
 
 export default function ChatView() {
   const { sessionId } = useParams();
@@ -35,6 +58,7 @@ export default function ChatView() {
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
   const renameSession = useRenameSession();
+  const createArchive = useCreateArchive();
 
   // Inline rename editor state: which sidebar row is being renamed and the
   // value currently in its input. Null renamingId = no row in edit mode.
@@ -73,6 +97,11 @@ export default function ChatView() {
     sheets: string[];
     sheetName: string | null;
   } | null>(null);
+  // Save-analysis dialog: open flag, in-dialog error copy and the composer
+  // success notice. All three belong to the session they happened in.
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
@@ -94,6 +123,10 @@ export default function ChatView() {
     setAttachError(null);
     setAttachNotice(null);
     setAttachSheets(null);
+    // A save dialog/notice belongs to the session it happened in too.
+    setSaveDialogOpen(false);
+    setSaveError(null);
+    setSaveNotice(false);
   }, [sessionId]);
 
   // Populate the composer from a wizard handoff. Keyed on `location.state`:
@@ -328,6 +361,27 @@ export default function ChatView() {
     [sessionId, store.isStreaming, uploadFileMut],
   );
 
+  const handleSaveAnalysis = useCallback(
+    async (name: string) => {
+      if (!sessionId || createArchive.isPending) return;
+      setSaveError(null);
+      try {
+        await createArchive.mutateAsync({ chat_session: sessionId, name });
+        setSaveDialogOpen(false);
+        setSaveNotice(true);
+      } catch (e) {
+        // Keep the dialog open so the user can retry or adjust the name.
+        setSaveError(resolveSaveAnalysisError(e));
+      }
+    },
+    [sessionId, createArchive],
+  );
+
+  const handleCancelSave = useCallback(() => {
+    setSaveDialogOpen(false);
+    setSaveError(null);
+  }, []);
+
   const handleLoadOlder = useCallback(() => {
     const el = scrollRef.current;
     if (el) {
@@ -360,6 +414,24 @@ export default function ChatView() {
   // false so the Retry formula below keeps today's behavior exactly.
   const openSession = sessions?.find((s) => s.id === sessionId);
   const openSessionIsStreaming = openSession?.is_streaming === true;
+
+  // Save-analysis gate: nothing to archive without an open, idle, non-empty
+  // session, and no double-submit while a create request is in flight.
+  const canSaveAnalysis =
+    !!sessionId &&
+    !store.isStreaming &&
+    !openSessionIsStreaming &&
+    !createArchive.isPending &&
+    messages.length > 0;
+  const saveGateTitle = !sessionId
+    ? "Crea o selecciona una sesión para guardar el análisis"
+    : store.isStreaming || openSessionIsStreaming
+      ? "Espera a que termine la respuesta en curso"
+      : createArchive.isPending
+        ? "Guardando el análisis…"
+        : messages.length === 0
+          ? "Envía al menos un mensaje para guardar el análisis"
+          : "Guardar este análisis";
 
   // When the open session's cross-tab stream ends, pull the assistant answer
   // into this observing tab. The previous-value ref is seeded with the CURRENT
@@ -782,6 +854,13 @@ export default function ChatView() {
             onSelected={() => setAttachSheets(null)}
           />
         )}
+        {saveNotice && (
+          <div style={{ marginBottom: 8 }}>
+            <p role="status" style={{ color: "#2e7d32", margin: 0 }}>
+              Análisis guardado. <Link to="/app/archives">Ver análisis</Link>
+            </p>
+          </div>
+        )}
         <div
           style={{
             borderTop: "1px solid #ddd",
@@ -820,6 +899,20 @@ export default function ChatView() {
           >
             {uploadFileMut.isPending ? "…" : "Adjuntar"}
           </button>
+          <button
+            type="button"
+            aria-label="Guardar análisis"
+            onClick={() => {
+              setSaveError(null);
+              setSaveNotice(false);
+              setSaveDialogOpen(true);
+            }}
+            disabled={!canSaveAnalysis}
+            title={saveGateTitle}
+            style={{ padding: "8px 12px" }}
+          >
+            Guardar análisis
+          </button>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -853,6 +946,15 @@ export default function ChatView() {
             </button>
           )}
         </div>
+
+        <SaveAnalysisDialog
+          open={saveDialogOpen}
+          defaultName={openSession?.title ?? ""}
+          onConfirm={handleSaveAnalysis}
+          onCancel={handleCancelSave}
+          pending={createArchive.isPending}
+          error={saveError}
+        />
       </div>
     </div>
   );

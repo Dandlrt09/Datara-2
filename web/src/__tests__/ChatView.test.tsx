@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useChatStore } from "../stores/useChatStore";
 import { renderWithProviders } from "./test-utils";
 import ChatView from "../routes/ChatView";
+import { ApiError } from "../lib/api";
 import type { UseMessagesResult } from "../queries/useMessages";
 
 /** Default useMessages mock in the hook's real return shape. */
@@ -142,6 +143,15 @@ vi.mock("../queries/useFiles", () => ({
   }),
 }));
 
+// A2 save-analysis: ChatView calls useCreateArchive; drive it per test.
+const { useCreateArchiveMock } = vi.hoisted(() => ({
+  useCreateArchiveMock: vi.fn(),
+}));
+
+vi.mock("../queries/useArchives", () => ({
+  useCreateArchive: () => useCreateArchiveMock(),
+}));
+
 vi.mock("../lib/sse", () => ({
   streamChat: vi.fn(),
 }));
@@ -208,6 +218,10 @@ describe("ChatView component", () => {
     useRenameSessionMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
     useUploadFileMock.mockReturnValue({
       mutateAsync: vi.fn().mockResolvedValue({ id: 1, filename: "a.csv" }),
+      isPending: false,
+    });
+    useCreateArchiveMock.mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({ id: 1, name: "análisis" }),
       isPending: false,
     });
     
@@ -1245,5 +1259,262 @@ describe("ChatView component", () => {
     });
 
     expect(screen.queryByTestId("regen-respuesta")).toBeNull();
+  });
+
+  // ── Save analysis (A2) ─────────────────────────────────────────────────────
+
+  function saveButton(): HTMLButtonElement {
+    return screen.getByRole("button", {
+      name: "Guardar análisis",
+    }) as HTMLButtonElement;
+  }
+
+  it("disables 'Guardar análisis' without an open session", () => {
+    // Non-empty messages so ONLY the missing session can disable the button:
+    // removing the `!!sessionId` conjunct from the gate must fail this test.
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, { route: "/app/chat" });
+    const btn = saveButton();
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe(
+      "Crea o selecciona una sesión para guardar el análisis",
+    );
+  });
+
+  it("disables 'Guardar análisis' when the open session has no messages", () => {
+    // beforeEach default: messages is an empty array — nothing to archive.
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it("disables 'Guardar análisis' while this tab is streaming", () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    act(() => {
+      useChatStore.setState({ isStreaming: true });
+    });
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it("disables 'Guardar análisis' while the open session streams elsewhere", () => {
+    useSessionsMock.mockReturnValue({
+      data: [{ id: "ses-1", title: "Chat 1", is_streaming: true }],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it("disables 'Guardar análisis' while a create request is pending", () => {
+    useCreateArchiveMock.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: true,
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    const btn = saveButton();
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("Guardando el análisis…");
+  });
+
+  it("opens the dialog prefilled with the session title", () => {
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+    expect(saveButton().disabled).toBe(false);
+
+    fireEvent.click(saveButton());
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Nombre del análisis") as HTMLInputElement).value,
+    ).toBe("Chat 1");
+  });
+
+  it("confirming saves with the session id and trimmed name, then shows the notice", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ id: 7, name: "Ventas Q3" });
+    useCreateArchiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(saveButton());
+    fireEvent.change(screen.getByLabelText("Nombre del análisis"), {
+      target: { value: "  Ventas Q3  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith({
+        chat_session: "ses-1",
+        name: "Ventas Q3",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(screen.getByRole("status").textContent).toContain("Análisis guardado.");
+    expect(screen.getByText("Ver análisis")).toBeTruthy();
+  });
+
+  // Opens the dialog on a non-empty session, confirms, and returns the
+  // mutateAsync mock so each test can assert the error copy that surfaces.
+  function renderSaveFailure(rejection: unknown) {
+    const mutateAsync = vi.fn().mockRejectedValue(rejection);
+    useCreateArchiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(saveButton());
+    fireEvent.change(screen.getByLabelText("Nombre del análisis"), {
+      target: { value: "algo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    return mutateAsync;
+  }
+
+  it("keeps the dialog open and surfaces a mapped 422 error on failure", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiError(422, { detail: { message: "El nombre no puede estar vacío." } }),
+      );
+    useCreateArchiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(saveButton());
+    fireEvent.change(screen.getByLabelText("Nombre del análisis"), {
+      target: { value: "algo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(
+      await screen.findByText("El nombre no puede estar vacío."),
+    ).toBeTruthy();
+    // Failure keeps the dialog open so the user can retry; no success notice.
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("maps a 413 create failure to the max-size message", async () => {
+    renderSaveFailure(
+      new ApiError(413, { detail: { message: "payload too large" } }),
+    );
+    expect(
+      await screen.findByText("El análisis supera el tamaño máximo permitido."),
+    ).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("maps a 404 create failure to the missing-session message", async () => {
+    renderSaveFailure(new ApiError(404, "Chat session not found"));
+    expect(await screen.findByText("No se encontró la sesión.")).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("maps a 422 without detail.message to the generic invalid-name copy", async () => {
+    renderSaveFailure(new ApiError(422, { detail: { code: "invalid_name" } }));
+    expect(await screen.findByText("El nombre no es válido.")).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("maps a non-ApiError rejection to the generic retry copy", async () => {
+    renderSaveFailure(new Error("network down"));
+    expect(
+      await screen.findByText("No se pudo guardar el análisis. Inténtalo de nuevo."),
+    ).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("clears the success notice when the session changes", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ id: 7, name: "Ventas" });
+    useCreateArchiveMock.mockReturnValue({ mutateAsync, isPending: false });
+    useSessionsMock.mockReturnValue({
+      data: [
+        { id: "ses-1", title: "Chat 1" },
+        { id: "ses-2", title: "Chat 2" },
+      ],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useMessagesMock.mockReturnValue(
+      makeMessagesMock({
+        messages: [{ id: 1, role: "user", content_text: "pregunta" }],
+      }),
+    );
+    renderWithProviders(<ChatView />, {
+      route: "/app/chat/ses-1",
+      path: "/app/chat/:sessionId",
+    });
+
+    fireEvent.click(saveButton());
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Análisis guardado.");
+    });
+
+    fireEvent.click(screen.getByText("Chat 2"));
+    await waitFor(() => {
+      expect(screen.queryByRole("status")).toBeNull();
+    });
   });
 });
