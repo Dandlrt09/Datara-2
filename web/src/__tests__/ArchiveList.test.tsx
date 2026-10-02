@@ -149,6 +149,46 @@ describe("ArchiveList", () => {
     expect(headings()).toEqual(["Viejo", "Nuevo"]);
   });
 
+  it("renders em dash and sorts a null created_at last in both orders", () => {
+    mockList([
+      makeArchive({
+        id: 1,
+        name: "Con fecha vieja",
+        created_at: "2026-01-01T10:00:00.000Z",
+        chat_session: null,
+      }),
+      makeArchive({ id: 2, name: "Sin fecha", created_at: null }),
+      makeArchive({
+        id: 3,
+        name: "Con fecha nueva",
+        created_at: "2026-06-01T10:00:00.000Z",
+      }),
+    ]);
+    renderWithProviders(<ArchiveList />);
+
+    const headings = () =>
+      screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+
+    // Newest first: valid dates DESC, null always last.
+    expect(headings()).toEqual([
+      "Con fecha nueva",
+      "Con fecha vieja",
+      "Sin fecha",
+    ]);
+    expect(screen.getByText("—")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Más recientes"));
+    expect(screen.getByText("Más antiguos")).toBeTruthy();
+
+    // Oldest first: valid dates ASC, null STILL last.
+    expect(headings()).toEqual([
+      "Con fecha vieja",
+      "Con fecha nueva",
+      "Sin fecha",
+    ]);
+    expect(screen.getByText("—")).toBeTruthy();
+  });
+
   it("lazily fetches detail: null until a card is expanded", () => {
     mockList([
       makeArchive({ id: 11, name: "Uno" }),

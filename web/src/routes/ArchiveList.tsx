@@ -83,10 +83,20 @@ export default function ArchiveList() {
       ? list.filter((a) => normalizeForSearch(a.name).includes(query))
       : list;
     // The endpoint already returns DESC; sorting here keeps the order control
-    // honest and deterministic for both directions.
+    // honest and deterministic for both directions. Entries without a valid
+    // created_at always sort last, regardless of direction.
+    const timeOf = (a: Archive): number | null => {
+      if (!a.created_at) return null;
+      const t = Date.parse(a.created_at);
+      return Number.isNaN(t) ? null : t;
+    };
     return [...filtered].sort((a, b) => {
-      const cmp = String(a.created_at).localeCompare(String(b.created_at));
-      return newestFirst ? -cmp : cmp;
+      const ta = timeOf(a);
+      const tb = timeOf(b);
+      if (ta === null && tb === null) return 0;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return newestFirst ? tb - ta : ta - tb;
     });
   }, [archives, search, newestFirst]);
 

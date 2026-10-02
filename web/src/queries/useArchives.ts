@@ -4,8 +4,10 @@ import { api } from "../lib/api";
 export interface Archive {
   id: number;
   name: string;
-  chat_session: string;
-  created_at: string;
+  /** Nullable: the chat session may have been deleted (ON DELETE SET NULL). */
+  chat_session: string | null;
+  /** Optional in the API schema (`str | None`); the DB column is NOT NULL. */
+  created_at: string | null;
   /** File names captured in the snapshot, in snapshot order. */
   files: string[];
   /** Rows in the last table artifact (or the file fallback); null if unknown. */
