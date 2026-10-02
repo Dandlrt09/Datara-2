@@ -5,6 +5,7 @@ Uses FastAPI TestClient with a fresh in-memory SQLite store per test.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -279,6 +280,206 @@ class TestArchiveList:
         """No auth → 401."""
         resp = no_auth_client.get("/api/archives")
         assert resp.status_code == 401
+
+    def test_list_derives_card_fields_from_table_artifact(
+        self, client, auth_cookie, session_id, store
+    ):
+        """List items carry files/row_count/column_count derived from the snapshot.
+
+        The LAST table artifact wins for row/column counts; ``total_rows`` is
+        preferred over the captured head length. The payload itself is never
+        returned by the list endpoint.
+        """
+        import asyncio
+
+        artifacts = [
+            {"kind": "figure", "name": "fig1", "payload": {"data": []}},
+            {
+                "kind": "table",
+                "name": "df_first",
+                "payload": {
+                    "columns": ["a", "b", "c"],
+                    "rows": [[1, 2, 3], [4, 5, 6]],
+                    "total_rows": 10,
+                },
+            },
+            # This later table must win.
+            {
+                "kind": "table",
+                "name": "df_result",
+                "payload": {
+                    "columns": ["region", "margen"],
+                    "rows": [[1, 2], [3, 4]],
+                    "total_rows": 42,
+                },
+            },
+        ]
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            await store.create_message(
+                user["id"],
+                session_id,
+                "assistant",
+                "done",
+                artifacts_json=json.dumps(artifacts),
+            )
+            await store.create_file(
+                user["id"],
+                session_id,
+                "ventas_q3.csv",
+                "/tmp/ventas_q3.csv",
+                1024,
+                "csv",
+                row_count=100,
+            )
+
+        asyncio.run(_seed())
+
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "Derived"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+
+        listing = client.get("/api/archives", headers={"Cookie": auth_cookie})
+        assert listing.status_code == 200
+        items = listing.json()
+        assert len(items) == 1
+        item = items[0]
+        assert item["files"] == ["ventas_q3.csv"]
+        assert item["row_count"] == 42
+        assert item["column_count"] == 2
+        assert "payload" not in item
+
+    def test_list_row_count_falls_back_to_file_row_count(
+        self, client, auth_cookie, session_id, store
+    ):
+        """With no table artifact, row_count falls back to files[].row_count."""
+        import asyncio
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            await store.create_message(
+                user["id"], session_id, "user", "just text, no artifacts"
+            )
+            await store.create_file(
+                user["id"],
+                session_id,
+                "inventario.csv",
+                "/tmp/inventario.csv",
+                2048,
+                "csv",
+                row_count=1234,
+            )
+
+        asyncio.run(_seed())
+
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "Fallback"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+
+        items = client.get("/api/archives", headers={"Cookie": auth_cookie}).json()
+        assert len(items) == 1
+        assert items[0]["row_count"] == 1234
+        assert items[0]["column_count"] is None
+
+    def test_list_survives_malformed_payload_json(
+        self, client, auth_cookie, session_id, store
+    ):
+        """A malformed payload_json must not 500 the list; fields default empty."""
+        import asyncio
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            await store.conn.execute(
+                "INSERT INTO archives (user_id, name, chat_session, payload_json) "
+                "VALUES (?, ?, ?, ?)",
+                (user["id"], "Broken", session_id, "{not valid json"),
+            )
+            await store.conn.commit()
+
+        asyncio.run(_seed())
+
+        resp = client.get("/api/archives", headers={"Cookie": auth_cookie})
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) == 1
+        assert items[0]["name"] == "Broken"
+        assert items[0]["files"] == []
+        assert items[0]["row_count"] is None
+        assert items[0]["column_count"] is None
+
+    def test_list_row_count_uses_len_rows_when_total_rows_absent(
+        self, client, auth_cookie, session_id, store
+    ):
+        """A table artifact with `rows` but no `total_rows` yields len(rows)."""
+        import asyncio
+
+        artifacts = [
+            {
+                "kind": "table",
+                "name": "df_result",
+                "payload": {
+                    "columns": ["a", "b"],
+                    "rows": [[1, 2], [3, 4], [5, 6]],
+                },
+            },
+        ]
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            await store.create_message(
+                user["id"],
+                session_id,
+                "assistant",
+                "done",
+                artifacts_json=json.dumps(artifacts),
+            )
+
+        asyncio.run(_seed())
+
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": "LenRows"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 201
+
+        items = client.get("/api/archives", headers={"Cookie": auth_cookie}).json()
+        assert len(items) == 1
+        assert items[0]["row_count"] == 3
+        assert items[0]["column_count"] == 2
+
+    @pytest.mark.parametrize("payload_json", ["5", "[]", '"text"'])
+    def test_list_survives_non_dict_payload_json(
+        self, client, auth_cookie, session_id, store, payload_json
+    ):
+        """Non-dict JSON payloads default to empty fields and still 200."""
+        import asyncio
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            await store.conn.execute(
+                "INSERT INTO archives (user_id, name, chat_session, payload_json) "
+                "VALUES (?, ?, ?, ?)",
+                (user["id"], "NonDict", session_id, payload_json),
+            )
+            await store.conn.commit()
+
+        asyncio.run(_seed())
+
+        resp = client.get("/api/archives", headers={"Cookie": auth_cookie})
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) == 1
+        assert items[0]["files"] == []
+        assert items[0]["row_count"] is None
+        assert items[0]["column_count"] is None
 
 
 class TestArchiveGet:

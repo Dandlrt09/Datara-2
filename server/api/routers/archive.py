@@ -40,6 +40,9 @@ class ArchiveListItem(BaseModel):
     name: str
     chat_session: str | None = None
     created_at: str | None = None
+    files: list[str] = []
+    row_count: int | None = None
+    column_count: int | None = None
 
 
 class ArchiveDetail(BaseModel):
@@ -48,6 +51,86 @@ class ArchiveDetail(BaseModel):
     chat_session: str | None = None
     payload: dict[str, Any] | None = None
     created_at: str | None = None
+
+
+# ── Card-field derivation ───────────────────────────────────────────────────
+
+
+def _derive_card_fields(
+    payload_json: str,
+) -> tuple[list[str], int | None, int | None]:
+    """Derive the list-card metadata from a stored snapshot payload.
+
+    Returns ``(files, row_count, column_count)``:
+
+    - ``files``: the snapshot's ``files[].filename`` string values, in order.
+    - ``row_count``: the row count of the LAST ``kind == "table"`` artifact
+      (``total_rows`` when it is an ``int``, otherwise ``len(rows)``); when no
+      table artifact exists it falls back to the first ``files[].row_count``.
+    - ``column_count``: ``len(columns)`` of that same table artifact, else
+      ``None``.
+
+    Locale-neutral and guarded: a malformed ``payload_json`` yields
+    ``([], None, None)`` instead of raising, so the list endpoint never 500s on
+    bad data.
+    """
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return ([], None, None)
+
+    if not isinstance(payload, dict):
+        return ([], None, None)
+
+    files: list[str] = []
+    first_file_row_count: int | None = None
+    raw_files = payload.get("files")
+    if isinstance(raw_files, list):
+        for entry in raw_files:
+            if not isinstance(entry, dict):
+                continue
+            filename = entry.get("filename")
+            if isinstance(filename, str):
+                files.append(filename)
+            row_count = entry.get("row_count")
+            if first_file_row_count is None and isinstance(row_count, int):
+                first_file_row_count = row_count
+
+    # The last table artifact in snapshot order is the final rendered result.
+    table_artifact: dict[str, Any] | None = None
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            artifacts = message.get("artifacts")
+            if not isinstance(artifacts, list):
+                continue
+            for artifact in artifacts:
+                if not isinstance(artifact, dict):
+                    continue
+                if artifact.get("kind") != "table":
+                    continue
+                artifact_payload = artifact.get("payload")
+                if isinstance(artifact_payload, dict):
+                    table_artifact = artifact_payload
+
+    row_count: int | None = None
+    column_count: int | None = None
+    if table_artifact is not None:
+        total_rows = table_artifact.get("total_rows")
+        rows = table_artifact.get("rows")
+        if isinstance(total_rows, int):
+            row_count = total_rows
+        elif isinstance(rows, list):
+            row_count = len(rows)
+        columns = table_artifact.get("columns")
+        if isinstance(columns, list):
+            column_count = len(columns)
+    else:
+        row_count = first_file_row_count
+
+    return (files, row_count, column_count)
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
@@ -167,15 +250,23 @@ async def list_archives(
 ):
     """List all archives for the current user, newest first."""
     archives = await store.list_archives(user["id"])
-    return [
-        ArchiveListItem(
-            id=a["id"],
-            name=a["name"],
-            chat_session=a["chat_session"],
-            created_at=a["created_at"],
+    items: list[ArchiveListItem] = []
+    for a in archives:
+        # Derive card metadata from the snapshot, then DISCARD the payload —
+        # the list endpoint never returns it (only GET /{id} does).
+        files, row_count, column_count = _derive_card_fields(a["payload_json"])
+        items.append(
+            ArchiveListItem(
+                id=a["id"],
+                name=a["name"],
+                chat_session=a["chat_session"],
+                created_at=a["created_at"],
+                files=files,
+                row_count=row_count,
+                column_count=column_count,
+            )
         )
-        for a in archives
-    ]
+    return items
 
 
 @router.get("/{archive_id}", response_model=ArchiveDetail)

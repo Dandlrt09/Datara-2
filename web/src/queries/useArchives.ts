@@ -6,9 +6,16 @@ export interface Archive {
   name: string;
   chat_session: string;
   created_at: string;
+  /** File names captured in the snapshot, in snapshot order. */
+  files: string[];
+  /** Rows in the last table artifact (or the file fallback); null if unknown. */
+  row_count: number | null;
+  /** Columns in the last table artifact; null if no table artifact exists. */
+  column_count: number | null;
 }
 
-export interface ArchiveDetail extends Archive {
+export interface ArchiveDetail
+  extends Omit<Archive, "files" | "row_count" | "column_count"> {
   payload?: Record<string, unknown>;
 }
 

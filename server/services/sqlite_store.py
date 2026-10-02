@@ -511,7 +511,7 @@ class SqliteStore:
     ) -> list[dict[str, Any]]:
         """List archives for a user, newest first."""
         rows = await self.conn.execute_fetchall(
-            "SELECT id, user_id, name, chat_session, created_at "
+            "SELECT id, user_id, name, chat_session, payload_json, created_at "
             "FROM archives WHERE user_id = ? "
             "ORDER BY created_at DESC",
             (user_id,),
