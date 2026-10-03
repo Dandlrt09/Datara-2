@@ -533,3 +533,345 @@ class TestArchiveGet:
 
         resp = no_auth_client.get(f"/api/archives/{archive_id}")
         assert resp.status_code == 401
+
+    @pytest.mark.parametrize("payload_json", ["{not valid json", "5", "[]"])
+    def test_get_survives_malformed_payload_json(
+        self, client, auth_cookie, session_id, store, payload_json
+    ):
+        """A malformed/non-dict payload_json must not 500 the detail endpoint."""
+        import asyncio
+
+        async def _seed():
+            user = await store.get_user_by_email("archive@example.com")
+            cursor = await store.conn.execute(
+                "INSERT INTO archives (user_id, name, chat_session, payload_json) "
+                "VALUES (?, ?, ?, ?)",
+                (user["id"], "Broken", session_id, payload_json),
+            )
+            await store.conn.commit()
+            return cursor.lastrowid
+
+        archive_id = asyncio.run(_seed())
+
+        resp = client.get(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Broken"
+        assert data["payload"] is None
+
+
+class TestArchiveRename:
+    def _create(self, client, cookie, session_id, name="Original"):
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": name},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    def test_rename_updates_name_and_list(self, client, auth_cookie, session_id):
+        """PATCH updates the name and the list reflects it."""
+        archive_id = self._create(client, auth_cookie, session_id)
+
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "Renamed"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == archive_id
+        assert data["name"] == "Renamed"
+
+        items = client.get("/api/archives", headers={"Cookie": auth_cookie}).json()
+        assert [i["name"] for i in items] == ["Renamed"]
+
+    def test_rename_trims_whitespace(self, client, auth_cookie, session_id):
+        """PATCH trims surrounding whitespace before persistence."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "  Trimmed  "},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Trimmed"
+
+    def test_rename_empty_name(self, client, auth_cookie, session_id):
+        """Whitespace-only rename → 422 invalid_name."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "   "},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_name"
+
+    def test_rename_name_too_long(self, client, auth_cookie, session_id):
+        """Name above ARCHIVE_NAME_MAX_LENGTH → 422 invalid_name."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "x" * (archive_router.ARCHIVE_NAME_MAX_LENGTH + 1)},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_name"
+
+    def test_rename_name_at_max_length(self, client, auth_cookie, session_id):
+        """Exactly ARCHIVE_NAME_MAX_LENGTH chars is allowed (boundary)."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "x" * archive_router.ARCHIVE_NAME_MAX_LENGTH},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()["name"]) == archive_router.ARCHIVE_NAME_MAX_LENGTH
+
+    def test_rename_unknown_id(self, client, auth_cookie):
+        """Unknown archive id → 404."""
+        resp = client.patch(
+            "/api/archives/99999",
+            json={"name": "Nope"},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 404
+
+    def test_rename_cross_user(self, client, auth_cookie, other_cookie, session_id):
+        """Another user's archive id → 404 and the owner's name is untouched."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = client.patch(
+            f"/api/archives/{archive_id}",
+            json={"name": "Stolen"},
+            headers={"Cookie": other_cookie},
+        )
+        assert resp.status_code == 404
+
+        detail = client.get(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        ).json()
+        assert detail["name"] == "Original"
+
+    def test_rename_requires_auth(self, client, no_auth_client, auth_cookie, session_id):
+        """No auth → 401."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = no_auth_client.patch(
+            f"/api/archives/{archive_id}", json={"name": "Anon"}
+        )
+        assert resp.status_code == 401
+
+
+class TestArchiveDelete:
+    def _create(self, client, cookie, session_id, name="Doomed"):
+        resp = client.post(
+            "/api/archives",
+            json={"chat_session": session_id, "name": name},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    def test_delete_removes_row(self, client, auth_cookie, session_id):
+        """DELETE removes the archive: 204, detail 404, gone from the list."""
+        archive_id = self._create(client, auth_cookie, session_id)
+
+        resp = client.delete(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 204
+        assert resp.content == b""
+
+        detail = client.get(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        )
+        assert detail.status_code == 404
+
+        listing = client.get("/api/archives", headers={"Cookie": auth_cookie})
+        assert listing.status_code == 200
+        assert listing.json() == []
+
+    def test_delete_unknown_id(self, client, auth_cookie):
+        """Unknown archive id → 404."""
+        resp = client.delete("/api/archives/99999", headers={"Cookie": auth_cookie})
+        assert resp.status_code == 404
+
+    def test_delete_cross_user(self, client, auth_cookie, other_cookie, session_id):
+        """Another user's archive id → 404 and the archive survives."""
+        archive_id = self._create(client, auth_cookie, session_id)
+
+        resp = client.delete(
+            f"/api/archives/{archive_id}", headers={"Cookie": other_cookie}
+        )
+        assert resp.status_code == 404
+
+        detail = client.get(
+            f"/api/archives/{archive_id}", headers={"Cookie": auth_cookie}
+        )
+        assert detail.status_code == 200
+
+    def test_delete_requires_auth(self, client, no_auth_client, auth_cookie, session_id):
+        """No auth → 401."""
+        archive_id = self._create(client, auth_cookie, session_id)
+        resp = no_auth_client.delete(f"/api/archives/{archive_id}")
+        assert resp.status_code == 401
+
+
+class TestArchivePagination:
+    @staticmethod
+    def _seed(store, email, session_id, count):
+        """Seed ``count`` archives with distinct, ascending created_at.
+
+        Returns the inserted ids in creation order (so the last id is the
+        newest and must come first under ``created_at DESC, id DESC``).
+        """
+        import asyncio
+
+        ids: list[int] = []
+
+        async def _run():
+            user = await store.get_user_by_email(email)
+            for i in range(count):
+                cursor = await store.conn.execute(
+                    "INSERT INTO archives "
+                    "(user_id, name, chat_session, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        user["id"],
+                        f"arch-{i}",
+                        session_id,
+                        "{}",
+                        f"2026-01-0{i + 1} 00:00:00",
+                    ),
+                )
+                ids.append(cursor.lastrowid)
+            await store.conn.commit()
+
+        asyncio.run(_run())
+        return ids
+
+    @staticmethod
+    def _seed_equal_time(store, email, session_id, count):
+        """Seed ``count`` archives that all share one ``created_at``.
+
+        Returns the inserted ids in creation order. Because ``created_at`` is
+        identical, only the ``id DESC`` tiebreaker can produce a stable order —
+        removing it makes the assertions in
+        ``test_equal_created_at_uses_id_desc_tiebreaker`` fail.
+        """
+        import asyncio
+
+        ids: list[int] = []
+
+        async def _run():
+            user = await store.get_user_by_email(email)
+            for i in range(count):
+                cursor = await store.conn.execute(
+                    "INSERT INTO archives "
+                    "(user_id, name, chat_session, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        user["id"],
+                        f"same-{i}",
+                        session_id,
+                        "{}",
+                        "2026-01-01 00:00:00",
+                    ),
+                )
+                ids.append(cursor.lastrowid)
+            await store.conn.commit()
+
+        asyncio.run(_run())
+        return ids
+
+    def test_page_size_and_desc_order(self, client, auth_cookie, session_id, store):
+        """limit caps the page and rows are newest-first."""
+        ids = self._seed(store, "archive@example.com", session_id, 5)
+
+        resp = client.get("/api/archives?limit=2", headers={"Cookie": auth_cookie})
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) == 2
+        assert [i["id"] for i in items] == [ids[4], ids[3]]
+
+    def test_before_returns_strictly_older(self, client, auth_cookie, session_id, store):
+        """before=<oldest page id> returns the next, strictly older page."""
+        ids = self._seed(store, "archive@example.com", session_id, 5)
+
+        first = client.get(
+            "/api/archives?limit=2", headers={"Cookie": auth_cookie}
+        ).json()
+        before = first[-1]["id"]
+
+        nxt = client.get(
+            f"/api/archives?limit=2&before={before}", headers={"Cookie": auth_cookie}
+        ).json()
+        assert [i["id"] for i in nxt] == [ids[2], ids[1]]
+        assert all(i["id"] < before for i in nxt)
+
+    def test_before_beyond_oldest_is_empty(self, client, auth_cookie, session_id, store):
+        """before=oldest id → empty next page."""
+        ids = self._seed(store, "archive@example.com", session_id, 3)
+        resp = client.get(
+            f"/api/archives?limit=2&before={ids[0]}", headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_equal_created_at_uses_id_desc_tiebreaker(
+        self, client, auth_cookie, session_id, store
+    ):
+        """Equal ``created_at`` rows order by ``id DESC``, and paging with
+        ``before=<id>`` neither duplicates nor omits equal-timestamp rows.
+
+        Honest scope: this pins the *contract* (order + no dup/omit at the
+        page boundary), but it is documentary rather than discriminating under
+        the current schema. ``idx_archives_user_created (user_id, created_at)``
+        makes SQLite satisfy the tie with a reverse index scan that already
+        yields ``id DESC``, so removing ``, id DESC`` from ``list_archives``
+        would still pass here. The tiebreaker stays as defensive correctness
+        for a plan without that index (e.g. a future migration).
+        """
+        ids = self._seed_equal_time(store, "archive@example.com", session_id, 5)
+
+        first = client.get(
+            "/api/archives?limit=2", headers={"Cookie": auth_cookie}
+        ).json()
+        assert [i["id"] for i in first] == [ids[4], ids[3]]
+
+        before = first[-1]["id"]
+        second = client.get(
+            f"/api/archives?limit=2&before={before}", headers={"Cookie": auth_cookie}
+        ).json()
+        assert [i["id"] for i in second] == [ids[2], ids[1]]
+        assert all(i["id"] < before for i in second)
+
+        before_second = second[-1]["id"]
+        third = client.get(
+            f"/api/archives?limit=2&before={before_second}",
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["id"] for i in third] == [ids[0]]
+
+        collected = [i["id"] for page in (first, second, third) for i in page]
+        assert collected == [ids[4], ids[3], ids[2], ids[1], ids[0]]
+        assert len(set(collected)) == len(ids)
+
+    def test_limit_clamps(self, client, auth_cookie):
+        """limit outside 1..200 → 422; the bounds themselves are accepted."""
+        assert client.get(
+            "/api/archives?limit=0", headers={"Cookie": auth_cookie}
+        ).status_code == 422
+        assert client.get(
+            "/api/archives?limit=201", headers={"Cookie": auth_cookie}
+        ).status_code == 422
+        assert client.get(
+            "/api/archives?limit=1", headers={"Cookie": auth_cookie}
+        ).status_code == 200
+        assert client.get(
+            "/api/archives?limit=200", headers={"Cookie": auth_cookie}
+        ).status_code == 200

@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from server.api.deps import current_user, get_store
@@ -32,6 +32,10 @@ ARCHIVE_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
 
 class CreateArchiveRequest(BaseModel):
     chat_session: str
+    name: str
+
+
+class RenameArchiveRequest(BaseModel):
     name: str
 
 
@@ -133,25 +137,45 @@ def _derive_card_fields(
     return (files, row_count, column_count)
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────
+def _load_payload(payload_json: str) -> dict[str, Any] | None:
+    """Parse a stored snapshot payload without ever raising.
 
-
-@router.post("", status_code=201, response_model=ArchiveDetail)
-async def create_archive(
-    body: CreateArchiveRequest,
-    store: SqliteStore = Depends(get_store),
-    user: dict = Depends(current_user),
-):
-    """Create an archive from a chat session.
-
-    Snapshot the session's messages and file references as the payload.
-    Validation: the name is trimmed and must be non-empty and at most
-    ``ARCHIVE_NAME_MAX_LENGTH`` characters (422 otherwise). The serialized
-    payload must fit ``ARCHIVE_PAYLOAD_MAX_BYTES`` (413 otherwise).
+    A malformed (``TypeError``/``ValueError``) or non-dict ``payload_json``
+    yields ``None`` so the create and detail responses never 500 on bad
+    stored data.
     """
-    user_id = user["id"]
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
-    name = body.name.strip()
+
+def _try_load_json(raw: Any) -> Any | None:
+    """Parse a stored JSON string without ever raising.
+
+    Used for message ``artifacts_json``, whose valid value is a list (so
+    ``_load_payload``'s dict-only contract does not apply). Empty or malformed
+    input degrades to ``None``; valid data is returned unchanged.
+    """
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+# ── Validation ───────────────────────────────────────────────────────────────
+
+def _validate_archive_name(name: str) -> str:
+    """Trim and validate an archive name, raising 422 ``invalid_name``.
+
+    Single source of truth for the create and rename paths: the name is
+    trimmed, must be non-empty, and must fit ``ARCHIVE_NAME_MAX_LENGTH``.
+    Returns the trimmed name.
+    """
+    name = name.strip()
     if not name:
         raise HTTPException(
             status_code=422,
@@ -171,6 +195,28 @@ async def create_archive(
                 ),
             },
         )
+    return name
+
+
+# ── Routes ──────────────────────────────────────────────────────────────────
+
+
+@router.post("", status_code=201, response_model=ArchiveDetail)
+async def create_archive(
+    body: CreateArchiveRequest,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Create an archive from a chat session.
+
+    Snapshot the session's messages and file references as the payload.
+    Validation: the name is trimmed and must be non-empty and at most
+    ``ARCHIVE_NAME_MAX_LENGTH`` characters (422 otherwise). The serialized
+    payload must fit ``ARCHIVE_PAYLOAD_MAX_BYTES`` (413 otherwise).
+    """
+    user_id = user["id"]
+
+    name = _validate_archive_name(body.name)
 
     # Verify the session exists and belongs to the user
     session = await store.get_chat_session(body.chat_session, user_id)
@@ -196,7 +242,7 @@ async def create_archive(
                 "role": m["role"],
                 "content_text": m["content_text"],
                 "code": m.get("code"),
-                "artifacts": json.loads(m["artifacts_json"]) if m.get("artifacts_json") else None,
+                "artifacts": _try_load_json(m.get("artifacts_json")),
                 "created_at": m.get("created_at"),
             }
             for m in messages
@@ -238,18 +284,27 @@ async def create_archive(
         id=archive["id"],
         name=archive["name"],
         chat_session=archive["chat_session"],
-        payload=json.loads(archive["payload_json"]),
+        payload=_load_payload(archive["payload_json"]),
         created_at=archive["created_at"],
     )
 
 
 @router.get("", response_model=list[ArchiveListItem])
 async def list_archives(
+    limit: int = Query(50, ge=1, le=200),
+    before: int | None = Query(None, alias="before"),
     store: SqliteStore = Depends(get_store),
     user: dict = Depends(current_user),
 ):
-    """List all archives for the current user, newest first."""
-    archives = await store.list_archives(user["id"])
+    """List archives for the current user, newest first.
+
+    Cursor-based pagination mirroring the chat-history/files keyset
+    contract: ``before=<id>`` returns older archives (``id < before``),
+    newest-first (``created_at DESC, id DESC``), at most ``limit`` rows.
+    The response stays a bare list; the client infers ``hasMore`` from
+    ``len === limit``.
+    """
+    archives = await store.list_archives(user["id"], limit=limit, before_id=before)
     items: list[ArchiveListItem] = []
     for a in archives:
         # Derive card metadata from the snapshot, then DISCARD the payload —
@@ -281,12 +336,57 @@ async def get_archive(
     """
     archive = await store.get_archive(archive_id, user["id"])
     if archive is None:
-        raise HTTPException(status_code=404, detail="Archive not found")
+        raise HTTPException(status_code=404, detail="Análisis no encontrado")
 
     return ArchiveDetail(
         id=archive["id"],
         name=archive["name"],
         chat_session=archive["chat_session"],
-        payload=json.loads(archive["payload_json"]),
+        payload=_load_payload(archive["payload_json"]),
         created_at=archive["created_at"],
     )
+
+
+@router.patch("/{archive_id}", response_model=ArchiveListItem)
+async def rename_archive(
+    archive_id: int,
+    body: RenameArchiveRequest,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Rename an archive owned by the current user.
+
+    The name is validated with ``_validate_archive_name`` (422 on empty or
+    over-long). Ownership is enforced by the store; a foreign or unknown id
+    returns 404.
+    """
+    name = _validate_archive_name(body.name)
+    archive = await store.rename_archive(archive_id, user["id"], name)
+    if archive is None:
+        raise HTTPException(status_code=404, detail="Análisis no encontrado")
+
+    files, row_count, column_count = _derive_card_fields(archive["payload_json"])
+    return ArchiveListItem(
+        id=archive["id"],
+        name=archive["name"],
+        chat_session=archive["chat_session"],
+        created_at=archive["created_at"],
+        files=files,
+        row_count=row_count,
+        column_count=column_count,
+    )
+
+
+@router.delete("/{archive_id}", status_code=204)
+async def delete_archive(
+    archive_id: int,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Delete an archive owned by the current user.
+
+    Ownership is enforced by the store; a foreign or unknown id returns 404.
+    """
+    deleted = await store.delete_archive(archive_id, user["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Análisis no encontrado")

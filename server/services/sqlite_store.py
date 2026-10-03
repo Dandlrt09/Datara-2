@@ -508,15 +508,64 @@ class SqliteStore:
     async def list_archives(
         self,
         user_id: int,
+        *,
+        limit: int | None = None,
+        before_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        """List archives for a user, newest first."""
+        """List archives for a user, newest first.
+
+        ``limit``/``before_id`` are the keyset-pagination knobs and are
+        keyword-only. Both default to ``None`` = unlimited, so callers that
+        need the FULL list keep today's behavior; only the API route bounds
+        the query. ``before_id`` returns archives with ``id < before_id`` (the
+        oldest id of the previous page) and ordering is
+        ``created_at DESC, id DESC`` so the id tiebreaker keeps rows
+        deterministic across pages (and under equal ``created_at``).
+        """
+        sql = (
+            "SELECT id, user_id, name, chat_session, payload_json, created_at "
+            "FROM archives WHERE user_id = ?"
+        )
+        params: list[Any] = [user_id]
+        if before_id is not None:
+            sql += " AND id < ?"
+            params.append(before_id)
+        sql += " ORDER BY created_at DESC, id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = await self.conn.execute_fetchall(sql, tuple(params))
+        return [dict(r) for r in rows]
+
+    async def delete_archive(self, archive_id: int, user_id: int) -> bool:
+        """Delete an archive owned by the user; return whether a row went."""
+        cursor = await self.conn.execute(
+            "DELETE FROM archives WHERE id = ? AND user_id = ?",
+            (archive_id, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def rename_archive(
+        self,
+        archive_id: int,
+        user_id: int,
+        name: str,
+    ) -> dict[str, Any] | None:
+        """Rename an archive owned by the user; return the updated row or None."""
+        cursor = await self.conn.execute(
+            "UPDATE archives SET name = ? WHERE id = ? AND user_id = ?",
+            (name, archive_id, user_id),
+        )
+        await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
         rows = await self.conn.execute_fetchall(
             "SELECT id, user_id, name, chat_session, payload_json, created_at "
-            "FROM archives WHERE user_id = ? "
-            "ORDER BY created_at DESC",
-            (user_id,),
+            "FROM archives WHERE id = ?",
+            (archive_id,),
         )
-        return [dict(r) for r in rows]
+        return dict(rows[0])
 
     async def get_archive(
         self,
