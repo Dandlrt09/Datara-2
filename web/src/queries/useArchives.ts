@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "../lib/api";
 
 export interface Archive {
@@ -16,15 +21,35 @@ export interface Archive {
   column_count: number | null;
 }
 
+/** The list-card shape returned by `GET /api/archives` and `PATCH /api/archives/{id}`. */
+export type ArchiveListItem = Archive;
+
 export interface ArchiveDetail
   extends Omit<Archive, "files" | "row_count" | "column_count"> {
-  payload?: Record<string, unknown>;
+  /** Null when the stored `payload_json` is malformed (server never 500s). */
+  payload?: Record<string, unknown> | null;
 }
 
+/** Page size for the archives keyset. The backend clamps `limit` to 1..200 and
+ * defaults to 50 — this matches it. The list response is a bare array; the
+ * client infers `hasMore` from `len === limit`. */
+export const ARCHIVES_PAGE_SIZE = 50;
+
+/** Archives list, accumulated across keyset pages (newest first). Consumers
+ * flatten `data.pages`; `hasNextPage` / `fetchNextPage` drive «Cargar más». */
 export function useArchives() {
-  return useQuery({
-    queryKey: ["archives"],
-    queryFn: () => api.get<Archive[]>("/api/archives"),
+  return useInfiniteQuery({
+    queryKey: ["archives", "list"],
+    queryFn: ({ pageParam }) =>
+      api.get<Archive[]>(
+        `/api/archives?limit=${ARCHIVES_PAGE_SIZE}` +
+          (pageParam != null ? `&before=${pageParam}` : ""),
+      ),
+    initialPageParam: null as number | null,
+    getNextPageParam: (lastPage) =>
+      lastPage.length === ARCHIVES_PAGE_SIZE
+        ? lastPage[lastPage.length - 1].id
+        : undefined,
   });
 }
 
@@ -42,5 +67,22 @@ export function useArchiveDetail(id: number | null) {
     queryKey: ["archives", id],
     queryFn: () => api.get<ArchiveDetail>(`/api/archives/${id}`),
     enabled: !!id,
+  });
+}
+
+export function useDeleteArchive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete<void>(`/api/archives/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["archives"] }),
+  });
+}
+
+export function useRenameArchive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      api.patch<ArchiveListItem>(`/api/archives/${id}`, { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["archives"] }),
   });
 }

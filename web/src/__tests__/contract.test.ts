@@ -43,6 +43,8 @@ const EXPECTED_ROUTES: RouteEntry[] = [
   { method: "GET", pattern: "/api/archives", present: true },
   { method: "POST", pattern: "/api/archives", present: true },
   { method: "GET", pattern: "/api/archives/", present: true }, // /{archive_id}
+  { method: "DELETE", pattern: "/api/archives/", present: true }, // /{archive_id}
+  { method: "PATCH", pattern: "/api/archives/", present: true }, // /{archive_id} rename
 
   // Settings
   { method: "GET", pattern: "/api/settings", present: true },

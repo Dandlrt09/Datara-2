@@ -1,15 +1,25 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   useArchives,
   useArchiveDetail,
+  useDeleteArchive,
+  useRenameArchive,
   type Archive,
   type ArchiveDetail,
 } from "../queries/useArchives";
 import { ErrorCard } from "../components/ErrorCard";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import ArchiveSnapshot from "../components/ArchiveSnapshot";
 import { colors } from "../design/tokens";
 import { formatNumberEs } from "../lib/formatNumbers";
 import { formatRelativeTimeEs } from "../lib/relativeTime";
+import { api } from "../lib/api";
+import {
+  archiveToMarkdown,
+  archiveMarkdownFilename,
+  downloadTextFile,
+} from "../lib/archiveMarkdown";
 
 /** Case- and accent-insensitive key for the client-side name search. */
 function normalizeForSearch(text: string): string {
@@ -17,6 +27,25 @@ function normalizeForSearch(text: string): string {
     .toLocaleLowerCase("es")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "");
+}
+
+/** Extract a human-readable message from an ApiError-shaped failure, mirroring
+ * the file-rename precedent. Falls back to a neutral Spanish message. */
+function actionErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === "object") {
+    const body = (error as { body?: unknown }).body;
+    if (body && typeof body === "object") {
+      const detail = (body as { detail?: unknown }).detail;
+      if (typeof detail === "string" && detail.trim()) return detail;
+      if (detail && typeof detail === "object") {
+        const message = (detail as { message?: unknown }).message;
+        if (typeof message === "string" && message.trim()) return message;
+      }
+    }
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
 }
 
 const chipStyle = {
@@ -40,13 +69,18 @@ const mutedChipStyle = {
   fontFamily: "inherit",
 } as const;
 
-const inertActionStyle = {
+const actionButtonStyle = {
   padding: 0,
   border: "none",
   background: "none",
-  color: colors.textMuted,
+  color: colors.accent,
   fontSize: 13,
-  cursor: "not-allowed",
+  cursor: "pointer",
+} as const;
+
+const dangerActionStyle = {
+  ...actionButtonStyle,
+  color: colors.danger,
 } as const;
 
 const detailToggleStyle = {
@@ -59,14 +93,29 @@ const detailToggleStyle = {
   cursor: "pointer",
 } as const;
 
-const detailErrorTitle = "No se pudo cargar el detalle";
 const listErrorTitle = "No se pudieron cargar los análisis";
+const detailErrorTitle = "No se pudo cargar el detalle";
+const exportErrorCopy = "No se pudo exportar el análisis";
 
 export default function ArchiveList() {
-  const { data: archives, isLoading, error, refetch } = useArchives();
+  const navigate = useNavigate();
+  const {
+    data,
+    isLoading,
+    error,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useArchives();
   const [search, setSearch] = useState("");
   const [newestFirst, setNewestFirst] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [archiveToDelete, setArchiveToDelete] = useState<Archive | null>(null);
+
+  const deleteArchive = useDeleteArchive();
+
+  const archives = useMemo(() => data?.pages.flat() ?? [], [data]);
 
   // Exactly ONE detail fetch for the whole list. `null` disables the query
   // until a card is expanded, which kills the previous per-row N+1.
@@ -77,7 +126,7 @@ export default function ArchiveList() {
   } = useArchiveDetail(expandedId);
 
   const visibleArchives = useMemo(() => {
-    const list = archives ?? [];
+    const list = archives;
     const query = normalizeForSearch(search.trim());
     const filtered = query
       ? list.filter((a) => normalizeForSearch(a.name).includes(query))
@@ -100,7 +149,22 @@ export default function ArchiveList() {
     });
   }, [archives, search, newestFirst]);
 
-  const hasArchives = !!archives && archives.length > 0;
+  const hasArchives = archives.length > 0;
+
+  const handleReopen = (archive: Archive) => {
+    if (archive.chat_session) {
+      navigate(`/app/chat/${archive.chat_session}`);
+    } else {
+      setExpandedId((current) => (current === archive.id ? null : archive.id));
+    }
+  };
+
+  const handleConfirmDelete = () => {
+    if (!archiveToDelete) return;
+    deleteArchive.mutate(archiveToDelete.id, {
+      onSettled: () => setArchiveToDelete(null),
+    });
+  };
 
   return (
     <div>
@@ -162,7 +226,13 @@ export default function ArchiveList() {
         <p style={{ color: colors.textMuted }}>Cargando análisis…</p>
       )}
 
-      {!error && archives && archives.length === 0 && (
+      {deleteArchive.isError && (
+        <p role="alert" style={{ color: colors.dangerText, marginBottom: 12 }}>
+          {actionErrorMessage(deleteArchive.error, "No se pudo borrar el análisis")}
+        </p>
+      )}
+
+      {!error && !isLoading && archives.length === 0 && (
         <div
           style={{
             padding: 24,
@@ -182,6 +252,20 @@ export default function ArchiveList() {
         <p style={{ color: colors.textMuted }}>No se encontraron análisis</p>
       )}
 
+      {hasArchives && hasNextPage && search.trim().length > 0 && (
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: colors.textMuted }}>
+          La búsqueda solo cubre los análisis cargados. Usa «Cargar más» para
+          ampliar la lista.
+        </p>
+      )}
+
+      {hasArchives && hasNextPage && !newestFirst && (
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: colors.textMuted }}>
+          «Más antiguos» solo ordena los análisis cargados. Usa «Cargar más»
+          para ampliar la lista.
+        </p>
+      )}
+
       {hasArchives && (
         <div>
           {visibleArchives.map((a) => {
@@ -195,9 +279,27 @@ export default function ArchiveList() {
                 detailError={isExpanded ? (detailError as Error | null) : null}
                 onToggleDetail={() => setExpandedId(isExpanded ? null : a.id)}
                 onRetryDetail={refetchDetail}
+                onReopen={() => handleReopen(a)}
+                onRequestDelete={() => setArchiveToDelete(a)}
               />
             );
           })}
+        </div>
+      )}
+
+      {hasArchives && hasNextPage && (
+        <div style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            style={{
+              ...detailToggleStyle,
+              cursor: isFetchingNextPage ? "not-allowed" : "pointer",
+            }}
+          >
+            {isFetchingNextPage ? "Cargando…" : "Cargar más"}
+          </button>
         </div>
       )}
 
@@ -214,6 +316,21 @@ export default function ArchiveList() {
           reabrirlo y seguir donde lo dejaste.
         </p>
       )}
+
+      <ConfirmDialog
+        open={archiveToDelete !== null}
+        title="Borrar análisis"
+        message={
+          archiveToDelete
+            ? `Se borrará «${archiveToDelete.name}». Esta acción no se puede deshacer.`
+            : ""
+        }
+        confirmLabel="Borrar"
+        cancelLabel="Cancelar"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setArchiveToDelete(null)}
+        pending={deleteArchive.isPending}
+      />
     </div>
   );
 }
@@ -225,6 +342,8 @@ function ArchiveCard({
   detailError,
   onToggleDetail,
   onRetryDetail,
+  onReopen,
+  onRequestDelete,
 }: {
   archive: Archive;
   expanded: boolean;
@@ -232,8 +351,18 @@ function ArchiveCard({
   detailError: Error | null;
   onToggleDetail: () => void;
   onRetryDetail: () => void;
+  onReopen: () => void;
+  onRequestDelete: () => void;
 }) {
   const [primaryFile, ...extraFiles] = archive.files ?? [];
+
+  const renameArchive = useRenameArchive();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState(false);
 
   const summaryParts: string[] = [];
   if (archive.row_count != null) {
@@ -243,6 +372,58 @@ function ArchiveCard({
     summaryParts.push(`${formatNumberEs(archive.column_count)} columnas`);
   }
   const summary = summaryParts.join(" · ");
+
+  const startRename = () => {
+    setRenameValue(archive.name);
+    setRenameError(null);
+    renameArchive.reset();
+    setIsRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setRenameValue("");
+    setRenameError(null);
+    renameArchive.reset();
+  };
+
+  const submitRename = () => {
+    const name = renameValue.trim();
+    if (!name || renameArchive.isPending) return;
+    setRenameError(null);
+    renameArchive.mutate(
+      { id: archive.id, name },
+      {
+        onSuccess: () => {
+          setIsRenaming(false);
+          setRenameValue("");
+        },
+        onError: (error) =>
+          setRenameError(
+            actionErrorMessage(error, "No se pudo renombrar el análisis"),
+          ),
+      },
+    );
+  };
+
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportError(false);
+    try {
+      const detailResponse = await api.get<ArchiveDetail>(
+        `/api/archives/${archive.id}`,
+      );
+      downloadTextFile(
+        archiveToMarkdown(archive.name, detailResponse.payload),
+        archiveMarkdownFilename(archive.name),
+      );
+    } catch {
+      setExportError(true);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div
@@ -263,18 +444,54 @@ function ArchiveCard({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <h2
-            style={{
-              margin: "0 0 6px",
-              fontSize: 15,
-              color: colors.textPrimary,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {archive.name}
-          </h2>
+          {isRenaming ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitRename();
+              }}
+              style={{ display: "flex", gap: 4, alignItems: "center" }}
+            >
+              <input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelRename();
+                }}
+                autoFocus
+                maxLength={200}
+                aria-label="Nuevo nombre del análisis"
+                style={{ flex: 1, minWidth: 0, padding: "2px 6px", fontSize: "inherit" }}
+              />
+              <button
+                type="submit"
+                disabled={!renameValue.trim() || renameArchive.isPending}
+              >
+                Guardar
+              </button>
+              <button type="button" onClick={cancelRename}>
+                Cancelar
+              </button>
+            </form>
+          ) : (
+            <h2
+              style={{
+                margin: "0 0 6px",
+                fontSize: 15,
+                color: colors.textPrimary,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {archive.name}
+            </h2>
+          )}
+          {renameError && (
+            <p role="alert" style={{ color: colors.dangerText, margin: "4px 0" }}>
+              {renameError}
+            </p>
+          )}
           <div
             style={{
               display: "flex",
@@ -310,25 +527,36 @@ function ArchiveCard({
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <button
-              type="button"
-              disabled
-              title="Disponible próximamente"
-              aria-label="Reabrir — Disponible próximamente"
-              style={inertActionStyle}
-            >
+            <button type="button" onClick={onReopen} style={actionButtonStyle}>
               Reabrir
             </button>
             <button
               type="button"
-              disabled
-              title="Disponible próximamente"
-              aria-label="Exportar — Disponible próximamente"
-              style={inertActionStyle}
+              onClick={handleExport}
+              disabled={isExporting}
+              style={{
+                ...actionButtonStyle,
+                cursor: isExporting ? "not-allowed" : "pointer",
+              }}
             >
-              Exportar
+              {isExporting ? "Exportando…" : "Exportar"}
+            </button>
+            <button type="button" onClick={startRename} style={actionButtonStyle}>
+              Renombrar
+            </button>
+            <button
+              type="button"
+              onClick={onRequestDelete}
+              style={dangerActionStyle}
+            >
+              Borrar
             </button>
           </div>
+          {exportError && (
+            <p role="alert" style={{ margin: 0, color: colors.dangerText, fontSize: 12 }}>
+              {exportErrorCopy}
+            </p>
+          )}
         </div>
       </div>
 
@@ -344,17 +572,8 @@ function ArchiveCard({
             actionLabel="Reintentar"
           />
         )}
-        {expanded && !detailError && detail?.payload && (
-          <pre
-            style={{
-              marginTop: 12,
-              maxHeight: 300,
-              overflow: "auto",
-              fontSize: "0.85em",
-            }}
-          >
-            {JSON.stringify(detail.payload, null, 2)}
-          </pre>
+        {expanded && !detailError && detail && (
+          <ArchiveSnapshot name={archive.name} payload={detail.payload} />
         )}
       </div>
     </div>
