@@ -33,6 +33,7 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 - On WSL, starting uvicorn from `/mnt/c` takes ~10-15s (imports are slow); a curl right after launch may return 000 — wait and retry.
 - Graceful uvicorn shutdown hangs on browser keep-alive connections; `kill -9` when needed.
 - Never pipe pytest through other commands (`pytest | tail && commit` masks the exit code).
+- **Native review / #4030**: before `gentle-ai review status ... --next-transition`, run `git worktree list --porcelain` and `git worktree prune --dry-run -v`; if anything is listed as prunable, run `git worktree prune` first. A stale registered worktree makes the OpenCode transport reject the reviewer (`opencode_review_transport_binding_invalid`, Gentle AI #4030) even when the review target is healthy.
 
 ## Conventions
 
