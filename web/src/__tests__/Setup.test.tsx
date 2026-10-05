@@ -196,6 +196,7 @@ describe("Setup", () => {
   });
 
   it("filters the model dropdown with the search box and recovers after clearing", async () => {
+    setupMocks({ allowed_models: ["gpt-4o", "gpt-4o-mini", "z-ai/glm-5.3-flash"] });
     mockModelsState(
       [
         { id: "gpt-4o", name: "GPT-4o" },
@@ -228,6 +229,7 @@ describe("Setup", () => {
   });
 
   it("clears the model search when switching presets", async () => {
+    setupMocks({ allowed_models: ["gpt-4o", "gpt-4o-mini", "z-ai/glm-5.3-flash"] });
     mockModelsState(
       [
         { id: "gpt-4o", name: "GPT-4o" },
@@ -254,6 +256,25 @@ describe("Setup", () => {
     expect((searchAfter as HTMLInputElement).value).toBe("");
   });
 
+  it("hides fetched models that are not in the whitelist", async () => {
+    setupMocks({ allowed_models: ["gpt-4o"] });
+    mockModelsState(
+      [
+        { id: "gpt-4o", name: "GPT-4o" },
+        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
+      ],
+      null
+    );
+    renderWizard();
+
+    await reachModelStep();
+
+    const select = await screen.findByRole("combobox");
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("GPT-4o");
+    expect(options).not.toContain("GLM 5.3 Flash");
+  });
+
   it("shows the free-text fallback when the model fetch fails", async () => {
     mockModelsState([], { code: "timeout", message: "timed out" });
     renderWizard();
@@ -271,6 +292,73 @@ describe("Setup", () => {
 
     expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
     expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
+  });
+
+  it("blocks a non-whitelisted model on the custom free-text path", async () => {
+    setupMocks({ allowed_models: ["gpt-4o"] });
+    renderWizard();
+
+    selectPreset("Custom (clave de API requerida)");
+    clickNext();
+    const baseUrlInput = await screen.findByPlaceholderText("https://...");
+    fireEvent.change(baseUrlInput, { target: { value: "https://api.example.com/v1" } });
+    const keyInput = screen.getByPlaceholderText("sk-...");
+    fireEvent.change(keyInput, { target: { value: "sk-test" } });
+    clickNext();
+
+    await screen.findByPlaceholderText("gpt-4o, llama3.2:latest, etc.");
+    await fillFreeTextModel("not-allowed/model");
+    clickNext();
+
+    expect(await screen.findByText(COPY.MODEL_NOT_ALLOWED)).toBeTruthy();
+    // The guard returns before persisting default_model.
+    expect(
+      mutateMock.mock.calls.some(
+        (call) => call[0] && "default_model" in call[0]
+      )
+    ).toBe(false);
+    // Still on the model step.
+    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
+  });
+
+  it("blocks a non-whitelisted model on the fetch-failure fallback path", async () => {
+    setupMocks({ allowed_models: ["gpt-4o"] });
+    mockModelsState([], { code: "timeout", message: "timed out" });
+    renderWizard();
+
+    await reachModelStep();
+
+    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
+    await fillFreeTextModel("not-allowed/model");
+    clickNext();
+
+    expect(await screen.findByText(COPY.MODEL_NOT_ALLOWED)).toBeTruthy();
+    expect(
+      mutateMock.mock.calls.some(
+        (call) => call[0] && "default_model" in call[0]
+      )
+    ).toBe(false);
+    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
+  });
+
+  it("does not dead-end setup when no whitelist is known", async () => {
+    // Regression: an absent or empty allowed_models must not reject every
+    // model at submit time (the chat-time gate and its banner are the backstop).
+    setupMocks({ allowed_models: [] });
+    renderWizard();
+
+    await reachModelStep();
+    await fillFreeTextModel("any/provider-model");
+    clickNext();
+
+    await waitFor(() =>
+      expect(
+        mutateMock.mock.calls.some(
+          (call) => call[0] && call[0].default_model === "any/provider-model"
+        )
+      ).toBe(true)
+    );
+    expect(screen.queryByText(COPY.MODEL_NOT_ALLOWED)).toBeNull();
   });
 
   it("uses free-text directly for the custom preset without fetching models", async () => {

@@ -36,6 +36,8 @@ export default function Setup() {
   const [saveError, setSaveError] = useState<SaveError | null>(null);
   // Live model list search: case-insensitive substring over id + name.
   const [modelQuery, setModelQuery] = useState("");
+  // Submit-time rejection for a model outside the server whitelist.
+  const [modelError, setModelError] = useState<string | null>(null);
 
   const {
     register,
@@ -63,12 +65,17 @@ export default function Setup() {
   const formValues = watch();
   const selectedPreset = PRESETS.find((p) => p.id === formValues.providerType);
 
+  // The server only accepts models in the env whitelist, so the wizard must
+  // offer exactly that intersection of the live list and allowed_models.
+  const allowedModels = settings?.allowed_models ?? [];
+  const selectableModels = models.filter((m) => allowedModels.includes(m.id));
+
   // Filtered model list for the search box (empty query → full list).
   const normalizedQuery = modelQuery.trim().toLowerCase();
   const filteredModels =
     normalizedQuery === ""
-      ? models
-      : models.filter(
+      ? selectableModels
+      : selectableModels.filter(
           (m) =>
             m.id.toLowerCase().includes(normalizedQuery) ||
             m.name.toLowerCase().includes(normalizedQuery)
@@ -141,9 +148,19 @@ export default function Setup() {
         return; // validation/save failed (e.g. SSRF 422): stay on this step
       }
     } else if (step === 2) {
-      // Model step saves default_model.
+      // Model step saves default_model. Reject anything outside the whitelist
+      // (covers the select, the fetch-failure fallback, and custom free-text).
+      const model = data.model.trim();
+      // Only enforce the whitelist when it is known: an absent or empty
+      // whitelist (settings not loaded, or not configured) must not dead-end
+      // setup — the chat-time gate and its recovery banner remain the backstop.
+      if (allowedModels.length > 0 && !allowedModels.includes(model)) {
+        setModelError(COPY.MODEL_NOT_ALLOWED);
+        return;
+      }
+      setModelError(null);
       try {
-        await updateSettings.mutateAsync({ default_model: data.model.trim() });
+        await updateSettings.mutateAsync({ default_model: model });
       } catch (err) {
         setSaveError(extractSaveError(err));
         return;
@@ -283,7 +300,7 @@ export default function Setup() {
                   style={{ width: "100%", padding: 8 }}
                 />
               </div>
-            ) : modelsError || models.length === 0 ? (
+            ) : modelsError || selectableModels.length === 0 ? (
               // Fetch error or empty list: free-text fallback with the spec copy.
               <div>
                 <p style={{ color: "orange" }}>{COPY.MODEL_LIST_FALLBACK}</p>
@@ -333,6 +350,11 @@ export default function Setup() {
 
             {errors.model && (
               <p style={{ color: "red", fontSize: "0.9em" }}>{COPY.MODEL_REQUIRED}</p>
+            )}
+            {modelError && (
+              <p style={{ color: "red" }} role="alert">
+                {modelError}
+              </p>
             )}
           </div>
         )}

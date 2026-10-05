@@ -25,12 +25,12 @@ describe("resolveErrorPresentation", () => {
     }
   });
 
-  it("maps model/not_allowed to the warning presentation without action", () => {
+  it("maps model/not_allowed to the warning go-settings presentation", () => {
     expect(resolveErrorPresentation("model/not_allowed")).toEqual({
       variant: "warning",
       title: "Modelo no disponible",
-      action: "none",
-      actionLabel: undefined,
+      action: "go-settings",
+      actionLabel: "Ir a Ajustes",
     });
   });
 

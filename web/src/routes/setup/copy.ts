@@ -26,5 +26,6 @@ export const COPY = {
   MODEL_REQUIRED: "Selecciona un modelo o escribe su identificador.",
   MODEL_SEARCH_PLACEHOLDER: "Buscar modelo (nombre o id)...",
   MODEL_SEARCH_NO_RESULTS: "Sin resultados para",
+  MODEL_NOT_ALLOWED: "Ese modelo no está permitido. Selecciona uno de la lista permitida.",
   DONE_CONFIRMATION: "Configuración guardada correctamente.",
 } as const;

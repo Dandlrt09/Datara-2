@@ -107,7 +107,12 @@ export function resolveErrorPresentation(
     return FILE_NOT_PROFILED;
   }
   if (code === "model/not_allowed") {
-    return { variant: "warning", title: "Modelo no disponible", action: "none" };
+    return {
+      variant: "warning",
+      title: "Modelo no disponible",
+      action: "go-settings",
+      actionLabel: "Ir a Ajustes",
+    };
   }
   if (code === MODEL_INADEQUATE_CODE) {
     return MODEL_INADEQUATE;
