@@ -2,25 +2,51 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import SettingsView from "../routes/SettingsView";
 
-const { useSettingsMock, mutateMock } = vi.hoisted(() => ({
+const { useSettingsMock, mutateAsyncMock, fetchModelsMock } = vi.hoisted(() => ({
   useSettingsMock: vi.fn(),
-  mutateMock: vi.fn(),
+  mutateAsyncMock: vi.fn(),
+  fetchModelsMock: vi.fn(),
 }));
 
 vi.mock("../queries/useSettings", () => ({
   useSettings: () => useSettingsMock(),
   useUpdateSettings: () => ({
-    mutate: mutateMock,
+    mutate: vi.fn(),
+    mutateAsync: mutateAsyncMock,
     isPending: false,
     isSuccess: false,
     isError: false,
   }),
 }));
 
+vi.mock("../routes/setup/useFetchModels", () => ({
+  useFetchModels: () => ({
+    models: [],
+    isLoading: false,
+    error: null,
+    fetchModels: fetchModelsMock,
+  }),
+}));
+
 describe("SettingsView", () => {
   beforeEach(() => {
     useSettingsMock.mockReset();
-    mutateMock.mockReset();
+    mutateAsyncMock.mockReset();
+    fetchModelsMock.mockReset();
+    // The PUT echoes the persisted settings, including the submitted provider.
+    mutateAsyncMock.mockImplementation(
+      (data: { provider_type?: string | null; base_url?: string | null; default_model?: string }) =>
+        Promise.resolve({
+          user_id: 1,
+          has_api_key: false,
+          provider_type: data.provider_type ?? null,
+          base_url: data.base_url ?? null,
+          default_model: data.default_model ?? null,
+          allowed_models: [],
+        }),
+    );
+    // Default probe succeeds; individual tests override it.
+    fetchModelsMock.mockResolvedValue({ models: [], error: null });
   });
 
   it("renders the form without an infinite render loop", () => {
@@ -104,8 +130,8 @@ describe("SettingsView", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
-    await waitFor(() => expect(mutateMock).toHaveBeenCalledTimes(1));
-    expect(mutateMock).toHaveBeenCalledWith(
+    await waitFor(() => expect(mutateAsyncMock).toHaveBeenCalledTimes(1));
+    expect(mutateAsyncMock).toHaveBeenCalledWith(
       expect.objectContaining({
         provider_type: "custom",
         base_url: "https://api.example.com/v1",
@@ -254,5 +280,97 @@ describe("SettingsView", () => {
     expect(baseUrlInput.value).toBe("https://my-gateway.example/v1");
     expect(baseUrlInput.readOnly).toBe(true);
     expect(screen.getByText(/custom url/i)).toBeTruthy();
+  });
+
+  it("reports a failed probe honestly after a successful save", async () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    fetchModelsMock.mockResolvedValue({
+      models: [],
+      error: { code: "provider_error", message: "401 Unauthorized" },
+    });
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://api.example.com/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/saved, but connection failed: 401 unauthorized/i),
+      ).toBeTruthy(),
+    );
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
+    // The unverified save must NOT masquerade as a plain success.
+    expect(screen.queryByText(/^Settings saved$/)).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/connection failed/i);
+  });
+
+  it("shows connected when the probe succeeds", async () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    fetchModelsMock.mockResolvedValue({
+      models: [{ id: "gpt-4o", name: "gpt-4o" }],
+      error: null,
+    });
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://api.example.com/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(screen.getByText(/saved · connected/i)).toBeTruthy());
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the save error and does not probe when the PUT fails", async () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    mutateAsyncMock.mockRejectedValue(new Error("boom"));
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://api.example.com/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/failed to save settings: boom/i)).toBeTruthy(),
+    );
+    expect(fetchModelsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("shows plain success without probing when the provider is cleared", async () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: true,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(screen.getByText(/^Settings saved$/)).toBeTruthy());
+    expect(fetchModelsMock).not.toHaveBeenCalled();
   });
 });

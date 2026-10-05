@@ -1,10 +1,24 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { useSettings, useUpdateSettings } from "../queries/useSettings";
+import { useSettings, useUpdateSettings, type UserSettings } from "../queries/useSettings";
 import { QueryError } from "../components/ErrorCard";
 import { PRESETS } from "./setup/presets";
+import { useFetchModels } from "./setup/useFetchModels";
 
 type ProviderType = "openrouter" | "ollama" | "lmstudio" | "groq" | "custom";
+
+/**
+ * Honest save lifecycle. A successful PUT is not enough to claim success:
+ * when a provider is configured we probe it before reporting "Connected".
+ */
+type SaveStatus =
+  | "idle"
+  | "saving"
+  | "checking"
+  | "saved"
+  | "connected"
+  | "saved-unverified"
+  | "save-error";
 
 interface SettingsForm {
   provider_type?: string;
@@ -28,9 +42,12 @@ function saveErrorMessage(error: unknown): string {
 export default function SettingsView() {
   const { data: settings, isLoading, error, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
+  const { fetchModels } = useFetchModels();
   const { register, handleSubmit, reset, setValue, watch } = useForm<SettingsForm>();
 
   const [urlUnlocked, setUrlUnlocked] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [statusDetail, setStatusDetail] = useState<string | null>(null);
   const providerType = watch("provider_type");
   const baseUrlValue = watch("base_url");
   const preset = PRESETS.find((p) => p.id === providerType);
@@ -60,13 +77,49 @@ export default function SettingsView() {
     }
   }, [settings, reset]);
 
-  const onSubmit = (data: SettingsForm) => {
-    updateSettings.mutate({
-      provider_type: (data.provider_type || null) as ProviderType | null,
-      base_url: data.base_url?.trim() ?? "",
-      api_key: data.api_key?.trim() || undefined,
-      default_model: data.default_model?.trim() || undefined,
-    });
+  const onSubmit = async (data: SettingsForm) => {
+    setSaveStatus("saving");
+    setStatusDetail(null);
+
+    // 1. Persist first. A failed save is a hard error and must not probe.
+    let saved: UserSettings;
+    try {
+      saved = await updateSettings.mutateAsync({
+        provider_type: (data.provider_type || null) as ProviderType | null,
+        base_url: data.base_url?.trim() ?? "",
+        api_key: data.api_key?.trim() || undefined,
+        default_model: data.default_model?.trim() || undefined,
+      });
+    } catch (err) {
+      setSaveStatus("save-error");
+      setStatusDetail(saveErrorMessage(err));
+      return;
+    }
+
+    // 2. Trust the server-returned provider_type; fall back to the submitted
+    // value when the response omits it. A falsy value means the provider was
+    // cleared: there is nothing to verify, so a plain success is honest.
+    const effectiveProvider = saved?.provider_type ?? data.provider_type ?? null;
+    if (!effectiveProvider) {
+      setSaveStatus("saved");
+      return;
+    }
+
+    // 3. Probe the persisted config. A failed probe does not roll back the
+    // save; it reports the truth.
+    setSaveStatus("checking");
+    try {
+      const res = await fetchModels();
+      if (res.error == null) {
+        setSaveStatus("connected");
+      } else {
+        setSaveStatus("saved-unverified");
+        setStatusDetail(res.error.message);
+      }
+    } catch (err) {
+      setSaveStatus("saved-unverified");
+      setStatusDetail(err instanceof Error ? err.message : "unknown error");
+    }
   };
 
   const toggleUrlEdit = () => setUrlUnlocked((v) => !v);
@@ -187,16 +240,28 @@ export default function SettingsView() {
               ))}
             </select>
           </div>
-          {updateSettings.isSuccess && (
+          {saveStatus === "saved" && (
             <p style={{ color: "green" }}>Settings saved</p>
           )}
-        {updateSettings.isError && (
-          <p style={{ color: "red" }} role="alert">
-            Failed to save settings: {saveErrorMessage(updateSettings.error)}
-          </p>
-        )}
-          <button type="submit" disabled={updateSettings.isPending} style={{ padding: "8px 16px" }}>
-            {updateSettings.isPending ? "Saving..." : "Save"}
+          {saveStatus === "connected" && (
+            <p style={{ color: "green" }}>Saved · Connected</p>
+          )}
+          {saveStatus === "saved-unverified" && (
+            <p style={{ color: "red" }} role="alert">
+              Saved, but connection failed: {statusDetail}
+            </p>
+          )}
+          {saveStatus === "save-error" && (
+            <p style={{ color: "red" }} role="alert">
+              Failed to save settings: {statusDetail}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={saveStatus === "saving" || saveStatus === "checking"}
+            style={{ padding: "8px 16px" }}
+          >
+            {saveStatus === "saving" ? "Saving..." : saveStatus === "checking" ? "Checking..." : "Save"}
           </button>
         </form>
       </QueryError>
