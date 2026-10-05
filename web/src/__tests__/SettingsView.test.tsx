@@ -62,13 +62,13 @@ describe("SettingsView", () => {
       isLoading: false,
     });
     render(<SettingsView />);
-    expect(screen.getByText("Settings")).toBeTruthy();
+    expect(screen.getByText("Ajustes")).toBeTruthy();
     expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
     // Model picker is a dropdown fed by the server whitelist
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    const select = screen.getByLabelText("Modelo predeterminado") as HTMLSelectElement;
     expect(select.options.length).toBe(6); // "" + 5 allowed models
     // Provider picker is a dropdown fed by the shared preset catalog
-    const providerSelect = screen.getByLabelText("Provider") as HTMLSelectElement;
+    const providerSelect = screen.getByLabelText("Proveedor") as HTMLSelectElement;
     expect(providerSelect.options.length).toBe(6); // "" + 5 presets
   });
 
@@ -83,10 +83,10 @@ describe("SettingsView", () => {
       isLoading: false,
     });
     render(<SettingsView />);
-    expect(screen.getByText(/saved — leave blank to keep/i)).toBeTruthy();
+    expect(screen.getByText(/guardada — deja en blanco para mantenerla/i)).toBeTruthy();
     const keyInput = screen.getByPlaceholderText("sk-...") as HTMLInputElement;
     expect(keyInput.value).toBe("");
-    const select = screen.getByLabelText("Default Model") as HTMLSelectElement;
+    const select = screen.getByLabelText("Modelo predeterminado") as HTMLSelectElement;
     expect(select.value).toBe("gpt-4o");
   });
 
@@ -103,9 +103,9 @@ describe("SettingsView", () => {
       isLoading: false,
     });
     render(<SettingsView />);
-    const providerSelect = screen.getByLabelText("Provider") as HTMLSelectElement;
+    const providerSelect = screen.getByLabelText("Proveedor") as HTMLSelectElement;
     expect(providerSelect.value).toBe("openrouter");
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
     expect(baseUrlInput.value).toBe("https://openrouter.ai/api/v1");
   });
 
@@ -121,14 +121,14 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
       target: { value: "https://api.example.com/v1" },
     });
     fireEvent.change(screen.getByPlaceholderText("sk-..."), {
       target: { value: "sk-new" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
 
     await waitFor(() => expect(mutateAsyncMock).toHaveBeenCalledTimes(1));
     expect(mutateAsyncMock).toHaveBeenCalledWith(
@@ -152,16 +152,16 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ollama" } });
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "ollama" } });
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
     await waitFor(() => expect(baseUrlInput.value).toBe("http://localhost:11434/v1"));
   });
 
   it("shows the loading state", () => {
     useSettingsMock.mockReturnValue({ data: undefined, isLoading: true });
     render(<SettingsView />);
-    expect(screen.getByText(/loading settings/i)).toBeTruthy();
+    expect(screen.getByText(/cargando ajustes/i)).toBeTruthy();
   });
 
   it("shows error card when useSettings fails (R-ErrorUI-4)", () => {
@@ -190,10 +190,10 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
     expect(baseUrlInput.readOnly).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: /edit url/i }));
+    fireEvent.click(screen.getByRole("button", { name: /editar url/i }));
     expect(baseUrlInput.readOnly).toBe(false);
   });
 
@@ -211,10 +211,10 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
     expect(baseUrlInput.value).toBe("https://gateway.internal/v1");
     expect(baseUrlInput.readOnly).toBe(true);
-    expect(screen.getByText(/custom url/i)).toBeTruthy();
+    expect(screen.getByText(/url personalizada/i)).toBeTruthy();
   });
 
   it("leaves base_url editable for custom without a toggle", () => {
@@ -231,9 +231,9 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
     expect(baseUrlInput.readOnly).toBe(false);
-    expect(screen.queryByRole("button", { name: /edit url/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /editar url/i })).toBeNull();
   });
 
   it("Use default restores the preset default while staying in edit mode", () => {
@@ -250,9 +250,9 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
-    fireEvent.click(screen.getByRole("button", { name: /edit url/i }));
-    fireEvent.click(screen.getByRole("button", { name: /use default/i }));
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: /editar url/i }));
+    fireEvent.click(screen.getByRole("button", { name: /usar predeterminada/i }));
 
     expect(baseUrlInput.value).toBe("https://openrouter.ai/api/v1");
     expect(baseUrlInput.readOnly).toBe(false);
@@ -272,14 +272,14 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    const baseUrlInput = screen.getByLabelText("Base URL") as HTMLInputElement;
-    fireEvent.click(screen.getByRole("button", { name: /edit url/i }));
+    const baseUrlInput = screen.getByLabelText("URL base") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: /editar url/i }));
     fireEvent.change(baseUrlInput, { target: { value: "https://my-gateway.example/v1" } });
-    fireEvent.click(screen.getByRole("button", { name: /^lock$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^bloquear$/i }));
 
     expect(baseUrlInput.value).toBe("https://my-gateway.example/v1");
     expect(baseUrlInput.readOnly).toBe(true);
-    expect(screen.getByText(/custom url/i)).toBeTruthy();
+    expect(screen.getByText(/url personalizada/i)).toBeTruthy();
   });
 
   it("reports a failed probe honestly after a successful save", async () => {
@@ -293,21 +293,21 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
       target: { value: "https://api.example.com/v1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
 
     await waitFor(() =>
       expect(
-        screen.getByText(/saved, but connection failed: 401 unauthorized/i),
+        screen.getByText(/guardado, pero falló la conexión: 401 unauthorized/i),
       ).toBeTruthy(),
     );
     expect(fetchModelsMock).toHaveBeenCalledTimes(1);
     // The unverified save must NOT masquerade as a plain success.
-    expect(screen.queryByText(/^Settings saved$/)).toBeNull();
-    expect(screen.getByRole("alert").textContent).toMatch(/connection failed/i);
+    expect(screen.queryByText(/^Ajustes guardados$/)).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/falló la conexión/i);
   });
 
   it("shows connected when the probe succeeds", async () => {
@@ -321,13 +321,13 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
       target: { value: "https://api.example.com/v1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
 
-    await waitFor(() => expect(screen.getByText(/saved · connected/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/guardado · conectado/i)).toBeTruthy());
     expect(fetchModelsMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -340,14 +340,14 @@ describe("SettingsView", () => {
     mutateAsyncMock.mockRejectedValue(new Error("boom"));
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "custom" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
       target: { value: "https://api.example.com/v1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
 
     await waitFor(() =>
-      expect(screen.getByText(/failed to save settings: boom/i)).toBeTruthy(),
+      expect(screen.getByText(/no se pudieron guardar los ajustes: boom/i)).toBeTruthy(),
     );
     expect(fetchModelsMock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toBeTruthy();
@@ -367,10 +367,10 @@ describe("SettingsView", () => {
     });
     render(<SettingsView />);
 
-    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
 
-    await waitFor(() => expect(screen.getByText(/^Settings saved$/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/^Ajustes guardados$/)).toBeTruthy());
     expect(fetchModelsMock).not.toHaveBeenCalled();
   });
 });

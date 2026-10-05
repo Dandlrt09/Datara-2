@@ -125,7 +125,7 @@ export default function SettingsView() {
   const toggleUrlEdit = () => setUrlUnlocked((v) => !v);
   const useDefault = () => setValue("base_url", presetDefault);
 
-  if (isLoading) return <p>Loading settings...</p>;
+  if (isLoading) return <p>Cargando ajustes...</p>;
 
   // Dropdown options: server whitelist, plus any legacy stored value that
   // predates the whitelist so the current selection is never lost.
@@ -136,7 +136,7 @@ export default function SettingsView() {
 
   return (
     <div style={{ maxWidth: 500 }}>
-      <h1>Settings</h1>
+      <h1>Ajustes</h1>
       <div style={{ marginBottom: 16 }}>
         <a href="/app/setup" style={{ display: "inline-block", padding: "8px 16px", backgroundColor: "#007acc", color: "white", borderRadius: 4, textDecoration: "none" }}>
           Configurar proveedor
@@ -145,10 +145,10 @@ export default function SettingsView() {
       <QueryError error={error as Error | null} onRetry={refetch}>
         <form onSubmit={handleSubmit(onSubmit)}>
           <section style={{ marginBottom: 24 }}>
-            <h2 style={{ fontSize: "1.1em", margin: "0 0 12px" }}>LLM Provider</h2>
+            <h2 style={{ fontSize: "1.1em", margin: "0 0 12px" }}>Proveedor de LLM</h2>
             <div style={{ marginBottom: 16 }}>
               <label htmlFor="provider-type" style={{ display: "block", marginBottom: 4 }}>
-                Provider
+                Proveedor
               </label>
               <select
                 id="provider-type"
@@ -171,7 +171,7 @@ export default function SettingsView() {
             </div>
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <label htmlFor="base-url" style={{ display: "block" }}>Base URL</label>
+                <label htmlFor="base-url" style={{ display: "block" }}>URL base</label>
                 {hasPresetDefault && (
                   <div style={{ display: "flex", gap: 12 }}>
                     {urlUnlocked && urlOverridden && (
@@ -180,7 +180,7 @@ export default function SettingsView() {
                         onClick={useDefault}
                         style={{ background: "none", border: "none", color: "#007acc", cursor: "pointer", fontSize: "0.85em", padding: 0 }}
                       >
-                        Use default
+                        Usar predeterminada
                       </button>
                     )}
                     <button
@@ -188,7 +188,7 @@ export default function SettingsView() {
                       onClick={toggleUrlEdit}
                       style={{ background: "none", border: "none", color: "#007acc", cursor: "pointer", fontSize: "0.85em", padding: 0 }}
                     >
-                      {urlUnlocked ? "Lock" : "Edit URL"}
+                      {urlUnlocked ? "Bloquear" : "Editar URL"}
                     </button>
                   </div>
                 )}
@@ -203,17 +203,17 @@ export default function SettingsView() {
               {hasPresetDefault && !urlUnlocked && (
                 <p style={{ fontSize: "0.85em", color: "#666", margin: "4px 0" }}>
                   {urlOverridden
-                    ? "Custom URL (differs from the provider default)."
-                    : "Provider default URL."}
+                    ? "URL personalizada (distinta de la predeterminada del proveedor)."
+                    : "URL predeterminada del proveedor."}
                 </p>
               )}
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", marginBottom: 4 }}>
-                OpenAI API Key{" "}
+                Clave de API de OpenAI{" "}
                 {settings?.has_api_key && (
                   <span style={{ color: "green", fontSize: "0.85em" }}>
-                    (saved — leave blank to keep)
+                    (guardada — deja en blanco para mantenerla)
                   </span>
                 )}
               </label>
@@ -224,15 +224,15 @@ export default function SettingsView() {
                 style={{ width: "100%", padding: 8 }}
               />
               <p style={{ fontSize: "0.85em", color: "#666", margin: "4px 0" }}>
-                Stored server-side and never sent back to the browser. Falls back
-                to the OPENAI_API_KEY env var when empty.
+                Se guarda en el servidor y nunca se devuelve al navegador. Si se
+                deja vacía, se usa la variable de entorno OPENAI_API_KEY.
               </p>
             </div>
           </section>
           <div style={{ marginBottom: 16 }}>
-            <label htmlFor="default-model" style={{ display: "block", marginBottom: 4 }}>Default Model</label>
+            <label htmlFor="default-model" style={{ display: "block", marginBottom: 4 }}>Modelo predeterminado</label>
             <select id="default-model" {...register("default_model")} style={{ width: "100%", padding: 8 }}>
-              <option value="">Server default (OPENAI_MODEL env)</option>
+              <option value="">Predeterminado del servidor (variable OPENAI_MODEL)</option>
               {modelOptions.map((m) => (
                 <option key={m} value={m}>
                   {m}
@@ -241,19 +241,19 @@ export default function SettingsView() {
             </select>
           </div>
           {saveStatus === "saved" && (
-            <p style={{ color: "green" }}>Settings saved</p>
+            <p style={{ color: "green" }}>Ajustes guardados</p>
           )}
           {saveStatus === "connected" && (
-            <p style={{ color: "green" }}>Saved · Connected</p>
+            <p style={{ color: "green" }}>Guardado · Conectado</p>
           )}
           {saveStatus === "saved-unverified" && (
             <p style={{ color: "red" }} role="alert">
-              Saved, but connection failed: {statusDetail}
+              Guardado, pero falló la conexión: {statusDetail}
             </p>
           )}
           {saveStatus === "save-error" && (
             <p style={{ color: "red" }} role="alert">
-              Failed to save settings: {statusDetail}
+              No se pudieron guardar los ajustes: {statusDetail}
             </p>
           )}
           <button
@@ -261,7 +261,7 @@ export default function SettingsView() {
             disabled={saveStatus === "saving" || saveStatus === "checking"}
             style={{ padding: "8px 16px" }}
           >
-            {saveStatus === "saving" ? "Saving..." : saveStatus === "checking" ? "Checking..." : "Save"}
+            {saveStatus === "saving" ? "Guardando..." : saveStatus === "checking" ? "Comprobando..." : "Guardar"}
           </button>
         </form>
       </QueryError>
