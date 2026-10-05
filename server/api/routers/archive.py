@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -295,19 +295,65 @@ async def create_archive(
 @router.get("", response_model=list[ArchiveListItem])
 async def list_archives(
     limit: int = Query(50, ge=1, le=200),
-    before: int | None = Query(None, alias="before"),
+    before: int | None = Query(None),
+    after: int | None = Query(None),
+    q: str | None = Query(None, max_length=200),
+    order: Literal["newest", "oldest"] = Query("newest"),
     store: SqliteStore = Depends(get_store),
     user: dict = Depends(current_user),
 ):
-    """List archives for the current user, newest first.
+    """List archives for the current user, with search and order.
 
-    Cursor-based pagination mirroring the chat-history/files keyset
-    contract: ``before=<id>`` returns older archives (``id < before``),
-    newest-first (``created_at DESC, id DESC``), at most ``limit`` rows.
-    The response stays a bare list; the client infers ``hasMore`` from
-    ``len === limit``.
+    Cursor-based pagination mirroring the chat-history/files keyset contract:
+
+    - ``order="newest"`` (default): ``before=<id>`` returns older archives
+      (``id < before``), newest-first.
+    - ``order="oldest"``: ``after=<id>`` returns newer archives
+      (``id > after``), oldest-first.
+
+    ``q`` is a case- and accent-insensitive name substring; blank queries are
+    ignored. The cursor/order combination is validated (422 ``invalid_cursor``)
+    so ``before`` is only valid for newest-first and ``after`` only for
+    oldest-first. The response stays a bare list; the client infers ``hasMore``
+    from ``len === limit``.
     """
-    archives = await store.list_archives(user["id"], limit=limit, before_id=before)
+    if before is not None and after is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_cursor",
+                "message": "No se pueden usar los cursores 'before' y 'after' a la vez.",
+            },
+        )
+    if before is not None and order == "oldest":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_cursor",
+                "message": "El cursor 'before' solo es válido con el orden más reciente.",
+            },
+        )
+    if after is not None and order == "newest":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_cursor",
+                "message": "El cursor 'after' solo es válido con el orden más antiguo.",
+            },
+        )
+
+    query_text = q.strip() if q is not None else None
+    if not query_text:
+        query_text = None
+
+    archives = await store.list_archives(
+        user["id"],
+        limit=limit,
+        before_id=before,
+        after_id=after,
+        query=query_text,
+        newest_first=(order == "newest"),
+    )
     items: list[ArchiveListItem] = []
     for a in archives:
         # Derive card metadata from the snapshot, then DISCARD the payload —

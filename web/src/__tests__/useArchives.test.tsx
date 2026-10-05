@@ -39,7 +39,7 @@ describe("useArchives keyset pagination", () => {
     vi.clearAllMocks();
   });
 
-  it("fetches the first page at ARCHIVES_PAGE_SIZE without a cursor", async () => {
+  it("fetches the first page at ARCHIVES_PAGE_SIZE with the default order", async () => {
     const firstPage = Array.from({ length: ARCHIVES_PAGE_SIZE }, (_, i) =>
       archiveOf(ARCHIVES_PAGE_SIZE * 2 - i),
     );
@@ -53,7 +53,7 @@ describe("useArchives keyset pagination", () => {
     );
 
     expect(apiGetMock.mock.calls[0][0]).toBe(
-      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}`,
+      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=newest`,
     );
     // A full page means a next page may exist.
     expect(result.current.hasNextPage).toBe(true);
@@ -81,7 +81,7 @@ describe("useArchives keyset pagination", () => {
 
     const lastOnFirstPage = firstPage[firstPage.length - 1].id;
     expect(apiGetMock.mock.calls[1][0]).toBe(
-      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&before=${lastOnFirstPage}`,
+      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=newest&before=${lastOnFirstPage}`,
     );
     await waitFor(() => expect(result.current.data?.pages.length).toBe(2));
   });
@@ -95,5 +95,58 @@ describe("useArchives keyset pagination", () => {
     await waitFor(() => expect(result.current.data?.pages[0].length).toBe(2));
 
     expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it("sends q and order and encodes the search term", async () => {
+    apiGetMock.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(
+      () => useArchives({ q: "región", order: "oldest" }),
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(apiGetMock.mock.calls[0][0]).toBe(
+      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=oldest&q=${encodeURIComponent("región")}`,
+    );
+  });
+
+  it("omits q when it is empty", async () => {
+    apiGetMock.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() => useArchives({ q: "" }), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(apiGetMock.mock.calls[0][0]).toBe(
+      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=newest`,
+    );
+  });
+
+  it("pages oldest-first with the after cursor", async () => {
+    const firstPage = Array.from({ length: ARCHIVES_PAGE_SIZE }, (_, i) =>
+      archiveOf(i + 1),
+    );
+    const secondPage = [archiveOf(ARCHIVES_PAGE_SIZE + 1)];
+    apiGetMock
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(secondPage);
+
+    const { result } = renderHook(() => useArchives({ order: "oldest" }), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() =>
+      expect(result.current.data?.pages[0].length).toBe(ARCHIVES_PAGE_SIZE),
+    );
+
+    await act(async () => {
+      await result.current.fetchNextPage();
+    });
+
+    const lastOnFirstPage = firstPage[firstPage.length - 1].id;
+    expect(apiGetMock.mock.calls[1][0]).toBe(
+      `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=oldest&after=${lastOnFirstPage}`,
+    );
   });
 });

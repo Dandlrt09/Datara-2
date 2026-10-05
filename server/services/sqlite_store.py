@@ -23,6 +23,31 @@ logger = logging.getLogger(__name__)
 
 DATARA_DB_PATH = resolve_db_path()
 
+# ── Accent folding ───────────────────────────────────────────────────────────
+# SQLite's ``lower()`` is ASCII-only and SQLite has no ``unaccent``; migrations
+# here are ``.sql``-only, so an accent-folded column cannot be backfilled in
+# SQL. Archive name search instead calls this Python UDF, which preserves the
+# previous client-side behavior ("REGION" matches "región").
+_ACCENT_FOLD_TABLE = str.maketrans(
+    {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n",
+        "Á": "a", "É": "e", "Í": "i", "Ó": "o", "Ú": "u", "Ü": "u", "Ñ": "n",
+    }
+)
+
+
+def _unaccent(value: Any) -> Any:
+    """Lowercase plus strip Spanish diacritics; other characters unchanged.
+
+    Registered as the deterministic SQLite UDF ``unaccent`` in ``connect()``.
+    ``None`` passes through so scanning a NULL name never raises.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    return value.translate(_ACCENT_FOLD_TABLE).lower()
+
 
 class SqliteStore:
     """Async SQLite store wrapping aiosqlite.
@@ -50,6 +75,11 @@ class SqliteStore:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
+        # Accent folding for archive name search (see `_unaccent`). The SQLite
+        # build has no `unaccent`, so the fold is a Python UDF.
+        await self._conn.create_function(
+            "unaccent", 1, _unaccent, deterministic=True
+        )
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -511,26 +541,48 @@ class SqliteStore:
         *,
         limit: int | None = None,
         before_id: int | None = None,
+        after_id: int | None = None,
+        query: str | None = None,
+        newest_first: bool = True,
     ) -> list[dict[str, Any]]:
-        """List archives for a user, newest first.
+        """List archives for a user, with optional search and ordering.
 
-        ``limit``/``before_id`` are the keyset-pagination knobs and are
-        keyword-only. Both default to ``None`` = unlimited, so callers that
-        need the FULL list keep today's behavior; only the API route bounds
-        the query. ``before_id`` returns archives with ``id < before_id`` (the
-        oldest id of the previous page) and ordering is
-        ``created_at DESC, id DESC`` so the id tiebreaker keeps rows
-        deterministic across pages (and under equal ``created_at``).
+        ``limit``/``before_id``/``after_id`` are the keyset-pagination knobs and
+        are keyword-only. All default to ``None``, so callers that need the FULL
+        list keep today's behavior; only the API route bounds the query.
+
+        - ``newest_first=True`` (default): ``ORDER BY created_at DESC, id DESC``
+          and ``before_id`` returns archives with ``id < before_id`` (the oldest
+          id of the previous page).
+        - ``newest_first=False``: ``ORDER BY created_at ASC, id ASC`` and
+          ``after_id`` returns archives with ``id > after_id`` (the newest id of
+          the previous page).
+
+        ``query`` filters by literal, case- and accent-insensitive substring on
+        the name. It is folded here with the same ``unaccent`` UDF logic and
+        bound to ``instr(unaccent(name), ?) > 0`` — ``instr`` (not ``LIKE``)
+        means ``%``/``_`` in the query need no escaping.
         """
         sql = (
             "SELECT id, user_id, name, chat_session, payload_json, created_at "
             "FROM archives WHERE user_id = ?"
         )
         params: list[Any] = [user_id]
-        if before_id is not None:
-            sql += " AND id < ?"
-            params.append(before_id)
-        sql += " ORDER BY created_at DESC, id DESC"
+        if query:
+            sql += " AND instr(unaccent(name), ?) > 0"
+            params.append(_unaccent(query))
+        order = (
+            "created_at DESC, id DESC" if newest_first
+            else "created_at ASC, id ASC"
+        )
+        if newest_first:
+            if before_id is not None:
+                sql += " AND id < ?"
+                params.append(before_id)
+        elif after_id is not None:
+            sql += " AND id > ?"
+            params.append(after_id)
+        sql += f" ORDER BY {order}"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)

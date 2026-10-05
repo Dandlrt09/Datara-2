@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   useArchives,
@@ -20,14 +20,6 @@ import {
   archiveMarkdownFilename,
   downloadTextFile,
 } from "../lib/archiveMarkdown";
-
-/** Case- and accent-insensitive key for the client-side name search. */
-function normalizeForSearch(text: string): string {
-  return text
-    .toLocaleLowerCase("es")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
-}
 
 /** Extract a human-readable message from an ApiError-shaped failure, mirroring
  * the file-rename precedent. Falls back to a neutral Spanish message. */
@@ -99,6 +91,15 @@ const exportErrorCopy = "No se pudo exportar el análisis";
 
 export default function ArchiveList() {
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [newestFirst, setNewestFirst] = useState(true);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [archiveToDelete, setArchiveToDelete] = useState<Archive | null>(null);
+
+  const deleteArchive = useDeleteArchive();
+
+  const order = newestFirst ? "newest" : "oldest";
   const {
     data,
     isLoading,
@@ -107,13 +108,17 @@ export default function ArchiveList() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useArchives();
-  const [search, setSearch] = useState("");
-  const [newestFirst, setNewestFirst] = useState(true);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [archiveToDelete, setArchiveToDelete] = useState<Archive | null>(null);
+  } = useArchives({ q: debouncedSearch, order });
 
-  const deleteArchive = useDeleteArchive();
+  // Debounce the search so each keystroke does not fire a server query. The
+  // trimmed value feeds the query key and the order toggle resets to page 1.
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedSearch(search.trim()),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const archives = useMemo(() => data?.pages.flat() ?? [], [data]);
 
@@ -125,31 +130,8 @@ export default function ArchiveList() {
     refetch: refetchDetail,
   } = useArchiveDetail(expandedId);
 
-  const visibleArchives = useMemo(() => {
-    const list = archives;
-    const query = normalizeForSearch(search.trim());
-    const filtered = query
-      ? list.filter((a) => normalizeForSearch(a.name).includes(query))
-      : list;
-    // The endpoint already returns DESC; sorting here keeps the order control
-    // honest and deterministic for both directions. Entries without a valid
-    // created_at always sort last, regardless of direction.
-    const timeOf = (a: Archive): number | null => {
-      if (!a.created_at) return null;
-      const t = Date.parse(a.created_at);
-      return Number.isNaN(t) ? null : t;
-    };
-    return [...filtered].sort((a, b) => {
-      const ta = timeOf(a);
-      const tb = timeOf(b);
-      if (ta === null && tb === null) return 0;
-      if (ta === null) return 1;
-      if (tb === null) return -1;
-      return newestFirst ? tb - ta : ta - tb;
-    });
-  }, [archives, search, newestFirst]);
-
   const hasArchives = archives.length > 0;
+  const hasQuery = debouncedSearch.length > 0;
 
   const handleReopen = (archive: Archive) => {
     if (archive.chat_session) {
@@ -232,7 +214,7 @@ export default function ArchiveList() {
         </p>
       )}
 
-      {!error && !isLoading && archives.length === 0 && (
+      {!error && !isLoading && archives.length === 0 && !hasQuery && (
         <div
           style={{
             padding: 24,
@@ -248,27 +230,13 @@ export default function ArchiveList() {
         </div>
       )}
 
-      {hasArchives && visibleArchives.length === 0 && (
+      {!error && !isLoading && archives.length === 0 && hasQuery && (
         <p style={{ color: colors.textMuted }}>No se encontraron análisis</p>
-      )}
-
-      {hasArchives && hasNextPage && search.trim().length > 0 && (
-        <p style={{ margin: "0 0 12px", fontSize: 12, color: colors.textMuted }}>
-          La búsqueda solo cubre los análisis cargados. Usa «Cargar más» para
-          ampliar la lista.
-        </p>
-      )}
-
-      {hasArchives && hasNextPage && !newestFirst && (
-        <p style={{ margin: "0 0 12px", fontSize: 12, color: colors.textMuted }}>
-          «Más antiguos» solo ordena los análisis cargados. Usa «Cargar más»
-          para ampliar la lista.
-        </p>
       )}
 
       {hasArchives && (
         <div>
-          {visibleArchives.map((a) => {
+          {archives.map((a) => {
             const isExpanded = expandedId === a.id;
             return (
               <ArchiveCard

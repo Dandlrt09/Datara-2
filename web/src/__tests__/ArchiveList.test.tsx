@@ -23,7 +23,7 @@ const {
 }));
 
 vi.mock("../queries/useArchives", () => ({
-  useArchives: () => useArchivesMock(),
+  useArchives: (...args: unknown[]) => useArchivesMock(...args),
   useArchiveDetail: (id: number | null) => useArchiveDetailMock(id),
   useDeleteArchive: () => useDeleteArchiveMock(),
   useRenameArchive: () => useRenameArchiveMock(),
@@ -165,7 +165,7 @@ describe("ArchiveList", () => {
     expect(screen.getByText("+2")).toBeTruthy();
   });
 
-  it("filters by name case- and accent-insensitively", () => {
+  it("sends the search term to the server instead of filtering loaded pages", async () => {
     mockList([
       makeArchive({ id: 1, name: "Margen por región" }),
       makeArchive({ id: 2, name: "Clientes sin compra" }),
@@ -176,73 +176,56 @@ describe("ArchiveList", () => {
       target: { value: "REGION" },
     });
 
+    await waitFor(() =>
+      expect(useArchivesMock).toHaveBeenLastCalledWith({
+        q: "REGION",
+        order: "newest",
+      }),
+    );
+    // No in-memory filter: both rows stay visible until the server returns the
+    // filtered page.
     expect(screen.getByText("Margen por región")).toBeTruthy();
-    expect(screen.queryByText("Clientes sin compra")).toBeNull();
+    expect(screen.getByText("Clientes sin compra")).toBeTruthy();
   });
 
-  it("shows a no-results message when the search matches nothing", () => {
-    mockList([makeArchive({ name: "Margen por región" })]);
+  it("shows a no-results message when a server-backed search returns nothing", async () => {
+    mockList([]);
     renderWithProviders(<ArchiveList />);
 
     fireEvent.change(screen.getByLabelText("Buscar análisis"), {
       target: { value: "zzz" },
     });
 
-    expect(screen.getByText("No se encontraron análisis")).toBeTruthy();
-    expect(screen.queryByText("Margen por región")).toBeNull();
+    expect(await screen.findByText("No se encontraron análisis")).toBeTruthy();
   });
 
-  it("toggles the order between newest and oldest", () => {
-    mockList([
-      makeArchive({ id: 1, name: "Viejo", created_at: "2026-01-01 10:00:00" }),
-      makeArchive({ id: 2, name: "Nuevo", created_at: "2026-06-01 10:00:00" }),
-    ]);
+  it("toggles the order by sending the order param", async () => {
+    mockList([makeArchive({ id: 1, name: "Único" })]);
     renderWithProviders(<ArchiveList />);
 
-    const headings = () =>
-      screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(useArchivesMock).toHaveBeenLastCalledWith({
+      q: "",
+      order: "newest",
+    });
 
-    expect(headings()).toEqual(["Nuevo", "Viejo"]);
     fireEvent.click(screen.getByText("Más recientes"));
+
     expect(screen.getByText("Más antiguos")).toBeTruthy();
-    expect(headings()).toEqual(["Viejo", "Nuevo"]);
+    await waitFor(() =>
+      expect(useArchivesMock).toHaveBeenLastCalledWith({
+        q: "",
+        order: "oldest",
+      }),
+    );
   });
 
-  it("renders em dash and sorts a null created_at last in both orders", () => {
-    mockList([
-      makeArchive({
-        id: 1,
-        name: "Con fecha vieja",
-        created_at: "2026-01-01T10:00:00.000Z",
-        chat_session: null,
-      }),
-      makeArchive({ id: 2, name: "Sin fecha", created_at: null }),
-      makeArchive({
-        id: 3,
-        name: "Con fecha nueva",
-        created_at: "2026-06-01T10:00:00.000Z",
-      }),
-    ]);
+  it("renders an em dash for a null created_at", () => {
+    mockList([makeArchive({ id: 1, name: "Sin fecha", created_at: null })]);
     renderWithProviders(<ArchiveList />);
 
-    const headings = () =>
-      screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-
-    expect(headings()).toEqual([
-      "Con fecha nueva",
-      "Con fecha vieja",
-      "Sin fecha",
-    ]);
-    expect(screen.getByText("—")).toBeTruthy();
-
-    fireEvent.click(screen.getByText("Más recientes"));
-    expect(screen.getByText("Más antiguos")).toBeTruthy();
-
-    expect(headings()).toEqual([
-      "Con fecha vieja",
-      "Con fecha nueva",
-      "Sin fecha",
-    ]);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Sin fecha" }),
+    ).toBeTruthy();
     expect(screen.getByText("—")).toBeTruthy();
   });
 
@@ -409,7 +392,7 @@ describe("ArchiveList", () => {
     );
   });
 
-  it("notes that «Más antiguos» only sorts the loaded pages while more remain", () => {
+  it("no longer shows the removed partial-coverage notices", async () => {
     useArchivesMock.mockReturnValue({
       data: { pages: [[makeArchive()]] },
       isLoading: false,
@@ -421,12 +404,23 @@ describe("ArchiveList", () => {
     });
     renderWithProviders(<ArchiveList />);
 
+    fireEvent.change(screen.getByLabelText("Buscar análisis"), {
+      target: { value: "margen" },
+    });
     fireEvent.click(screen.getByText("Más recientes"));
 
+    expect(screen.getByText("Más antiguos")).toBeTruthy();
+    await waitFor(() =>
+      expect(useArchivesMock).toHaveBeenLastCalledWith({
+        q: "margen",
+        order: "oldest",
+      }),
+    );
     expect(
-      screen.getByText(
-        "«Más antiguos» solo ordena los análisis cargados. Usa «Cargar más» para ampliar la lista.",
-      ),
-    ).toBeTruthy();
+      screen.queryByText(/solo cubre los análisis cargados/),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/solo ordena los análisis cargados/),
+    ).toBeNull();
   });
 });

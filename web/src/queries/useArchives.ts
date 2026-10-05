@@ -35,16 +35,35 @@ export interface ArchiveDetail
  * client infers `hasMore` from `len === limit`. */
 export const ARCHIVES_PAGE_SIZE = 50;
 
-/** Archives list, accumulated across keyset pages (newest first). Consumers
- * flatten `data.pages`; `hasNextPage` / `fetchNextPage` drive «Cargar más». */
-export function useArchives() {
+export type ArchivesOrder = "newest" | "oldest";
+
+export interface UseArchivesParams {
+  /** Case- and accent-insensitive name substring; empty means no filter. */
+  q?: string;
+  order?: ArchivesOrder;
+}
+
+/** Archives list, accumulated across keyset pages. Consumers flatten
+ * `data.pages`; `hasNextPage` / `fetchNextPage` drive «Cargar más».
+ *
+ * Search and order are resolved server-side: they are part of the query key,
+ * so changing either starts a fresh first page. The cursor is `before` for
+ * newest-first and `after` for oldest-first. */
+export function useArchives({
+  q = "",
+  order = "newest",
+}: UseArchivesParams = {}) {
   return useInfiniteQuery({
-    queryKey: ["archives", "list"],
-    queryFn: ({ pageParam }) =>
-      api.get<Archive[]>(
-        `/api/archives?limit=${ARCHIVES_PAGE_SIZE}` +
-          (pageParam != null ? `&before=${pageParam}` : ""),
-      ),
+    queryKey: ["archives", "list", q, order],
+    queryFn: ({ pageParam }) => {
+      let url = `/api/archives?limit=${ARCHIVES_PAGE_SIZE}&order=${order}`;
+      if (q) url += `&q=${encodeURIComponent(q)}`;
+      if (pageParam != null) {
+        const cursor = order === "newest" ? "before" : "after";
+        url += `&${cursor}=${pageParam}`;
+      }
+      return api.get<Archive[]>(url);
+    },
     initialPageParam: null as number | null,
     getNextPageParam: (lastPage) =>
       lastPage.length === ARCHIVES_PAGE_SIZE

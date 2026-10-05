@@ -888,3 +888,190 @@ class TestArchivePagination:
         assert client.get(
             "/api/archives?limit=200", headers={"Cookie": auth_cookie}
         ).status_code == 200
+
+
+class TestArchiveSearchOrder:
+    @staticmethod
+    def _seed(store, email, session_id, names):
+        """Seed archives for ``email`` with ascending, distinct created_at.
+
+        Returns the inserted ids in creation order.
+        """
+        import asyncio
+
+        ids: list[int] = []
+
+        async def _run():
+            user = await store.get_user_by_email(email)
+            for i, name in enumerate(names):
+                cursor = await store.conn.execute(
+                    "INSERT INTO archives "
+                    "(user_id, name, chat_session, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        user["id"],
+                        name,
+                        session_id,
+                        "{}",
+                        f"2026-03-0{i + 1} 00:00:00",
+                    ),
+                )
+                ids.append(cursor.lastrowid)
+            await store.conn.commit()
+
+        asyncio.run(_run())
+        return ids
+
+    @pytest.mark.parametrize("term", ["REGION", "region", "región", "RegiÓn"])
+    def test_search_is_case_and_accent_insensitive(
+        self, client, auth_cookie, session_id, store, term
+    ):
+        """The name search folds case and Spanish diacritics (all four match)."""
+        self._seed(
+            store,
+            "archive@example.com",
+            session_id,
+            ["Margen por región", "Clientes sin compra"],
+        )
+
+        resp = client.get(
+            "/api/archives", params={"q": term}, headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 200
+        assert [i["name"] for i in resp.json()] == ["Margen por región"]
+
+    def test_search_matches_literal_special_characters(
+        self, client, auth_cookie, session_id, store
+    ):
+        """`insert` search is literal: `%` is a character, not a wildcard."""
+        self._seed(
+            store, "archive@example.com", session_id, ["cien% real", "cienX real"]
+        )
+
+        items = client.get(
+            "/api/archives", params={"q": "%"}, headers={"Cookie": auth_cookie}
+        ).json()
+        assert [i["name"] for i in items] == ["cien% real"]
+
+    def test_blank_q_is_ignored(self, client, auth_cookie, session_id, store):
+        """A whitespace-only q returns the full list."""
+        self._seed(store, "archive@example.com", session_id, ["Uno", "Dos"])
+
+        resp = client.get(
+            "/api/archives", params={"q": "   "}, headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == 2
+
+    def test_search_is_user_scoped(
+        self, client, auth_cookie, other_cookie, session_id, store
+    ):
+        """A search never leaks another user's archives."""
+        self._seed(store, "archive@example.com", session_id, ["Margen visible"])
+        self._seed(store, "other@archive.com", session_id, ["Margen ajeno"])
+
+        resp = client.get(
+            "/api/archives", params={"q": "margen"}, headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 200
+        assert [i["name"] for i in resp.json()] == ["Margen visible"]
+
+    def test_search_composes_with_newest_keyset(
+        self, client, auth_cookie, session_id, store
+    ):
+        """q narrows the set and still pages newest-first with `before`."""
+        self._seed(
+            store,
+            "archive@example.com",
+            session_id,
+            ["dato uno", "dato dos", "dato tres", "otro"],
+        )
+
+        first = client.get(
+            "/api/archives",
+            params={"q": "dato", "limit": 2},
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["name"] for i in first] == ["dato tres", "dato dos"]
+
+        nxt = client.get(
+            "/api/archives",
+            params={"q": "dato", "limit": 2, "before": first[-1]["id"]},
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["name"] for i in nxt] == ["dato uno"]
+
+    def test_search_composes_with_oldest_keyset(
+        self, client, auth_cookie, session_id, store
+    ):
+        """q narrows the set and still pages oldest-first with `after`."""
+        self._seed(
+            store,
+            "archive@example.com",
+            session_id,
+            ["dato uno", "dato dos", "dato tres", "otro"],
+        )
+
+        first = client.get(
+            "/api/archives",
+            params={"q": "dato", "order": "oldest", "limit": 2},
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["name"] for i in first] == ["dato uno", "dato dos"]
+
+        nxt = client.get(
+            "/api/archives",
+            params={
+                "q": "dato",
+                "order": "oldest",
+                "limit": 2,
+                "after": first[-1]["id"],
+            },
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["name"] for i in nxt] == ["dato tres"]
+
+    def test_order_oldest_pages_with_after(
+        self, client, auth_cookie, session_id, store
+    ):
+        """order=oldest returns ascending rows and `after` pages forward."""
+        ids = self._seed(store, "archive@example.com", session_id, ["a", "b", "c"])
+
+        first = client.get(
+            "/api/archives",
+            params={"order": "oldest", "limit": 2},
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["id"] for i in first] == [ids[0], ids[1]]
+
+        nxt = client.get(
+            "/api/archives",
+            params={"order": "oldest", "limit": 2, "after": ids[1]},
+            headers={"Cookie": auth_cookie},
+        ).json()
+        assert [i["id"] for i in nxt] == [ids[2]]
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"before": 1, "after": 2},
+            {"before": 1, "order": "oldest"},
+            {"after": 1, "order": "newest"},
+        ],
+    )
+    def test_invalid_cursor_combinations(self, client, auth_cookie, params):
+        """Mismatched cursor/order pairs → 422 invalid_cursor."""
+        resp = client.get(
+            "/api/archives", params=params, headers={"Cookie": auth_cookie}
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_cursor"
+
+    def test_q_over_max_length_is_rejected(self, client, auth_cookie):
+        """q above the 200-char bound → 422."""
+        resp = client.get(
+            "/api/archives",
+            params={"q": "x" * 201},
+            headers={"Cookie": auth_cookie},
+        )
+        assert resp.status_code == 422
