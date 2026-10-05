@@ -22,9 +22,12 @@ router = APIRouter(prefix="/api/archives", tags=["archives"])
 
 # Validation bounds (mirror SESSION_TITLE_MAX_LENGTH in sessions.py).
 ARCHIVE_NAME_MAX_LENGTH = 200
-# Sanity ceiling for the serialized snapshot payload (8 MiB). Not truncation:
+# Sanity ceiling for the serialized snapshot payload (32 MiB). Not truncation:
 # an oversized snapshot is rejected, never silently cut.
-ARCHIVE_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
+ARCHIVE_PAYLOAD_MAX_BYTES = 32 * 1024 * 1024
+# Human-readable label for the same ceiling. Kept as its own constant so the
+# 413 copy stays correct even when tests monkeypatch the byte cap above.
+_ARCHIVE_PAYLOAD_MAX_MB = ARCHIVE_PAYLOAD_MAX_BYTES // (1024 * 1024)
 
 
 # ── Schemas ─────────────────────────────────────────────────────────────────
@@ -268,7 +271,7 @@ async def create_archive(
                 "code": "payload_too_large",
                 "message": (
                     "El análisis supera el tamaño máximo permitido "
-                    f"({ARCHIVE_PAYLOAD_MAX_BYTES} bytes)."
+                    f"({_ARCHIVE_PAYLOAD_MAX_MB} MB). No se guardó."
                 ),
             },
         )

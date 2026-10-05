@@ -25,7 +25,7 @@ import { SaveAnalysisDialog } from "../components/SaveAnalysisDialog";
 function resolveSaveAnalysisError(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.status === 413) {
-      return "El análisis supera el tamaño máximo permitido.";
+      return "El análisis supera el tamaño máximo permitido (32 MB).";
     }
     if (e.status === 422) {
       const detail = (e.body as { detail?: { message?: string } } | null)?.detail;

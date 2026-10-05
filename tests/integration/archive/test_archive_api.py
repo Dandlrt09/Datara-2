@@ -184,7 +184,11 @@ class TestArchiveCreate:
         assert resp.json()["name"] == "Trimmed"
 
     def test_create_archive_payload_too_large(self, client, auth_cookie, session_id, monkeypatch):
-        """Serialized payload above ARCHIVE_PAYLOAD_MAX_BYTES → 413."""
+        """Serialized payload above ARCHIVE_PAYLOAD_MAX_BYTES → 413.
+
+        The detail keeps the stable ``payload_too_large`` code and carries the
+        human-readable 32 MB copy (never the raw byte count).
+        """
         monkeypatch.setattr(archive_router, "ARCHIVE_PAYLOAD_MAX_BYTES", 1)
         resp = client.post(
             "/api/archives",
@@ -192,6 +196,15 @@ class TestArchiveCreate:
             headers={"Cookie": auth_cookie},
         )
         assert resp.status_code == 413
+        detail = resp.json()["detail"]
+        assert detail["code"] == "payload_too_large"
+        assert detail["message"] == (
+            "El análisis supera el tamaño máximo permitido (32 MB). No se guardó."
+        )
+
+    def test_payload_cap_is_32_mib(self):
+        """The configured ceiling is exactly 32 MiB."""
+        assert archive_router.ARCHIVE_PAYLOAD_MAX_BYTES == 32 * 1024 * 1024
 
     def test_snapshot_is_ascending_and_complete(self, client, auth_cookie, session_id, store):
         """Snapshot keeps every message in chronological order (no 500 cap)."""

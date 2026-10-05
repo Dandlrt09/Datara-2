@@ -1459,7 +1459,9 @@ describe("ChatView component", () => {
       new ApiError(413, { detail: { message: "payload too large" } }),
     );
     expect(
-      await screen.findByText("El análisis supera el tamaño máximo permitido."),
+      await screen.findByText(
+        "El análisis supera el tamaño máximo permitido (32 MB).",
+      ),
     ).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
