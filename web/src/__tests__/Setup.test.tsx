@@ -100,6 +100,35 @@ async function fillFreeTextModel(value: string) {
   fireEvent.change(input, { target: { value } });
 }
 
+async function reachGroqModelStep() {
+  selectPreset("Groq (clave de API requerida)");
+  clickNext();
+  const keyInput = await screen.findByPlaceholderText("sk-...");
+  fireEvent.change(keyInput, { target: { value: "gsk-test" } });
+  clickNext();
+  await screen.findByText("Modelo predeterminado");
+}
+
+async function reachOllamaModelStep() {
+  selectPreset("Ollama");
+  clickNext();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
+  );
+  clickNext();
+  await screen.findByText("Modelo predeterminado");
+}
+
+async function reachCustomModelStep() {
+  selectPreset("Custom (clave de API requerida)");
+  clickNext();
+  const urlInput = await screen.findByPlaceholderText("https://...");
+  fireEvent.change(urlInput, { target: { value: "https://api.example.com/v1" } });
+  fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-test" } });
+  clickNext();
+  await screen.findByText("Modelo predeterminado");
+}
+
 describe("Setup", () => {
   beforeEach(() => {
     setupMocks();
@@ -484,5 +513,86 @@ describe("Setup", () => {
     await waitFor(() =>
       expect(mutateMock).toHaveBeenCalledWith({ default_model: "llama3.2:latest" })
     );
+  });
+
+  it("shows the selected provider's recommended models (Groq) with real prices", async () => {
+    renderWizard();
+
+    await reachGroqModelStep();
+
+    expect(await screen.findByText("Modelos recomendados")).toBeTruthy();
+    expect(screen.getByText("GPT-OSS 120B")).toBeTruthy();
+    expect(screen.getByText("GPT-OSS 20B")).toBeTruthy();
+    expect(screen.getByText("Qwen 3.8 27B (preview)")).toBeTruthy();
+    expect(screen.getByText("Entrada $0.15 / Salida $0.60 por 1M tokens")).toBeTruthy();
+    expect(screen.getByText("(Recomendado)")).toBeTruthy();
+
+    const link = screen.getByRole("link", { name: /obtener una clave de api en groq/i });
+    expect(link.getAttribute("href")).toBe("https://console.groq.com/keys");
+  });
+
+  it("submits a recommended Groq model directly", async () => {
+    renderWizard();
+
+    await reachGroqModelStep();
+    fireEvent.click(await screen.findByText("GPT-OSS 120B"));
+    clickNext();
+
+    await waitFor(() =>
+      expect(mutateMock).toHaveBeenCalledWith({ default_model: "openai/gpt-oss-120b" })
+    );
+  });
+
+  it("re-runs the model fetch from the Reintentar button in the model step", async () => {
+    renderWizard();
+
+    await reachModelStep();
+
+    fetchModelsMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.RETRY }));
+
+    await waitFor(() => expect(fetchModelsMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("uses the Groq placeholder in the fallback model entry", async () => {
+    mockModelsState([], { code: "timeout", message: "timed out" });
+    renderWizard();
+
+    await reachGroqModelStep();
+
+    expect(await screen.findByPlaceholderText("openai/gpt-oss-120b")).toBeTruthy();
+  });
+
+  it("uses the Ollama placeholder and local-server hint when the fetch fails", async () => {
+    mockModelsState([], { code: "timeout", message: "timed out" });
+    renderWizard();
+
+    await reachOllamaModelStep();
+
+    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
+    expect(screen.getByText(COPY.MODEL_LOCAL_SERVER_HINT("Ollama"))).toBeTruthy();
+    expect(screen.getByPlaceholderText("llama3.2, qwen2.5, etc.")).toBeTruthy();
+  });
+
+  it("uses the generic placeholder for custom", async () => {
+    renderWizard();
+
+    await reachCustomModelStep();
+
+    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
+  });
+
+  it("shows a single required message in the fallback state (orange+red dedupe)", async () => {
+    mockModelsState([], { code: "timeout", message: "timed out" });
+    renderWizard();
+
+    await reachModelStep();
+    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
+
+    clickNext();
+
+    expect(await screen.findByText(COPY.MODEL_REQUIRED)).toBeTruthy();
+    // The orange hint is replaced by the single red validation error.
+    expect(screen.queryByText(COPY.MODEL_LIST_FALLBACK)).toBeNull();
   });
 });

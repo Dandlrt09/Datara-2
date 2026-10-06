@@ -7,9 +7,8 @@ import { useFetchModels } from "./setup/useFetchModels";
 import ProviderGuide from "./settings/ProviderGuide";
 import { isModelRestricted } from "./settings/modelGate";
 import {
-  FREE_MODELS,
-  OPENROUTER_SETUP_URL,
-  PAID_MODELS,
+  catalogFor,
+  modelsForProvider,
   priceLabel,
   type RecommendedModel,
 } from "./settings/recommended";
@@ -93,6 +92,10 @@ export default function SettingsView() {
   const providerType = watch("provider_type");
   const baseUrlValue = watch("base_url");
   const preset = PRESETS.find((p) => p.id === providerType);
+  // Curated catalog for the selected provider only (B2): OpenRouter and Groq
+  // have one, local/custom providers have none.
+  const catalogModels = modelsForProvider(providerType);
+  const catalog = catalogFor(providerType);
   const presetDefault = preset?.defaultBaseUrl ?? "";
   const hasPresetDefault = presetDefault !== "";
   const urlEditable = !hasPresetDefault || urlUnlocked;
@@ -184,26 +187,38 @@ export default function SettingsView() {
           Configurar proveedor
         </a>
       </div>
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: "1.1em", margin: "0 0 12px" }}>Modelos recomendados</h2>
-        <p style={{ fontSize: "0.9em", color: "#666", marginTop: 0 }}>
-          Opciones pensadas para análisis de datos. Puedes usar un modelo gratuito o
-          cargar créditos para los de pago.
-        </p>
-        <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>De pago</h3>
-        <RecommendedList models={PAID_MODELS} tierLabel="De pago" />
-        <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>Gratis</h3>
-        <RecommendedList models={FREE_MODELS} tierLabel="Gratis" />
-        <a
-          href={OPENROUTER_SETUP_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ fontSize: "0.9em" }}
-        >
-          Obtener una clave de API en OpenRouter
-        </a>
-      </section>
-      <ProviderGuide guideId="openrouter" />
+      {catalogModels.length > 0 && (
+        <section style={{ marginBottom: 24 }}>
+          <h2 style={{ fontSize: "1.1em", margin: "0 0 12px" }}>Modelos recomendados</h2>
+          <p style={{ fontSize: "0.9em", color: "#666", marginTop: 0 }}>
+            Opciones pensadas para análisis de datos. Puedes usar un modelo gratuito o
+            cargar créditos para los de pago.
+          </p>
+          {catalog.paid.length > 0 && (
+            <>
+              <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>De pago</h3>
+              <RecommendedList models={catalog.paid} tierLabel="De pago" />
+            </>
+          )}
+          {catalog.free.length > 0 && (
+            <>
+              <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>Gratis</h3>
+              <RecommendedList models={catalog.free} tierLabel="Gratis" />
+            </>
+          )}
+          {catalogModels[0]?.setupUrl && (
+            <a
+              href={catalogModels[0].setupUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: "0.9em" }}
+            >
+              Obtener una clave de API en {preset?.label}
+            </a>
+          )}
+        </section>
+      )}
+      {providerType && <ProviderGuide guideId={providerType} />}
       <QueryError error={error as Error | null} onRetry={refetch}>
         <form onSubmit={handleSubmit(onSubmit)}>
           <section style={{ marginBottom: 24 }}>

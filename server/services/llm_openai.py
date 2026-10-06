@@ -370,6 +370,12 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
     "thinkingmachines/inkling:free": (0.0, 0.0),
     "nvidia/nemotron-3-ultra-550b-a55b:free": (0.0, 0.0),
     "google/gemma-4-31b-it:free": (0.0, 0.0),
+    # Curated Groq catalog (web/src/routes/settings/recommended.ts, public docs
+    # console.groq.com/docs/models 2026-10-06). Groq is unrestricted (no
+    # whitelist); full slugs avoid collisions and carry the published rates.
+    "openai/gpt-oss-120b": (0.15 / _PER_MILLION_TOKENS, 0.60 / _PER_MILLION_TOKENS),
+    "openai/gpt-oss-20b": (0.075 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
+    "qwen/qwen3.8-27b": (0.80 / _PER_MILLION_TOKENS, 4.00 / _PER_MILLION_TOKENS),
 }
 
 # gpt-4o is the app default, but it is NOT a general fallback: pricing a

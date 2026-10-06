@@ -376,7 +376,14 @@ describe("SettingsView", () => {
 
   it("renders paid and free recommended models with prices and the recommended marker", () => {
     useSettingsMock.mockReturnValue({
-      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      },
       isLoading: false,
     });
     render(<SettingsView />);
@@ -396,7 +403,14 @@ describe("SettingsView", () => {
 
   it("renders the OpenRouter guide with a setup link that opens in a new tab", () => {
     useSettingsMock.mockReturnValue({
-      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      },
       isLoading: false,
     });
     render(<SettingsView />);
@@ -411,6 +425,53 @@ describe("SettingsView", () => {
 
     const guideLink = screen.getByRole("link", { name: /abrir openrouter/i });
     expect(guideLink.getAttribute("target")).toBe("_blank");
+  });
+
+  it("keys the catalog and guide to the selected provider (Groq)", () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "groq",
+        base_url: "https://api.groq.com/openai/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    // Groq catalog, no OpenRouter entries and no free tier group.
+    expect(screen.getByText("GPT-OSS 120B")).toBeTruthy();
+    expect(screen.getByText("Qwen 3.8 27B (preview)")).toBeTruthy();
+    expect(screen.getByText("Entrada $0.15 / Salida $0.60 por 1M tokens")).toBeTruthy();
+    expect(screen.queryByText("Claude Sonnet 5.5")).toBeNull();
+    expect(screen.queryByText("Gratis")).toBeNull();
+
+    // Groq guide and provider-appropriate setup link, not OpenRouter's.
+    expect(screen.getByText(/cómo configurar groq/i)).toBeTruthy();
+    const sectionLink = screen.getByRole("link", {
+      name: /obtener una clave de api en groq/i,
+    });
+    expect(sectionLink.getAttribute("href")).toBe("https://console.groq.com/keys");
+  });
+
+  it("hides the catalog when the provider has none and still shows its guide (Ollama)", () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: "llama3.2:latest",
+        allowed_models: [],
+        provider_type: "ollama",
+        base_url: "http://localhost:11434/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    expect(screen.queryByText("Modelos recomendados")).toBeNull();
+    expect(screen.getByText(/cómo configurar ollama/i)).toBeTruthy();
   });
 
   it("renders a free-text model input for an unrestricted provider (D6)", () => {

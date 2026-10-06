@@ -1,17 +1,22 @@
-// Curated OpenRouter model catalog for non-technical data analysts (WU5).
+// Curated model catalog per provider for non-technical data analysts (WU5).
 //
 // This is data, not logic: the recommended models, their prices, and the
 // setup link are maintained here and consumed by both the Ajustes hub and
 // the setup wizard. Prices are published USD per 1M tokens (D4 shape).
 // Never fabricate entries — confirm model names and prices before changing.
+//
+// The UI only shows the catalog for the currently selected provider; there is
+// no cross-provider list. Providers without a curated catalog (Ollama, LM
+// Studio, Custom) render no recommended section.
 
 export type RecommendedTier = "free" | "paid";
+export type RecommendedProvider = "openrouter" | "groq";
 
 export interface RecommendedModel {
   model: string;
   label: string;
   tier: RecommendedTier;
-  provider: "openrouter";
+  provider: RecommendedProvider;
   recommended: boolean;
   setupUrl: string;
   guideId: string;
@@ -20,6 +25,7 @@ export interface RecommendedModel {
 }
 
 export const OPENROUTER_SETUP_URL = "https://openrouter.ai/keys";
+export const GROQ_SETUP_URL = "https://console.groq.com/keys";
 
 export const RECOMMENDED_MODELS: RecommendedModel[] = [
   {
@@ -110,11 +116,63 @@ export const RECOMMENDED_MODELS: RecommendedModel[] = [
     inputUsdPerMillion: 0,
     outputUsdPerMillion: 0,
   },
+  // Groq curated catalog (public docs console.groq.com/docs/models, 2026-10-06).
+  // Groq is unrestricted (no whitelist); only pricing is curated here.
+  // `llama-3.3-70b-versatile` / `llama-3.1-8b-instant` are excluded: no
+  // published price (Enterprise) → NULL cost. Groq has no free tier.
+  {
+    model: "openai/gpt-oss-120b",
+    label: "GPT-OSS 120B",
+    tier: "paid",
+    provider: "groq",
+    recommended: true,
+    setupUrl: GROQ_SETUP_URL,
+    guideId: "groq",
+    inputUsdPerMillion: 0.15,
+    outputUsdPerMillion: 0.6,
+  },
+  {
+    model: "openai/gpt-oss-20b",
+    label: "GPT-OSS 20B",
+    tier: "paid",
+    provider: "groq",
+    recommended: false,
+    setupUrl: GROQ_SETUP_URL,
+    guideId: "groq",
+    inputUsdPerMillion: 0.075,
+    outputUsdPerMillion: 0.3,
+  },
+  {
+    model: "qwen/qwen3.8-27b",
+    label: "Qwen 3.8 27B (preview)",
+    tier: "paid",
+    provider: "groq",
+    recommended: false,
+    setupUrl: GROQ_SETUP_URL,
+    guideId: "groq",
+    inputUsdPerMillion: 0.8,
+    outputUsdPerMillion: 4.0,
+  },
 ];
 
-/** Paid and free options, each already curated in recommended-first order. */
-export const PAID_MODELS = RECOMMENDED_MODELS.filter((m) => m.tier === "paid");
-export const FREE_MODELS = RECOMMENDED_MODELS.filter((m) => m.tier === "free");
+/** The curated models for one provider (empty when it has no catalog). */
+export function modelsForProvider(
+  provider: string | null | undefined,
+): RecommendedModel[] {
+  return RECOMMENDED_MODELS.filter((m) => m.provider === provider);
+}
+
+/** The provider's curated catalog split by tier, each already in order. */
+export function catalogFor(provider: string | null | undefined): {
+  paid: RecommendedModel[];
+  free: RecommendedModel[];
+} {
+  const models = modelsForProvider(provider);
+  return {
+    paid: models.filter((m) => m.tier === "paid"),
+    free: models.filter((m) => m.tier === "free"),
+  };
+}
 
 /** Human price hint for an analyst: either a "Gratis" tag or both token rates. */
 export function priceLabel(m: RecommendedModel): string {

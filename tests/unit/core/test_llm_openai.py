@@ -610,6 +610,26 @@ class TestPriceEntryLookup:
         )
         assert cost == 0.0
 
+    def test_groq_catalog_slugs_are_all_priced(self):
+        """The curated Groq slugs (B2/WU5.1) carry full-slug price entries."""
+        for slug in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+            assert has_price_entry(slug) is True
+
+    def test_groq_paid_model_uses_catalog_rates(self):
+        """GPT-OSS 120B prices at its published Groq rates, not a fallback."""
+        # 1000 * (0.15/1M) + 500 * (0.60/1M) = 0.00015 + 0.0003
+        cost = _estimate_cost(
+            tokens_in=1000, tokens_out=500, model="openai/gpt-oss-120b"
+        )
+        assert cost == pytest.approx(0.00045, rel=1e-9)
+
+    def test_groq_qwen_preview_uses_catalog_rates(self):
+        # 1000 * (0.80/1M) + 500 * (4.00/1M) = 0.0008 + 0.002
+        cost = _estimate_cost(
+            tokens_in=1000, tokens_out=500, model="qwen/qwen3.8-27b"
+        )
+        assert cost == pytest.approx(0.0028, rel=1e-9)
+
 
 # ── Seed kwarg passthrough ──────────────────────────────────────────────────
 

@@ -6,20 +6,12 @@ import { COPY } from "./setup/copy";
 import { PRESETS } from "./setup/presets";
 import { useFetchModels } from "./setup/useFetchModels";
 import {
-  OPENROUTER_SETUP_URL,
-  RECOMMENDED_MODELS,
+  modelsForProvider,
   priceLabel,
 } from "./settings/recommended";
 import { isModelRestricted } from "./settings/modelGate";
 
 type ProviderType = "openrouter" | "ollama" | "lmstudio" | "groq" | "custom";
-
-// Recommended models are curated for OpenRouter only (B2 extends them), shown
-// before the live provider list so an analyst always has a valid, priced
-// choice even if the live fetch fails.
-const RECOMMENDED_OPENROUTER = RECOMMENDED_MODELS.filter(
-  (m) => m.provider === "openrouter",
-);
 
 interface WizardForm {
   providerType: string;
@@ -77,6 +69,13 @@ export default function Setup() {
 
   const formValues = watch();
   const selectedPreset = PRESETS.find((p) => p.id === formValues.providerType);
+
+  // Curated catalog for the selected provider only (OpenRouter or Groq);
+  // providers without a catalog (Ollama / LM Studio / Custom) get none.
+  const recommendedModels = modelsForProvider(formValues.providerType);
+  // Provider-specific placeholder for the free-text / fallback model entry.
+  const modelPlaceholder =
+    COPY.MODEL_PLACEHOLDERS[formValues.providerType] ?? COPY.MODEL_PLACEHOLDER_DEFAULT;
 
   // Only OpenRouter and the legacy env fallback are gated by the curated
   // whitelist (D6). Unrestricted providers (Groq / Ollama / LM Studio /
@@ -338,10 +337,10 @@ export default function Setup() {
           <div>
             <h3>Modelo predeterminado</h3>
 
-            {formValues.providerType === "openrouter" && RECOMMENDED_OPENROUTER.length > 0 && (
+            {recommendedModels.length > 0 && (
               <div style={{ marginBottom: 16 }}>
                 <p style={{ fontWeight: "bold", margin: "0 0 8px" }}>Modelos recomendados</p>
-                {RECOMMENDED_OPENROUTER.map((m) => {
+                {recommendedModels.map((m) => {
                   const selected = formValues.model === m.model;
                   return (
                     <button
@@ -376,14 +375,27 @@ export default function Setup() {
                   );
                 })}
                 <a
-                  href={OPENROUTER_SETUP_URL}
+                  href={recommendedModels[0].setupUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ fontSize: "0.85em" }}
                 >
-                  Obtener una clave de API en OpenRouter
+                  Obtener una clave de API en {selectedPreset?.label}
                 </a>
               </div>
+            )}
+
+            {/* Re-run the live model fetch without leaving the step. Custom
+                has no fetch (free-text only), so it gets no button. */}
+            {formValues.providerType !== "custom" && (
+              <button
+                type="button"
+                onClick={() => fetchModels()}
+                disabled={modelsLoading}
+                style={{ marginBottom: 16, padding: "6px 12px" }}
+              >
+                {COPY.BUTTONS.RETRY}
+              </button>
             )}
 
             {modelsLoading ? (
@@ -396,23 +408,32 @@ export default function Setup() {
                 </label>
                 <input
                   type="text"
-                  {...register("model", { required: true })}
-                  placeholder="gpt-4o, llama3.2:latest, etc."
+                  {...register("model")}
+                  placeholder={modelPlaceholder}
                   style={{ width: "100%", padding: 8 }}
                 />
               </div>
             ) : modelsError || selectableModels.length === 0 ? (
-              // Fetch error or empty list: free-text fallback with the spec copy.
+              // Fetch error or empty list: free-text fallback. Exactly one
+              // message is shown: the orange hint while idle, replaced by the
+              // red validation error after an empty submit (orange+red dedupe).
               <div>
-                <p style={{ color: "orange" }}>{COPY.MODEL_LIST_FALLBACK}</p>
+                {!modelError && (
+                  <p style={{ color: "orange" }}>{COPY.MODEL_LIST_FALLBACK}</p>
+                )}
+                {selectedPreset && !selectedPreset.apiKeyRequired && (
+                  <p style={{ fontSize: "0.9em", color: "#666" }}>
+                    {COPY.MODEL_LOCAL_SERVER_HINT(selectedPreset.label)}
+                  </p>
+                )}
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: "block", marginBottom: 4 }}>
                     Identificador del modelo *
                   </label>
                   <input
                     type="text"
-                    {...register("model", { required: true })}
-                    placeholder="gpt-4o, llama3.2:latest, etc."
+                    {...register("model")}
+                    placeholder={modelPlaceholder}
                     style={{ width: "100%", padding: 8 }}
                   />
                 </div>
@@ -435,7 +456,7 @@ export default function Setup() {
                   </p>
                 ) : (
                   <select
-                    {...register("model", { required: true })}
+                    {...register("model")}
                     style={{ width: "100%", padding: 8 }}
                   >
                     <option value="">{COPY.MODEL_REQUIRED}</option>
@@ -449,9 +470,8 @@ export default function Setup() {
               </div>
             )}
 
-            {errors.model && (
-              <p style={{ color: "red", fontSize: "0.9em" }}>{COPY.MODEL_REQUIRED}</p>
-            )}
+            {/* Single validation channel: goNext() owns the required/not-allowed
+                errors (register no longer duplicates them via errors.model). */}
             {modelError && (
               <p style={{ color: "red" }} role="alert">
                 {modelError}

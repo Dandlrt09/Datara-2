@@ -29,6 +29,22 @@ export const COPY = {
   MODEL_NOT_ALLOWED: "Ese modelo no está permitido. Selecciona uno de la lista permitida.",
   DONE_CONFIRMATION: "Configuración guardada correctamente.",
 
+  // Provider-specific placeholder for the free-text / fallback model entry.
+  // The generic value is the historical default and the OpenRouter fallback.
+  MODEL_PLACEHOLDER_DEFAULT: "gpt-4o, llama3.2:latest, etc.",
+  MODEL_PLACEHOLDERS: {
+    openrouter: "gpt-4o, llama3.2:latest, etc.",
+    ollama: "llama3.2, qwen2.5, etc.",
+    lmstudio: "nombre-del-modelo",
+    groq: "openai/gpt-oss-120b",
+    custom: "gpt-4o, llama3.2:latest, etc.",
+  } as Record<string, string>,
+
+  // Keyless provider (Ollama / LM Studio) hint when the model fetch failed or
+  // returned an empty list: the local server is the likely missing piece.
+  MODEL_LOCAL_SERVER_HINT: (label: string) =>
+    `¿«${label}» está corriendo en tu máquina?`,
+
   // Keyless provider (Ollama / LM Studio) credentials-step info block.
   KEYLESS_NO_KEY_REQUIRED: (label: string) => `«${label}» no requiere clave de API.`,
   KEYLESS_ENDPOINT_LABEL: "Endpoint que usará Datara:",
