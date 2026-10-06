@@ -5,8 +5,24 @@ import { useSettings, useUpdateSettings } from "../queries/useSettings";
 import { COPY } from "./setup/copy";
 import { PRESETS } from "./setup/presets";
 import { useFetchModels } from "./setup/useFetchModels";
+import {
+  OPENROUTER_SETUP_URL,
+  RECOMMENDED_MODELS,
+  priceLabel,
+} from "./settings/recommended";
 
 type ProviderType = "openrouter" | "ollama" | "lmstudio" | "groq" | "custom";
+
+// OpenRouter-first (WU5): only OpenRouter is wired end-to-end today. The
+// other presets remain visible as "Próximamente" but are not selectable —
+// the global model whitelist makes them dead-ends (see D6).
+const SELECTABLE_PROVIDER = "openrouter";
+
+// Recommended OpenRouter models, shown before the live provider list so an
+// analyst always has a valid, priced choice even if the live fetch fails.
+const RECOMMENDED_OPENROUTER = RECOMMENDED_MODELS.filter(
+  (m) => m.provider === SELECTABLE_PROVIDER,
+);
 
 interface WizardForm {
   providerType: string;
@@ -86,7 +102,10 @@ export default function Setup() {
   useEffect(() => {
     if (settings) {
       reset({
-        providerType: settings.provider_type || "",
+        // Only prefill a provider that is actually selectable; a saved
+        // not-yet-supported provider must not appear pre-checked.
+        providerType:
+          settings.provider_type === SELECTABLE_PROVIDER ? SELECTABLE_PROVIDER : "",
         baseUrl: settings.base_url || "",
         apiKey: "",
         model: settings.default_model || "",
@@ -204,25 +223,36 @@ export default function Setup() {
         {step === 0 && (
           <div>
             <div style={{ marginBottom: 16 }}>
-              {PRESETS.map((preset) => (
-                <div key={preset.id} style={{ marginBottom: 8 }}>
-                  <label>
-                    <input
-                      type="radio"
-                      value={preset.id}
-                      {...register("providerType", { required: true })}
-                    />
-                    {" "}
-                    {preset.label}
-                    {preset.apiKeyRequired && " (clave de API requerida)"}
-                  </label>
-                  {formValues.providerType === preset.id && preset.defaultBaseUrl && (
-                    <div style={{ marginLeft: 24, fontSize: "0.9em", color: "#666" }}>
-                      URL predeterminada: {preset.defaultBaseUrl}
-                    </div>
-                  )}
-                </div>
-              ))}
+              {PRESETS.map((preset) => {
+                const comingSoon = preset.id !== SELECTABLE_PROVIDER;
+                return (
+                  <div key={preset.id} style={{ marginBottom: 8 }}>
+                    <label style={comingSoon ? { color: "#999" } : undefined}>
+                      <input
+                        type="radio"
+                        value={preset.id}
+                        disabled={comingSoon}
+                        {...register("providerType", { required: true })}
+                      />
+                      {" "}
+                      {preset.label}
+                      {preset.apiKeyRequired && " (clave de API requerida)"}
+                    </label>
+                    {comingSoon && (
+                      <span
+                        style={{ marginLeft: 8, color: "#999", fontSize: "0.85em" }}
+                      >
+                        Próximamente
+                      </span>
+                    )}
+                    {formValues.providerType === preset.id && preset.defaultBaseUrl && (
+                      <div style={{ marginLeft: 24, fontSize: "0.9em", color: "#666" }}>
+                        URL predeterminada: {preset.defaultBaseUrl}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {errors.providerType && (
               <p style={{ color: "red" }} role="alert">
@@ -284,6 +314,54 @@ export default function Setup() {
         {step === 2 && (
           <div>
             <h3>Modelo predeterminado</h3>
+
+            {RECOMMENDED_OPENROUTER.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ fontWeight: "bold", margin: "0 0 8px" }}>Modelos recomendados</p>
+                {RECOMMENDED_OPENROUTER.map((m) => {
+                  const selected = formValues.model === m.model;
+                  return (
+                    <button
+                      key={m.model}
+                      type="button"
+                      onClick={() => {
+                        setValue("model", m.model);
+                        setModelError(null);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        marginBottom: 6,
+                        padding: 8,
+                        border: selected ? "2px solid #007acc" : "1px solid #ccc",
+                        borderRadius: 4,
+                        backgroundColor: selected ? "#eaf6ff" : "white",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <strong>{m.label}</strong>
+                      {m.recommended && (
+                        <span style={{ marginLeft: 8, color: "#007acc", fontSize: "0.8em" }}>
+                          (Recomendado)
+                        </span>
+                      )}
+                      <span style={{ display: "block", fontSize: "0.85em", color: "#666" }}>
+                        {priceLabel(m)}
+                      </span>
+                    </button>
+                  );
+                })}
+                <a
+                  href={OPENROUTER_SETUP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: "0.85em" }}
+                >
+                  Obtener una clave de API en OpenRouter
+                </a>
+              </div>
+            )}
 
             {modelsLoading ? (
               <p>Cargando modelos...</p>

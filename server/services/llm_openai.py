@@ -360,6 +360,16 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
     "gpt-4.1-mini": (0.40 / _PER_MILLION_TOKENS, 1.60 / _PER_MILLION_TOKENS),
     "gpt-4.1-nano": (0.10 / _PER_MILLION_TOKENS, 0.40 / _PER_MILLION_TOKENS),
     "z-ai/glm-5.3-flash": (0.05 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
+    # Recommended OpenRouter catalog (web/src/routes/settings/recommended.ts).
+    # Full slugs avoid collisions with same-named bare ids; free models are 0.
+    "anthropic/claude-sonnet-5.5": (2.00 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS),
+    "anthropic/claude-opus-5.5": (4.00 / _PER_MILLION_TOKENS, 20.00 / _PER_MILLION_TOKENS),
+    "openai/gpt-6.1-sol": (2.00 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS),
+    "meta/muse-spark-1.3": (1.25 / _PER_MILLION_TOKENS, 4.25 / _PER_MILLION_TOKENS),
+    "inclusionai/ling-3.1-flash": (0.0, 0.0),
+    "thinkingmachines/inkling:free": (0.0, 0.0),
+    "nvidia/nemotron-3-ultra-550b-a55b:free": (0.0, 0.0),
+    "google/gemma-4-31b-it:free": (0.0, 0.0),
 }
 
 # gpt-4o is the app default, but it is NOT a general fallback: pricing a

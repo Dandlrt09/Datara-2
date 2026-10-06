@@ -4,6 +4,14 @@ import { useSettings, useUpdateSettings, type UserSettings } from "../queries/us
 import { QueryError } from "../components/ErrorCard";
 import { PRESETS } from "./setup/presets";
 import { useFetchModels } from "./setup/useFetchModels";
+import ProviderGuide from "./settings/ProviderGuide";
+import {
+  FREE_MODELS,
+  OPENROUTER_SETUP_URL,
+  PAID_MODELS,
+  priceLabel,
+  type RecommendedModel,
+} from "./settings/recommended";
 
 type ProviderType = "openrouter" | "ollama" | "lmstudio" | "groq" | "custom";
 
@@ -37,6 +45,39 @@ function saveErrorMessage(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : "unknown error";
+}
+
+/** One tier group of the curated catalog (paid or free). */
+function RecommendedList({
+  models,
+  tierLabel,
+}: {
+  models: RecommendedModel[];
+  tierLabel: string;
+}) {
+  return (
+    <>
+      {models.map((m) => (
+        <div
+          key={m.model}
+          style={{ border: "1px solid #ddd", borderRadius: 4, padding: 12, marginBottom: 8 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>
+              <strong>{m.label}</strong>
+              {m.recommended && (
+                <span style={{ marginLeft: 8, color: "#007acc", fontSize: "0.8em" }}>
+                  (Recomendado)
+                </span>
+              )}
+            </span>
+            <span style={{ fontSize: "0.8em", color: "#666" }}>{tierLabel}</span>
+          </div>
+          <p style={{ margin: "4px 0 0", fontSize: "0.85em", color: "#666" }}>{priceLabel(m)}</p>
+        </div>
+      ))}
+    </>
+  );
 }
 
 export default function SettingsView() {
@@ -142,6 +183,26 @@ export default function SettingsView() {
           Configurar proveedor
         </a>
       </div>
+      <section style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: "1.1em", margin: "0 0 12px" }}>Modelos recomendados</h2>
+        <p style={{ fontSize: "0.9em", color: "#666", marginTop: 0 }}>
+          Opciones pensadas para análisis de datos. Puedes usar un modelo gratuito o
+          cargar créditos para los de pago.
+        </p>
+        <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>De pago</h3>
+        <RecommendedList models={PAID_MODELS} tierLabel="De pago" />
+        <h3 style={{ fontSize: "0.95em", margin: "0 0 8px" }}>Gratis</h3>
+        <RecommendedList models={FREE_MODELS} tierLabel="Gratis" />
+        <a
+          href={OPENROUTER_SETUP_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: "0.9em" }}
+        >
+          Obtener una clave de API en OpenRouter
+        </a>
+      </section>
+      <ProviderGuide guideId="openrouter" />
       <QueryError error={error as Error | null} onRetry={refetch}>
         <form onSubmit={handleSubmit(onSubmit)}>
           <section style={{ marginBottom: 24 }}>

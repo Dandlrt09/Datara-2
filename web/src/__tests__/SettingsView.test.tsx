@@ -373,4 +373,43 @@ describe("SettingsView", () => {
     await waitFor(() => expect(screen.getByText(/^Ajustes guardados$/)).toBeTruthy());
     expect(fetchModelsMock).not.toHaveBeenCalled();
   });
+
+  it("renders paid and free recommended models with prices and the recommended marker", () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    // Paid option with input/output token prices (two paid models share $2/$10).
+    expect(screen.getByText("Claude Sonnet 5.5")).toBeTruthy();
+    expect(
+      screen.getAllByText("Entrada $2.00 / Salida $10.00 por 1M tokens").length,
+    ).toBeGreaterThan(0);
+    // Free option.
+    expect(screen.getByText("Ling 3.1 Flash")).toBeTruthy();
+    // Tier badges and the recommended marker are present.
+    expect(screen.getAllByText("De pago").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Gratis").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("(Recomendado)").length).toBeGreaterThan(0);
+  });
+
+  it("renders the OpenRouter guide with a setup link that opens in a new tab", () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    expect(screen.getByText(/cómo configurar openrouter/i)).toBeTruthy();
+    const sectionLink = screen.getByRole("link", {
+      name: /obtener una clave de api en openrouter/i,
+    });
+    expect(sectionLink.getAttribute("href")).toBe("https://openrouter.ai/keys");
+    expect(sectionLink.getAttribute("target")).toBe("_blank");
+    expect(sectionLink.getAttribute("rel")).toBe("noopener noreferrer");
+
+    const guideLink = screen.getByRole("link", { name: /abrir openrouter/i });
+    expect(guideLink.getAttribute("target")).toBe("_blank");
+  });
 });

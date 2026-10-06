@@ -3,6 +3,7 @@ import { screen, fireEvent, waitFor } from "@testing-library/react";
 import Setup from "../routes/Setup";
 import { renderWithProviders } from "./test-utils";
 import { COPY } from "../routes/setup/copy";
+import { RECOMMENDED_MODELS } from "../routes/settings/recommended";
 
 const { useSettingsMock, mutateMock, fetchModelsMock, useFetchModelsMock } = vi.hoisted(
   () => ({
@@ -33,7 +34,12 @@ const emptySettings = {
   user_id: 1,
   has_api_key: false,
   default_model: null,
-  allowed_models: ["gpt-4o", "gpt-4o-mini"],
+  // Mirrors the shipped whitelist: base models + the WU5 recommended catalog.
+  allowed_models: [
+    "gpt-4o",
+    "gpt-4o-mini",
+    ...RECOMMENDED_MODELS.map((m) => m.model),
+  ],
   provider_type: null,
   base_url: null,
 };
@@ -113,6 +119,36 @@ describe("Setup", () => {
     expect(screen.getByLabelText("Custom (clave de API requerida)")).toBeTruthy();
   });
 
+  it("disables every non-OpenRouter preset with a Próximamente marker", () => {
+    renderWizard();
+
+    expect((screen.getByLabelText("OpenRouter (clave de API requerida)") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+    for (const label of [
+      "Ollama",
+      "LM Studio",
+      "Groq (clave de API requerida)",
+      "Custom (clave de API requerida)",
+    ]) {
+      expect((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(true);
+    }
+    expect(screen.getAllByText("Próximamente")).toHaveLength(4);
+  });
+
+  it("does not allow selecting a not-yet-supported preset", async () => {
+    renderWizard();
+
+    const custom = screen.getByLabelText(
+      "Custom (clave de API requerida)",
+    ) as HTMLInputElement;
+    expect(custom.disabled).toBe(true);
+    // A disabled radio never registers a value, so Next must not advance.
+    fireEvent.click(custom);
+    clickNext();
+    expect(await screen.findByText("Selecciona un proveedor")).toBeTruthy();
+  });
+
   it("blocks advancing without a provider and shows an error", async () => {
     renderWizard();
 
@@ -145,35 +181,6 @@ describe("Setup", () => {
     expect(await screen.findByText(COPY.KEY_REQUIRED)).toBeTruthy();
     // Still on the credentials step.
     expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
-  });
-
-  it("requires base URL and key for the custom preset", async () => {
-    renderWizard();
-
-    selectPreset("Custom (clave de API requerida)");
-    clickNext();
-    await screen.findByPlaceholderText("https://...");
-
-    clickNext();
-
-    expect(await screen.findByText(COPY.BASE_URL_REQUIRED)).toBeTruthy();
-    expect(screen.getByText(COPY.KEY_REQUIRED)).toBeTruthy();
-  });
-
-  it("resets base_url when switching presets (no stale localhost URL)", async () => {
-    renderWizard();
-
-    selectPreset("Ollama");
-    clickNext();
-    await waitFor(() => expect(screen.queryByLabelText("Ollama")).toBeNull());
-
-    fireEvent.click(screen.getByText(COPY.BUTTONS.PREVIOUS));
-    await waitFor(() => expect(screen.getByLabelText("Ollama")).toBeTruthy());
-
-    selectPreset("Custom (clave de API requerida)");
-    clickNext();
-    const baseUrlInput = (await screen.findByPlaceholderText("https://...")) as HTMLInputElement;
-    expect(baseUrlInput.value).toBe("");
   });
 
   it("shows a model dropdown when the model fetch succeeds", async () => {
@@ -228,34 +235,6 @@ describe("Setup", () => {
     expect(Array.from(restored.querySelectorAll("option")).length).toBe(4); // placeholder + 3 models
   });
 
-  it("clears the model search when switching presets", async () => {
-    setupMocks({ allowed_models: ["gpt-4o", "gpt-4o-mini", "z-ai/glm-5.3-flash"] });
-    mockModelsState(
-      [
-        { id: "gpt-4o", name: "GPT-4o" },
-        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
-      ],
-      null
-    );
-    renderWizard();
-
-    await reachModelStep();
-    const search = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
-    fireEvent.change(search, { target: { value: "glm" } });
-    expect(screen.queryByRole("combobox")).toBeTruthy();
-
-    fireEvent.click(screen.getByText(COPY.BUTTONS.PREVIOUS));
-    fireEvent.click(screen.getByText(COPY.BUTTONS.PREVIOUS));
-    selectPreset("Groq (clave de API requerida)");
-    clickNext();
-    const keyInput = await screen.findByPlaceholderText("sk-...");
-    fireEvent.change(keyInput, { target: { value: "sk-test" } });
-    clickNext();
-
-    const searchAfter = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
-    expect((searchAfter as HTMLInputElement).value).toBe("");
-  });
-
   it("hides fetched models that are not in the whitelist", async () => {
     setupMocks({ allowed_models: ["gpt-4o"] });
     mockModelsState(
@@ -294,31 +273,36 @@ describe("Setup", () => {
     expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
   });
 
-  it("blocks a non-whitelisted model on the custom free-text path", async () => {
-    setupMocks({ allowed_models: ["gpt-4o"] });
+  it("shows the recommended OpenRouter models first in the model step", async () => {
+    setupMocks();
     renderWizard();
 
-    selectPreset("Custom (clave de API requerida)");
-    clickNext();
-    const baseUrlInput = await screen.findByPlaceholderText("https://...");
-    fireEvent.change(baseUrlInput, { target: { value: "https://api.example.com/v1" } });
-    const keyInput = screen.getByPlaceholderText("sk-...");
-    fireEvent.change(keyInput, { target: { value: "sk-test" } });
-    clickNext();
+    await reachModelStep();
 
-    await screen.findByPlaceholderText("gpt-4o, llama3.2:latest, etc.");
-    await fillFreeTextModel("not-allowed/model");
-    clickNext();
-
-    expect(await screen.findByText(COPY.MODEL_NOT_ALLOWED)).toBeTruthy();
-    // The guard returns before persisting default_model.
+    expect(await screen.findByText("Modelos recomendados")).toBeTruthy();
+    expect(screen.getByText("Claude Sonnet 5.5")).toBeTruthy();
+    expect(screen.getByText("Ling 3.1 Flash")).toBeTruthy();
+    expect(screen.getAllByText("(Recomendado)").length).toBeGreaterThan(0);
+    // Both token prices are visible (foolproof for analysts; two paid models
+    // share the same $2/$10 price).
     expect(
-      mutateMock.mock.calls.some(
-        (call) => call[0] && "default_model" in call[0]
-      )
-    ).toBe(false);
-    // Still on the model step.
-    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
+      screen.getAllByText("Entrada $2.00 / Salida $10.00 por 1M tokens").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("submits a recommended model directly from the catalog", async () => {
+    setupMocks();
+    renderWizard();
+
+    await reachModelStep();
+    fireEvent.click(screen.getByText("Claude Sonnet 5.5"));
+    clickNext();
+
+    await waitFor(() =>
+      expect(mutateMock).toHaveBeenCalledWith({
+        default_model: "anthropic/claude-sonnet-5.5",
+      })
+    );
   });
 
   it("blocks a non-whitelisted model on the fetch-failure fallback path", async () => {
@@ -359,22 +343,6 @@ describe("Setup", () => {
       ).toBe(true)
     );
     expect(screen.queryByText(COPY.MODEL_NOT_ALLOWED)).toBeNull();
-  });
-
-  it("uses free-text directly for the custom preset without fetching models", async () => {
-    renderWizard();
-
-    selectPreset("Custom (clave de API requerida)");
-    clickNext();
-    const baseUrlInput = await screen.findByPlaceholderText("https://...");
-    fireEvent.change(baseUrlInput, { target: { value: "https://api.example.com/v1" } });
-    const keyInput = screen.getByPlaceholderText("sk-...");
-    fireEvent.change(keyInput, { target: { value: "sk-test" } });
-    clickNext();
-
-    await screen.findByPlaceholderText("gpt-4o, llama3.2:latest, etc.");
-    expect(screen.queryByText(COPY.MODEL_LIST_FALLBACK)).toBeNull();
-    expect(fetchModelsMock).not.toHaveBeenCalled();
   });
 
   it("passes the connection test, enables Finalizar, and reaches the done step", async () => {
@@ -419,33 +387,37 @@ describe("Setup", () => {
     expect(await screen.findByText(COPY.DONE_CONFIRMATION)).toBeTruthy();
   });
 
-  it("shows the SSRF rejection and stays on the credentials step when save fails", async () => {
-    mutateMock.mockRejectedValue({
-      status: 422,
-      body: {
-        detail: {
-          code: "invalid_base_url",
-          message: "Base URL must use HTTPS and point to a public host",
-        },
-      },
-    });
+  it("stays on the credentials step when the OpenRouter save fails", async () => {
+    mutateMock.mockRejectedValue(new Error("boom"));
     renderWizard();
 
-    selectPreset("Custom (clave de API requerida)");
+    selectPreset("OpenRouter (clave de API requerida)");
     clickNext();
-    const baseUrlInput = await screen.findByPlaceholderText("https://...");
-    fireEvent.change(baseUrlInput, { target: { value: "http://localhost:8000" } });
-    const keyInput = screen.getByPlaceholderText("sk-...");
+    const keyInput = await screen.findByPlaceholderText("sk-...");
     fireEvent.change(keyInput, { target: { value: "sk-test" } });
 
     clickNext();
 
-    expect(await screen.findByText(COPY.SSRF_REJECTION)).toBeTruthy();
+    expect(await screen.findByText("Error al guardar configuración")).toBeTruthy();
     // Still on the credentials step.
-    expect(screen.getByPlaceholderText("https://...")).toBeTruthy();
+    expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
   });
 
-  it("prefills from saved settings on re-entry", () => {
+  it("prefills the selectable provider from saved settings on re-entry", () => {
+    setupMocks({
+      provider_type: "openrouter",
+      base_url: "https://openrouter.ai/api/v1",
+      default_model: "anthropic/claude-sonnet-5.5",
+    });
+    renderWizard();
+
+    const openrouterRadio = screen.getByLabelText(
+      "OpenRouter (clave de API requerida)",
+    ) as HTMLInputElement;
+    expect(openrouterRadio.checked).toBe(true);
+  });
+
+  it("does not pre-check a saved provider that is not selectable yet", () => {
     setupMocks({
       provider_type: "ollama",
       base_url: "http://localhost:11434/v1",
@@ -454,6 +426,7 @@ describe("Setup", () => {
     renderWizard();
 
     const ollamaRadio = screen.getByLabelText("Ollama") as HTMLInputElement;
-    expect(ollamaRadio.checked).toBe(true);
+    expect(ollamaRadio.disabled).toBe(true);
+    expect(ollamaRadio.checked).toBe(false);
   });
 });

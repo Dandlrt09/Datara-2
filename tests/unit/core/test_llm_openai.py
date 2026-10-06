@@ -582,6 +582,34 @@ class TestPriceEntryLookup:
     def test_unpriced_models_empty_when_all_priced(self):
         assert unpriced_models(["gpt-4o", "openai/gpt-4.1-mini"]) == []
 
+    def test_recommended_catalog_slugs_are_all_priced(self):
+        """Every curated catalog slug has a price entry (full-slug keys)."""
+        from server.api.routers.settings import _RECOMMENDED_MODELS
+
+        assert len(_RECOMMENDED_MODELS) == 8
+        assert unpriced_models(_RECOMMENDED_MODELS) == []
+
+    def test_full_whitelist_is_priced(self):
+        """The shipped whitelist (base + recommended) has no unpriced model,
+        so the startup unpriced-model operator signal stays empty."""
+        from server.api.routers.settings import ALLOWED_MODELS
+
+        assert unpriced_models(ALLOWED_MODELS) == []
+
+    def test_recommended_paid_model_uses_catalog_rates(self):
+        """A catalog slug is priced with its published rates, not a fallback."""
+        # 1000 * (2.00/1M) + 500 * (10.00/1M) = 0.002 + 0.005
+        cost = _estimate_cost(
+            tokens_in=1000, tokens_out=500, model="anthropic/claude-sonnet-5.5"
+        )
+        assert cost == pytest.approx(0.007, rel=1e-9)
+
+    def test_recommended_free_model_costs_zero(self):
+        cost = _estimate_cost(
+            tokens_in=1000, tokens_out=500, model="inclusionai/ling-3.1-flash"
+        )
+        assert cost == 0.0
+
 
 # ── Seed kwarg passthrough ──────────────────────────────────────────────────
 

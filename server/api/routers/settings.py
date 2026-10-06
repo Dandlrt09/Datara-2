@@ -35,16 +35,36 @@ _BASE_MODELS = frozenset(
     }
 )
 
+# Curated slugs from the frontend recommended catalog
+# (web/src/routes/settings/recommended.ts). They MUST be accepted here:
+# otherwise the wizard's submit-time whitelist guard and the chat-time
+# model gate reject models the UI actively recommends. Kept in sync with
+# _MODEL_COST_MAP in server/services/llm_openai.py (priced at boot).
+_RECOMMENDED_MODELS = frozenset(
+    {
+        "anthropic/claude-sonnet-5.5",
+        "anthropic/claude-opus-5.5",
+        "openai/gpt-6.1-sol",
+        "meta/muse-spark-1.3",
+        "inclusionai/ling-3.1-flash",
+        "thinkingmachines/inkling:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "google/gemma-4-31b-it:free",
+    }
+)
+
 
 def _load_allowed_models() -> frozenset[str]:
-    """Base whitelist + DATARA_ALLOWED_MODELS (comma-separated).
+    """Base whitelist + recommended catalog + DATARA_ALLOWED_MODELS.
 
     The extension supports alternative OpenAI-compatible backends (e.g.
     OpenRouter model slugs like ``z-ai/glm-4.7-flash``) pointed at via
     OPENAI_BASE_URL. Read once at import; restart the server to apply.
     """
     extra = os.environ.get("DATARA_ALLOWED_MODELS", "")
-    return _BASE_MODELS | {m.strip() for m in extra.split(",") if m.strip()}
+    return _BASE_MODELS | _RECOMMENDED_MODELS | {
+        m.strip() for m in extra.split(",") if m.strip()
+    }
 
 
 ALLOWED_MODELS = _load_allowed_models()

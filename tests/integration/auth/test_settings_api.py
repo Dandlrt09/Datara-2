@@ -76,6 +76,25 @@ class TestGetSettings:
         assert "api_key_enc" not in resp.json()
         assert "sk-secret-value" not in resp.text
 
+    def test_recommended_catalog_slugs_are_whitelisted(self, client, auth_client):
+        """The 8 curated catalog slugs must be accepted and exposed.
+
+        Regression guard: if the recommended slugs are missing from
+        ALLOWED_MODELS, the wizard's submit-time guard and the chat-time
+        model gate reject models the UI actively recommends (WU5).
+        """
+        from server.api.routers.settings import ALLOWED_MODELS, _RECOMMENDED_MODELS
+
+        assert len(_RECOMMENDED_MODELS) == 8
+        for slug in _RECOMMENDED_MODELS:
+            assert slug in ALLOWED_MODELS
+
+        resp = client.get("/api/settings", headers={"Cookie": auth_client})
+        assert resp.status_code == 200
+        allowed = resp.json()["allowed_models"]
+        for slug in _RECOMMENDED_MODELS:
+            assert slug in allowed
+
 
 class TestUpdateSettings:
     def test_update_all_fields(self, client, auth_client):
