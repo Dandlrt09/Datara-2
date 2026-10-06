@@ -119,34 +119,56 @@ describe("Setup", () => {
     expect(screen.getByLabelText("Custom (clave de API requerida)")).toBeTruthy();
   });
 
-  it("disables every non-OpenRouter preset with a Próximamente marker", () => {
+  it("allows every preset to be selected (D6 provider-aware gate)", () => {
     renderWizard();
 
-    expect((screen.getByLabelText("OpenRouter (clave de API requerida)") as HTMLInputElement).disabled).toBe(
-      false,
-    );
     for (const label of [
+      "OpenRouter (clave de API requerida)",
       "Ollama",
       "LM Studio",
       "Groq (clave de API requerida)",
       "Custom (clave de API requerida)",
     ]) {
-      expect((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(true);
+      expect((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(false);
     }
-    expect(screen.getAllByText("Próximamente")).toHaveLength(4);
+    expect(screen.queryByText("Próximamente")).toBeNull();
   });
 
-  it("does not allow selecting a not-yet-supported preset", async () => {
+  it("advances a previously unsupported preset to the model step", async () => {
     renderWizard();
 
-    const custom = screen.getByLabelText(
-      "Custom (clave de API requerida)",
-    ) as HTMLInputElement;
-    expect(custom.disabled).toBe(true);
-    // A disabled radio never registers a value, so Next must not advance.
-    fireEvent.click(custom);
+    // Ollama requires no key: credentials step has no key field. Wait for the
+    // step transition (setStep is async within handleSubmit) before advancing.
+    selectPreset("Ollama");
     clickNext();
-    expect(await screen.findByText("Selecciona un proveedor")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
+    );
+    expect(screen.queryByPlaceholderText("sk-...")).toBeNull();
+    clickNext();
+
+    expect(await screen.findByText("Modelo predeterminado")).toBeTruthy();
+  });
+
+  it("shows an informative credentials block for keyless providers (Ollama)", async () => {
+    renderWizard();
+
+    selectPreset("Ollama");
+    clickNext();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
+    );
+
+    // The credentials step is not empty: it explains no key is needed, shows
+    // the effective endpoint, and hints the local server must be running.
+    expect(screen.getByRole("heading", { name: "Credenciales" })).toBeTruthy();
+    expect(screen.getByText(COPY.KEYLESS_NO_KEY_REQUIRED("Ollama"))).toBeTruthy();
+    expect(screen.getByText("http://localhost:11434/v1")).toBeTruthy();
+    expect(screen.getByText(COPY.KEYLESS_SERVER_HINT("Ollama"))).toBeTruthy();
+
+    // Read-only: no key field and no custom URL input.
+    expect(screen.queryByPlaceholderText("sk-...")).toBeNull();
+    expect(screen.queryByText("URL base *")).toBeNull();
   });
 
   it("blocks advancing without a provider and shows an error", async () => {
@@ -417,7 +439,7 @@ describe("Setup", () => {
     expect(openrouterRadio.checked).toBe(true);
   });
 
-  it("does not pre-check a saved provider that is not selectable yet", () => {
+  it("pre-checks any saved provider (D6 unlock)", () => {
     setupMocks({
       provider_type: "ollama",
       base_url: "http://localhost:11434/v1",
@@ -426,7 +448,41 @@ describe("Setup", () => {
     renderWizard();
 
     const ollamaRadio = screen.getByLabelText("Ollama") as HTMLInputElement;
-    expect(ollamaRadio.disabled).toBe(true);
-    expect(ollamaRadio.checked).toBe(false);
+    expect(ollamaRadio.disabled).toBe(false);
+    expect(ollamaRadio.checked).toBe(true);
+  });
+
+  it("offers the full live model list for an unrestricted provider and accepts any model", async () => {
+    mockModelsState(
+      [
+        { id: "llama3.2:latest", name: "Llama 3.2" },
+        { id: "qwen2.5:7b", name: "Qwen 2.5" },
+      ],
+      null
+    );
+    renderWizard();
+
+    selectPreset("Ollama");
+    clickNext();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
+    );
+    clickNext();
+    await screen.findByText("Modelo predeterminado");
+
+    const select = await screen.findByRole("combobox");
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("Llama 3.2");
+    expect(options).toContain("Qwen 2.5");
+
+    // Recommended OpenRouter cards are OpenRouter-only (B2 extends them).
+    expect(screen.queryByText("Modelos recomendados")).toBeNull();
+
+    fireEvent.change(select, { target: { value: "llama3.2:latest" } });
+    clickNext();
+
+    await waitFor(() =>
+      expect(mutateMock).toHaveBeenCalledWith({ default_model: "llama3.2:latest" })
+    );
   });
 });

@@ -28,4 +28,10 @@ export const COPY = {
   MODEL_SEARCH_NO_RESULTS: "Sin resultados para",
   MODEL_NOT_ALLOWED: "Ese modelo no está permitido. Selecciona uno de la lista permitida.",
   DONE_CONFIRMATION: "Configuración guardada correctamente.",
+
+  // Keyless provider (Ollama / LM Studio) credentials-step info block.
+  KEYLESS_NO_KEY_REQUIRED: (label: string) => `«${label}» no requiere clave de API.`,
+  KEYLESS_ENDPOINT_LABEL: "Endpoint que usará Datara:",
+  KEYLESS_SERVER_HINT: (label: string) =>
+    `Asegurate de tener «${label}» corriendo en tu máquina.`,
 } as const;

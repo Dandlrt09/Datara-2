@@ -5,6 +5,7 @@ import { QueryError } from "../components/ErrorCard";
 import { PRESETS } from "./setup/presets";
 import { useFetchModels } from "./setup/useFetchModels";
 import ProviderGuide from "./settings/ProviderGuide";
+import { isModelRestricted } from "./settings/modelGate";
 import {
   FREE_MODELS,
   OPENROUTER_SETUP_URL,
@@ -292,14 +293,27 @@ export default function SettingsView() {
           </section>
           <div style={{ marginBottom: 16 }}>
             <label htmlFor="default-model" style={{ display: "block", marginBottom: 4 }}>Modelo predeterminado</label>
-            <select id="default-model" {...register("default_model")} style={{ width: "100%", padding: 8 }}>
-              <option value="">Predeterminado del servidor (variable OPENAI_MODEL)</option>
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            {isModelRestricted(providerType) ? (
+              <select id="default-model" {...register("default_model")} style={{ width: "100%", padding: 8 }}>
+                <option value="">Predeterminado del servidor (variable OPENAI_MODEL)</option>
+                {modelOptions.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              // Unrestricted providers (Groq / Ollama / LM Studio / Custom)
+              // own their model catalogs, so the curated whitelist does not
+              // apply — free-text entry (D6).
+              <input
+                id="default-model"
+                type="text"
+                {...register("default_model")}
+                placeholder="llama3.2:latest, mi-modelo, etc."
+                style={{ width: "100%", padding: 8 }}
+              />
+            )}
           </div>
           {saveStatus === "saved" && (
             <p style={{ color: "green" }}>Ajustes guardados</p>

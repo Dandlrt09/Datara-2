@@ -105,15 +105,11 @@ class TestModelWhitelist:
         from server.api.routers import chat as chat_module
         from server.api.routers import settings as settings_module
         
-        # Monkeypatch ALLOWED_MODELS in both modules
+        # Monkeypatch ALLOWED_MODELS in the settings module; the chat gate
+        # reads it through allowed_models_for_provider (D6).
         whitelist = frozenset({"gpt-4o", "gpt-4o-mini"})
         monkeypatch.setattr(
             settings_module,
-            "ALLOWED_MODELS",
-            whitelist,
-        )
-        monkeypatch.setattr(
-            chat_module,
             "ALLOWED_MODELS",
             whitelist,
         )
@@ -180,15 +176,10 @@ class TestModelWhitelist:
         from server.api.routers import chat as chat_module
         from server.api.routers import settings as settings_module
         
-        # Monkeypatch ALLOWED_MODELS in both modules
+        # Monkeypatch ALLOWED_MODELS in the settings module (D6 gate source).
         whitelist = frozenset({"gpt-4o", "gpt-4o-mini"})
         monkeypatch.setattr(
             settings_module,
-            "ALLOWED_MODELS",
-            whitelist,
-        )
-        monkeypatch.setattr(
-            chat_module,
             "ALLOWED_MODELS",
             whitelist,
         )
@@ -276,11 +267,6 @@ class TestModelWhitelist:
             "ALLOWED_MODELS",
             whitelist,
         )
-        monkeypatch.setattr(
-            chat_module,
-            "ALLOWED_MODELS",
-            whitelist,
-        )
         
         cookie = auth_cookie
         
@@ -344,11 +330,6 @@ class TestModelWhitelist:
             "ALLOWED_MODELS",
             whitelist,
         )
-        monkeypatch.setattr(
-            chat_module,
-            "ALLOWED_MODELS",
-            whitelist,
-        )
         
         # Save non-whitelisted model
         cookie = auth_cookie
@@ -375,3 +356,65 @@ class TestModelWhitelist:
         assert "Modelos permitidos:" in message
         assert "gpt-4o" in message
         assert "gpt-4o-mini" in message
+
+    def test_unrestricted_provider_model_not_gated(
+        self, client, auth_cookie, session_id, monkeypatch
+    ):
+        """D6: an unrestricted provider (ollama) accepts any model id.
+
+        The curated whitelist is OpenRouter/OpenAI-centric; Ollama owns its
+        own model catalog, so the chat gate must not reject it.
+        """
+        from server.api.routers import chat as chat_module
+        from server.api.routers import settings as settings_module
+
+        # Keep the whitelist tiny to prove the arbitrary id is NOT in it.
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "gpt-4o-mini"}),
+        )
+
+        cookie = auth_cookie
+        resp = client.put(
+            "/api/settings",
+            json={"provider_type": "ollama", "default_model": "llama3.2:70b"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+
+        mock_provider = MagicMock()
+        mock_complete = AsyncMock()
+        mock_complete.return_value = MagicMock(
+            text="Test explanation",
+            structured_data={"code": "print(2+2)", "explanation": "The sum is 4"},
+            model="llama3.2:70b",
+            provider="ollama",
+            usage=MagicMock(tokens_in=10, tokens_out=20, cost_usd=None),
+        )
+        mock_provider.complete = mock_complete
+        mock_build_provider = MagicMock(return_value=mock_provider)
+
+        mock_run_code = AsyncMock()
+        mock_run_code.return_value = {
+            "status": "ok",
+            "text": "4",
+            "figures": [],
+            "tables": [],
+        }
+
+        with patch.object(chat_module, "build_provider", mock_build_provider), \
+             patch("server.api.routers.chat.run_code", mock_run_code):
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "What is 2+2?"},
+                headers={"Cookie": cookie},
+            )
+
+        # NOT rejected with 422 model_not_allowed; the turn proceeds.
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        mock_build_provider.assert_called_once()
+        content = resp.content.decode()
+        assert "event: done" in content
+        assert "model_not_allowed" not in content

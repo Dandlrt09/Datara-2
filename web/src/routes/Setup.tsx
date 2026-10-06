@@ -10,18 +10,15 @@ import {
   RECOMMENDED_MODELS,
   priceLabel,
 } from "./settings/recommended";
+import { isModelRestricted } from "./settings/modelGate";
 
 type ProviderType = "openrouter" | "ollama" | "lmstudio" | "groq" | "custom";
 
-// OpenRouter-first (WU5): only OpenRouter is wired end-to-end today. The
-// other presets remain visible as "Próximamente" but are not selectable —
-// the global model whitelist makes them dead-ends (see D6).
-const SELECTABLE_PROVIDER = "openrouter";
-
-// Recommended OpenRouter models, shown before the live provider list so an
-// analyst always has a valid, priced choice even if the live fetch fails.
+// Recommended models are curated for OpenRouter only (B2 extends them), shown
+// before the live provider list so an analyst always has a valid, priced
+// choice even if the live fetch fails.
 const RECOMMENDED_OPENROUTER = RECOMMENDED_MODELS.filter(
-  (m) => m.provider === SELECTABLE_PROVIDER,
+  (m) => m.provider === "openrouter",
 );
 
 interface WizardForm {
@@ -81,10 +78,14 @@ export default function Setup() {
   const formValues = watch();
   const selectedPreset = PRESETS.find((p) => p.id === formValues.providerType);
 
-  // The server only accepts models in the env whitelist, so the wizard must
-  // offer exactly that intersection of the live list and allowed_models.
+  // Only OpenRouter and the legacy env fallback are gated by the curated
+  // whitelist (D6). Unrestricted providers (Groq / Ollama / LM Studio /
+  // Custom) offer their full live model list.
   const allowedModels = settings?.allowed_models ?? [];
-  const selectableModels = models.filter((m) => allowedModels.includes(m.id));
+  const restricted = isModelRestricted(formValues.providerType);
+  const selectableModels = restricted
+    ? models.filter((m) => allowedModels.includes(m.id))
+    : models;
 
   // Filtered model list for the search box (empty query → full list).
   const normalizedQuery = modelQuery.trim().toLowerCase();
@@ -102,10 +103,8 @@ export default function Setup() {
   useEffect(() => {
     if (settings) {
       reset({
-        // Only prefill a provider that is actually selectable; a saved
-        // not-yet-supported provider must not appear pre-checked.
-        providerType:
-          settings.provider_type === SELECTABLE_PROVIDER ? SELECTABLE_PROVIDER : "",
+        // Prefill any saved provider (all 5 presets are selectable since D6).
+        providerType: settings.provider_type ?? "",
         baseUrl: settings.base_url || "",
         apiKey: "",
         model: settings.default_model || "",
@@ -167,13 +166,22 @@ export default function Setup() {
         return; // validation/save failed (e.g. SSRF 422): stay on this step
       }
     } else if (step === 2) {
-      // Model step saves default_model. Reject anything outside the whitelist
-      // (covers the select, the fetch-failure fallback, and custom free-text).
+      // Model step saves default_model. Restricted providers (OpenRouter /
+      // env fallback) must stay inside the whitelist; unrestricted providers
+      // (Groq / Ollama / LM Studio / Custom) accept any non-empty model id.
       const model = data.model.trim();
+      if (!model) {
+        setModelError(COPY.MODEL_REQUIRED);
+        return;
+      }
       // Only enforce the whitelist when it is known: an absent or empty
       // whitelist (settings not loaded, or not configured) must not dead-end
       // setup — the chat-time gate and its recovery banner remain the backstop.
-      if (allowedModels.length > 0 && !allowedModels.includes(model)) {
+      if (
+        isModelRestricted(data.providerType) &&
+        allowedModels.length > 0 &&
+        !allowedModels.includes(model)
+      ) {
         setModelError(COPY.MODEL_NOT_ALLOWED);
         return;
       }
@@ -224,27 +232,18 @@ export default function Setup() {
           <div>
             <div style={{ marginBottom: 16 }}>
               {PRESETS.map((preset) => {
-                const comingSoon = preset.id !== SELECTABLE_PROVIDER;
                 return (
                   <div key={preset.id} style={{ marginBottom: 8 }}>
-                    <label style={comingSoon ? { color: "#999" } : undefined}>
+                    <label>
                       <input
                         type="radio"
                         value={preset.id}
-                        disabled={comingSoon}
                         {...register("providerType", { required: true })}
                       />
                       {" "}
                       {preset.label}
                       {preset.apiKeyRequired && " (clave de API requerida)"}
                     </label>
-                    {comingSoon && (
-                      <span
-                        style={{ marginLeft: 8, color: "#999", fontSize: "0.85em" }}
-                      >
-                        Próximamente
-                      </span>
-                    )}
                     {formValues.providerType === preset.id && preset.defaultBaseUrl && (
                       <div style={{ marginLeft: 24, fontSize: "0.9em", color: "#666" }}>
                         URL predeterminada: {preset.defaultBaseUrl}
@@ -283,6 +282,30 @@ export default function Setup() {
               </div>
             )}
 
+            {selectedPreset &&
+              !selectedPreset.apiKeyRequired &&
+              selectedPreset.id !== "custom" && (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: 12,
+                    backgroundColor: "#f0f0f0",
+                    borderRadius: 4,
+                  }}
+                >
+                  <p style={{ margin: "0 0 8px" }}>
+                    {COPY.KEYLESS_NO_KEY_REQUIRED(selectedPreset.label)}
+                  </p>
+                  <p style={{ margin: "0 0 4px" }}>
+                    {COPY.KEYLESS_ENDPOINT_LABEL}{" "}
+                    <code>{formValues.baseUrl || selectedPreset.defaultBaseUrl}</code>
+                  </p>
+                  <p style={{ margin: 0, fontSize: "0.9em", color: "#666" }}>
+                    {COPY.KEYLESS_SERVER_HINT(selectedPreset.label)}
+                  </p>
+                </div>
+              )}
+
             {selectedPreset?.apiKeyRequired && (
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", marginBottom: 4 }}>
@@ -315,7 +338,7 @@ export default function Setup() {
           <div>
             <h3>Modelo predeterminado</h3>
 
-            {RECOMMENDED_OPENROUTER.length > 0 && (
+            {formValues.providerType === "openrouter" && RECOMMENDED_OPENROUTER.length > 0 && (
               <div style={{ marginBottom: 16 }}>
                 <p style={{ fontWeight: "bold", margin: "0 0 8px" }}>Modelos recomendados</p>
                 {RECOMMENDED_OPENROUTER.map((m) => {

@@ -56,7 +56,7 @@ from server.services.llm_openai import OpenAIProvider
 from server.services.sandbox_local import run_code
 from server.services.sqlite_store import SqliteStore
 from server.services.provider_registry import build_provider, ProviderType
-from server.api.routers.settings import ALLOWED_MODELS
+from server.api.routers import settings as settings_module
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,21 @@ async def _resolve_model(
         model = settings["default_model"]
     
     return model
+
+
+async def _resolve_provider_type(
+    store: SqliteStore,
+    user_id: int,
+) -> str | None:
+    """Resolve the user's saved provider_type.
+
+    Returns ``None`` when unset, which is the legacy env fallback (still
+    gated by the curated whitelist per D6).
+    """
+    settings = await store.get_user_settings(user_id)
+    if settings and settings.get("provider_type"):
+        return settings["provider_type"]
+    return None
 
 
 async def _resolve_provider(
@@ -423,11 +438,13 @@ async def chat_stream(
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
     
-    # Chat-time model whitelist enforcement (design D8)
-    # Must happen BEFORE user message persistence and BEFORE SSE stream starts
+    # Chat-time model whitelist enforcement (design D8), provider-aware (D6).
+    # Must happen BEFORE user message persistence and BEFORE SSE stream starts.
     model = await _resolve_model(store, user_id)
-    if model not in ALLOWED_MODELS:
-        allowed_list = ", ".join(sorted(ALLOWED_MODELS))
+    provider_type = await _resolve_provider_type(store, user_id)
+    allowed = settings_module.allowed_models_for_provider(provider_type)
+    if allowed is not None and model not in allowed:
+        allowed_list = ", ".join(sorted(allowed))
         raise HTTPException(
             status_code=422,
             detail={

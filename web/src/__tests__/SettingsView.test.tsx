@@ -412,4 +412,54 @@ describe("SettingsView", () => {
     const guideLink = screen.getByRole("link", { name: /abrir openrouter/i });
     expect(guideLink.getAttribute("target")).toBe("_blank");
   });
+
+  it("renders a free-text model input for an unrestricted provider (D6)", () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: "llama3.2:latest",
+        allowed_models: ["gpt-4o"],
+        provider_type: "ollama",
+        base_url: "http://localhost:11434/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    // No whitelist dropdown; a text input bound to default_model instead.
+    expect(screen.queryByRole("combobox", { name: "Modelo predeterminado" })).toBeNull();
+    const modelInput = screen.getByLabelText("Modelo predeterminado") as HTMLInputElement;
+    expect(modelInput.tagName).toBe("INPUT");
+    expect(modelInput.value).toBe("llama3.2:latest");
+  });
+
+  it("submits a free-text model for an unrestricted provider", async () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "ollama",
+        base_url: "http://localhost:11434/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Modelo predeterminado"), {
+      target: { value: "mi-modelo-local" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
+
+    await waitFor(() =>
+      expect(mutateAsyncMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          default_model: "mi-modelo-local",
+          provider_type: "ollama",
+        }),
+      ),
+    );
+  });
 });

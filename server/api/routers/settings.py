@@ -69,6 +69,26 @@ def _load_allowed_models() -> frozenset[str]:
 
 ALLOWED_MODELS = _load_allowed_models()
 
+# D6 — provider-aware model gate. The curated whitelist is OpenRouter/OpenAI
+# centric, so enforcing it for every provider turned Groq / Ollama / LM Studio
+# / Custom into dead-ends at chat time (model_not_allowed). These providers
+# own their model catalogs and are trusted; only OpenRouter and the legacy
+# env-fallback (provider_type is None) stay gated.
+_UNRESTRICTED_PROVIDERS = frozenset({"groq", "ollama", "lmstudio", "custom"})
+
+
+def allowed_models_for_provider(provider_type: str | None) -> frozenset[str] | None:
+    """Return the curated whitelist for a provider, or ``None`` when ungated.
+
+    D6 provider-aware gate: ``None`` means "no gate" — the caller must skip
+    the model check entirely. Only OpenRouter and the legacy env fallback
+    (``provider_type is None``) are restricted to ``ALLOWED_MODELS``; Groq,
+    Ollama, LM Studio and Custom return ``None``.
+    """
+    if provider_type in _UNRESTRICTED_PROVIDERS:
+        return None
+    return ALLOWED_MODELS
+
 
 class SettingsResponse(BaseModel):
     user_id: int

@@ -750,8 +750,14 @@ class TestCostNullForUnknownModel:
         the price map becomes reachable in production.
         """
         unknown = "some/unknown-slug"
+        # The chat gate reads ALLOWED_MODELS through the settings module (D6);
+        # no provider_type is saved, so the legacy env fallback stays gated.
+        from server.api.routers import settings as settings_module
+
         monkeypatch.setattr(
-            chat_router, "ALLOWED_MODELS", chat_router.ALLOWED_MODELS | {unknown}
+            settings_module,
+            "ALLOWED_MODELS",
+            settings_module.ALLOWED_MODELS | {unknown},
         )
         user_id = asyncio.run(store.get_user_by_email("chat@example.com"))["id"]
         asyncio.run(
