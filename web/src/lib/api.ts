@@ -36,8 +36,12 @@ async function request<T>(
 
 export const api = {
   get: <T>(url: string) => request<T>(url),
-  post: <T>(url: string, data?: unknown) =>
-    request<T>(url, { method: "POST", body: data ? JSON.stringify(data) : undefined }),
+  post: <T>(url: string, data?: unknown, init?: RequestInit) =>
+    request<T>(url, {
+      method: "POST",
+      body: data ? JSON.stringify(data) : undefined,
+      ...init,
+    }),
   put: <T>(url: string, data?: unknown) =>
     request<T>(url, { method: "PUT", body: data ? JSON.stringify(data) : undefined }),
   patch: <T>(url: string, data?: unknown) =>

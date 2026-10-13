@@ -16,11 +16,50 @@ export interface ModelsResponse {
   error: FetchModelsError | null;
 }
 
+/** Client-side cap for the probe call. Larger than the server's 5s httpx
+ * timeout so the server usually answers first; this only catches a hung
+ * transport (proxy/DNS/server never responding) that would otherwise leave
+ * the caller in its "checking" state forever. */
+export const MODEL_FETCH_TIMEOUT_MS = 15000;
+
 export function useFetchModels() {
   const mutation = useMutation({
     mutationFn: async (): Promise<ModelsResponse> => {
-      const response = await api.post<ModelsResponse>("/api/settings/models");
-      return response;
+      const controller = new AbortController();
+      let timedOut = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<ModelsResponse>((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          resolve({
+            models: [],
+            error: { code: "timeout", message: "Request timed out" },
+          });
+        }, MODEL_FETCH_TIMEOUT_MS);
+      });
+      try {
+        // Race instead of relying solely on the fetch abort: a hung
+        // transport (proxy/DNS) may never surface the AbortError, and the
+        // same shape the server returns still reaches the caller.
+        return await Promise.race([
+          api.post<ModelsResponse>("/api/settings/models", undefined, {
+            signal: controller.signal,
+          }),
+          timeout,
+        ]);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return {
+            models: [],
+            error: { code: "timeout", message: "Request timed out" },
+          };
+        }
+        throw err;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        if (timedOut) controller.abort();
+      }
     },
   });
 

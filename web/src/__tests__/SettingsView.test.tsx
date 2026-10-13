@@ -523,4 +523,106 @@ describe("SettingsView", () => {
       ),
     );
   });
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function renderOpenRouterForm() {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: false,
+        default_model: null,
+        allowed_models: [],
+        provider_type: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+  }
+
+  it("reports a probe rejection as saved-unverified after a successful save (R3-001)", async () => {
+    renderOpenRouterForm();
+    fetchModelsMock.mockRejectedValue(new Error("network down"));
+
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/guardado, pero falló la conexión: network down/i)).toBeTruthy(),
+    );
+    expect(screen.getByRole("alert").textContent).toMatch(/falló la conexión/i);
+  });
+
+  it("falls back to the submitted provider when the PUT response omits provider_type (R3-003)", async () => {
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    render(<SettingsView />);
+    mutateAsyncMock.mockResolvedValue({
+      user_id: 1,
+      has_api_key: false,
+      provider_type: undefined,
+      base_url: "https://api.example.com/v1",
+      default_model: null,
+      allowed_models: [],
+    });
+
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
+      target: { value: "https://api.example.com/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
+
+    await waitFor(() => expect(screen.getByText(/guardado · conectado/i)).toBeTruthy());
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows in-flight button states during save and probe, then connected (R3-004, WU4-R3-001)", async () => {
+    renderOpenRouterForm();
+    const savedSettings = {
+      user_id: 1,
+      has_api_key: false,
+      provider_type: "openrouter" as const,
+      base_url: "https://openrouter.ai/api/v1",
+      default_model: null,
+      allowed_models: [] as string[],
+    };
+    const putGate = deferred<typeof savedSettings>();
+    const probeGate = deferred<{ models: { id: string; name: string }[]; error: null }>();
+    mutateAsyncMock.mockReturnValue(putGate.promise);
+    fetchModelsMock.mockReturnValue(probeGate.promise);
+
+    fireEvent.click(screen.getByRole("button", { name: /^guardar$/i }));
+
+    const saving = (await waitFor(() =>
+      screen.getByRole("button", { name: "Guardando..." }),
+    )) as HTMLButtonElement;
+    expect(saving.disabled).toBe(true);
+
+    putGate.resolve(savedSettings);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Comprobando..." })).toBeTruthy());
+    const checking = screen.getByRole("button", { name: "Comprobando..." }) as HTMLButtonElement;
+    expect(checking.disabled).toBe(true);
+
+    // Unasserted literals from the WU4 changed-literals sweep.
+    expect(
+      screen.getByText("Predeterminado del servidor (variable OPENAI_MODEL)"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Se guarda en el servidor y nunca se devuelve al navegador\. Si se deja vacía, se usa la variable de entorno OPENAI_API_KEY\./,
+      ),
+    ).toBeTruthy();
+
+    probeGate.resolve({ models: [], error: null });
+    await waitFor(() => expect(screen.getByText(/guardado · conectado/i)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Comprobando..." })).toBeNull();
+  });
 });
