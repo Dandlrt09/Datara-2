@@ -174,8 +174,15 @@ export function catalogFor(provider: string | null | undefined): {
   };
 }
 
+/** Format a per-million USD rate: 2 decimals minimum, a 3rd only when needed. */
+function formatRate(value: number): string {
+  const trimmed = value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  const [whole, decimals = ""] = trimmed.split(".");
+  return `${whole}.${decimals.padEnd(2, "0")}`;
+}
+
 /** Human price hint for an analyst: either a "Gratis" tag or both token rates. */
 export function priceLabel(m: RecommendedModel): string {
   if (m.tier === "free") return "Gratis";
-  return `Entrada $${m.inputUsdPerMillion.toFixed(2)} / Salida $${m.outputUsdPerMillion.toFixed(2)} por 1M tokens`;
+  return `Entrada $${formatRate(m.inputUsdPerMillion)} / Salida $${formatRate(m.outputUsdPerMillion)} por 1M tokens`;
 }

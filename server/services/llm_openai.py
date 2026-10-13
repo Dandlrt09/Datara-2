@@ -78,6 +78,8 @@ class OpenAIProvider:
         timeout: Request timeout in seconds (default: 60).
         base_url: Custom base URL. If ``None``, falls back to the
             ``OPENAI_BASE_URL`` environment variable, then OpenAI default.
+        provider_type: Provider type (e.g. ``"groq"``, ``"openrouter"``), or
+            ``None`` to price only against the global cost map.
     """
 
     def __init__(
@@ -86,9 +88,11 @@ class OpenAIProvider:
         model: str = "gpt-4o-2024-08-06",
         timeout: float = _DEFAULT_TIMEOUT,
         base_url: str | None = None,
+        provider_type: str | None = None,
     ) -> None:
         self._model = model
         self._timeout = timeout
+        self._provider_type = provider_type
         self._client = AsyncOpenAI(api_key=api_key, timeout=timeout, base_url=base_url)
 
     # ── LLMProvider protocol ─────────────────────────────────────────────────
@@ -225,6 +229,7 @@ class OpenAIProvider:
                     response.usage.prompt_tokens if response.usage else 0,
                     response.usage.completion_tokens if response.usage else 0,
                     self._model,
+                    self._provider_type,
                 ),
             )
 
@@ -370,12 +375,20 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
     "thinkingmachines/inkling:free": (0.0, 0.0),
     "nvidia/nemotron-3-ultra-550b-a55b:free": (0.0, 0.0),
     "google/gemma-4-31b-it:free": (0.0, 0.0),
-    # Curated Groq catalog (web/src/routes/settings/recommended.ts, public docs
-    # console.groq.com/docs/models 2026-10-06). Groq is unrestricted (no
-    # whitelist); full slugs avoid collisions and carry the published rates.
-    "openai/gpt-oss-120b": (0.15 / _PER_MILLION_TOKENS, 0.60 / _PER_MILLION_TOKENS),
-    "openai/gpt-oss-20b": (0.075 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
-    "qwen/qwen3.8-27b": (0.80 / _PER_MILLION_TOKENS, 4.00 / _PER_MILLION_TOKENS),
+}
+
+# Provider-scoped rates keyed by (provider_type, model slug). Curated Groq
+# catalog (web/src/routes/settings/recommended.ts, public docs
+# console.groq.com/docs/models 2026-10-06). Groq is unrestricted (no
+# whitelist); full slugs avoid collisions and carry the published rates.
+# Stored per-token, like _MODEL_COST_MAP, because _estimate_cost multiplies
+# each rate by a token count. These slugs must NOT live in _MODEL_COST_MAP:
+# the same slug under a different provider would otherwise be priced with
+# Groq's rates (a wrong number instead of the honest NULL).
+_PROVIDER_SCOPED_RATES: dict[tuple[str, str], tuple[float, float]] = {
+    ("groq", "openai/gpt-oss-120b"): (0.15 / _PER_MILLION_TOKENS, 0.60 / _PER_MILLION_TOKENS),
+    ("groq", "openai/gpt-oss-20b"): (0.075 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
+    ("groq", "qwen/qwen3.8-27b"): (0.80 / _PER_MILLION_TOKENS, 4.00 / _PER_MILLION_TOKENS),
 }
 
 # gpt-4o is the app default, but it is NOT a general fallback: pricing a
@@ -383,40 +396,62 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
 # wrong number. Unknown models yield an unavailable (NULL) cost instead.
 
 
-def _lookup_rates(model: str) -> tuple[float, float] | None:
+def _lookup_rates(
+    model: str, provider_type: str | None = None
+) -> tuple[float, float] | None:
     """Resolve per-token (input, output) USD rates, or ``None`` when unpriced.
 
     Accepts both bare ids ("gpt-4.1-mini") and provider-prefixed slugs
     ("openai/gpt-4.1-mini") so OpenRouter-style names reuse one price entry.
+
+    When ``provider_type`` is truthy, provider-scoped rates
+    (``_PROVIDER_SCOPED_RATES``) take precedence: the exact (provider, slug)
+    key, then the slug's bare id. A slug scoped ONLY to a different provider
+    is not globally priced, so the global fallback misses and this returns
+    ``None`` — an honest NULL rather than a wrong number.
+
     Deliberately silent: callers decide whether a miss deserves a log.
     """
+    if provider_type:
+        rates = _PROVIDER_SCOPED_RATES.get((provider_type, model))
+        if rates is None and "/" in model:
+            rates = _PROVIDER_SCOPED_RATES.get(
+                (provider_type, model.rsplit("/", 1)[-1])
+            )
+        if rates is not None:
+            return rates
+
     rates = _MODEL_COST_MAP.get(model)
     if rates is None and "/" in model:
         rates = _MODEL_COST_MAP.get(model.rsplit("/", 1)[-1])
     return rates
 
 
-def has_price_entry(model: str) -> bool:
-    """True when ``model`` has a published price in ``_MODEL_COST_MAP``.
+def has_price_entry(model: str, provider_type: str | None = None) -> bool:
+    """True when ``model`` has a published price for ``provider_type``.
 
     Backs the startup check that flags allowed-but-unpriced models. Never
     logs, so it is safe to call once per allowed model at boot.
     """
-    return _lookup_rates(model) is not None
+    return _lookup_rates(model, provider_type) is not None
 
 
-def unpriced_models(models: Iterable[str]) -> list[str]:
+def unpriced_models(
+    models: Iterable[str], provider_type: str | None = None
+) -> list[str]:
     """Sorted subset of ``models`` with no price entry (operator signal)."""
-    return sorted(m for m in models if not has_price_entry(m))
+    return sorted(m for m in models if not has_price_entry(m, provider_type))
 
 
-def _cost_rates(model: str) -> tuple[float, float] | None:
+def _cost_rates(
+    model: str, provider_type: str | None = None
+) -> tuple[float, float] | None:
     """Resolve per-token (input, output) USD rates for a model id.
 
     Unknown models return ``None`` — no price entry exists, so the cost is
     unavailable rather than guessed — and log one warning per call.
     """
-    rates = _lookup_rates(model)
+    rates = _lookup_rates(model, provider_type)
     if rates is None:
         logger.warning(
             "Unknown model %r has no price entry; cost will be recorded as "
@@ -431,13 +466,14 @@ def _estimate_cost(
     tokens_in: int,
     tokens_out: int,
     model: str,
+    provider_type: str | None = None,
 ) -> float | None:
     """Estimate the cost in USD for a model call.
 
     Returns ``None`` when the model has no price entry, so callers persist
     an unavailable cost instead of a misleading number.
     """
-    rates = _cost_rates(model)
+    rates = _cost_rates(model, provider_type)
     if rates is None:
         return None
     return (tokens_in * rates[0]) + (tokens_out * rates[1])

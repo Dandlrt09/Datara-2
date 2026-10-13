@@ -112,6 +112,7 @@ def build_provider(
         model=model,
         timeout=timeout,
         base_url=base_url,
+        provider_type=provider_type,
     )
 
 

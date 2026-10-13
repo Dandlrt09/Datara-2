@@ -611,24 +611,58 @@ class TestPriceEntryLookup:
         assert cost == 0.0
 
     def test_groq_catalog_slugs_are_all_priced(self):
-        """The curated Groq slugs (B2/WU5.1) carry full-slug price entries."""
+        """The curated Groq slugs (B2/WU5.1) carry provider-scoped entries."""
         for slug in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
-            assert has_price_entry(slug) is True
+            assert has_price_entry(slug, "groq") is True
 
     def test_groq_paid_model_uses_catalog_rates(self):
         """GPT-OSS 120B prices at its published Groq rates, not a fallback."""
         # 1000 * (0.15/1M) + 500 * (0.60/1M) = 0.00015 + 0.0003
         cost = _estimate_cost(
-            tokens_in=1000, tokens_out=500, model="openai/gpt-oss-120b"
+            tokens_in=1000,
+            tokens_out=500,
+            model="openai/gpt-oss-120b",
+            provider_type="groq",
         )
         assert cost == pytest.approx(0.00045, rel=1e-9)
+
+    def test_groq_20b_uses_scoped_catalog_rates(self):
+        """GPT-OSS 20B resolves its 3-decimal input rate under Groq."""
+        # 1000 * (0.075/1M) + 500 * (0.30/1M) = 0.000075 + 0.00015
+        cost = _estimate_cost(
+            tokens_in=1000,
+            tokens_out=500,
+            model="openai/gpt-oss-20b",
+            provider_type="groq",
+        )
+        assert cost == pytest.approx(0.000225, rel=1e-9)
 
     def test_groq_qwen_preview_uses_catalog_rates(self):
         # 1000 * (0.80/1M) + 500 * (4.00/1M) = 0.0008 + 0.002
         cost = _estimate_cost(
-            tokens_in=1000, tokens_out=500, model="qwen/qwen3.8-27b"
+            tokens_in=1000,
+            tokens_out=500,
+            model="qwen/qwen3.8-27b",
+            provider_type="groq",
         )
         assert cost == pytest.approx(0.0028, rel=1e-9)
+
+    def test_groq_slug_is_not_globally_priced(self):
+        """A Groq-scoped slug must not price under another provider (or none).
+
+        Scoping protects cost honesty: the same slug on OpenRouter has no
+        published rate here, so it yields None rather than Groq's rates.
+        """
+        assert (
+            _estimate_cost(
+                tokens_in=1000,
+                tokens_out=500,
+                model="openai/gpt-oss-120b",
+                provider_type="openrouter",
+            )
+            is None
+        )
+        assert has_price_entry("openai/gpt-oss-120b") is False
 
 
 # ── Seed kwarg passthrough ──────────────────────────────────────────────────

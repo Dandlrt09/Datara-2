@@ -61,8 +61,8 @@ describe("recommended catalog", () => {
     const gpt20 = groq.find((m) => m.model === "openai/gpt-oss-20b")!;
     expect(gpt20.inputUsdPerMillion).toBe(0.075);
     expect(gpt20.outputUsdPerMillion).toBe(0.3);
-    // JS (0.075).toFixed(2) is "0.07" (binary float); the stored rate is exact.
-    expect(priceLabel(gpt20)).toBe("Entrada $0.07 / Salida $0.30 por 1M tokens");
+    // formatRate shows the exact stored rate: a needed 3rd decimal survives.
+    expect(priceLabel(gpt20)).toBe("Entrada $0.075 / Salida $0.30 por 1M tokens");
 
     const qwen = groq.find((m) => m.model === "qwen/qwen3.8-27b")!;
     expect(qwen.label).toContain("preview");
