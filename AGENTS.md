@@ -2,6 +2,25 @@
 
 Guidance for coding agents (Claude Code, opencode, etc.) working in this repository.
 
+## Working with the maintainer (teaching mode)
+
+The maintainer is rebuilding Datara while learning it. Explaining is part of the
+work, not an extra: an unexplained change counts as an unfinished change.
+
+- **Explain before you edit, in plain Rioplatense Spanish** (voseo, natural prose,
+  no bullet-point telegrams). What problem we are solving, why it exists, what we
+  are about to touch, and what could break — then make the change.
+- **Translate the jargon the first time it appears** in a session (whitelist, gate,
+  probe, SSRF, lineage, receipt…): one sentence in criollo, then the technical name.
+- **Teach the why.** For each design decision, say what the alternative was and why
+  we did not take it. No unexplained code dumps.
+- **Name the file and its job**, so the change has a place in the map of the app.
+- **Flag scope growth out loud.** If the fix ends up touching more than what was
+  explained, stop and explain the extra part before doing it.
+- **Close with how to verify it**, in criollo: what to click in the browser and what
+  should appear.
+- Code, comments, commits and docs stay in English; the explanation is Spanish.
+
 ## Stack
 
 - **Backend**: FastAPI + uvicorn, Python venv at `.venv/`. Entry: `server/api/main.py` (serves the built SPA from `web/dist`).
