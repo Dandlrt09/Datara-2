@@ -566,7 +566,20 @@ class TestPriceEntryLookup:
         assert has_price_entry("openai/gpt-4.1-mini") is True
 
     def test_unknown_model_has_no_price(self):
-        assert has_price_entry("meta-llama/llama-3.3-70b-instruct") is False
+        assert has_price_entry("acme/unknown-model") is False
+
+    def test_allowed_llama_slug_has_openrouter_price(self):
+        """DATARA_ALLOWED_MODELS ships this OpenRouter slug, so live turns must
+        show a real cost. Rates: OpenRouter list price $0.10 in / $0.32 out
+        per 1M tokens (default DeepInfra route), verified against
+        openrouter.ai/api/v1/models/meta-llama/llama-3.3-70b-instruct/endpoints.
+        """
+        assert has_price_entry("meta-llama/llama-3.3-70b-instruct") is True
+        # 1000 * (0.10/1M) + 500 * (0.32/1M) = 0.0001 + 0.00016
+        cost = _estimate_cost(
+            tokens_in=1000, tokens_out=500, model="meta-llama/llama-3.3-70b-instruct"
+        )
+        assert cost == pytest.approx(0.00026, rel=1e-9)
 
     def test_has_price_entry_is_silent(self, caplog):
         """The startup check walks every allowed model, so this must not

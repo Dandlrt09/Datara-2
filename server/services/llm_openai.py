@@ -365,6 +365,12 @@ _MODEL_COST_MAP: dict[str, tuple[float, float]] = {
     "gpt-4.1-mini": (0.40 / _PER_MILLION_TOKENS, 1.60 / _PER_MILLION_TOKENS),
     "gpt-4.1-nano": (0.10 / _PER_MILLION_TOKENS, 0.40 / _PER_MILLION_TOKENS),
     "z-ai/glm-5.3-flash": (0.05 / _PER_MILLION_TOKENS, 0.30 / _PER_MILLION_TOKENS),
+    # DATARA_ALLOWED_MODELS entry (OpenRouter list price, default route).
+    # Verified 2026-10-15 against
+    # openrouter.ai/api/v1/models/meta-llama/llama-3.3-70b-instruct/endpoints
+    # (DeepInfra route: $0.10/M in, $0.32/M out). Without this entry live
+    # turns for this slug report cost as unavailable.
+    "meta-llama/llama-3.3-70b-instruct": (0.10 / _PER_MILLION_TOKENS, 0.32 / _PER_MILLION_TOKENS),
     # Recommended OpenRouter catalog (web/src/routes/settings/recommended.ts).
     # Full slugs avoid collisions with same-named bare ids; free models are 0.
     "anthropic/claude-sonnet-5.5": (2.00 / _PER_MILLION_TOKENS, 10.00 / _PER_MILLION_TOKENS),
