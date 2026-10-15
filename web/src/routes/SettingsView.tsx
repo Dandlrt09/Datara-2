@@ -6,6 +6,7 @@ import { PRESETS } from "./setup/presets";
 import { useFetchModels } from "./setup/useFetchModels";
 import ProviderGuide from "./settings/ProviderGuide";
 import { isModelRestricted } from "./settings/modelGate";
+import { COPY } from "./setup/copy";
 import {
   catalogFor,
   modelsForProvider,
@@ -35,13 +36,23 @@ interface SettingsForm {
   default_model?: string;
 }
 
-/** Extract a human-readable reason from an ApiError (FastAPI 422 detail). */
+/** Extract a human-readable reason from an ApiError (FastAPI 422 detail).
+ *
+ * Three detail shapes reach here: a plain string, FastAPI's validation list
+ * of {msg}, and the domain rejection object {code, message} the SSRF guard
+ * raises (BaseUrlRejected). The last one must not surface as a bare
+ * "API error 422": known codes map to the same Spanish copy the wizard uses.
+ */
 function saveErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "body" in error) {
     const detail = (error as { body?: { detail?: unknown } }).body?.detail;
     if (typeof detail === "string") return detail;
     if (Array.isArray(detail) && detail[0] && typeof detail[0] === "object") {
       return String((detail[0] as { msg?: unknown }).msg ?? "invalid value");
+    }
+    if (detail && typeof detail === "object") {
+      const code = (detail as { code?: unknown }).code;
+      if (code === "invalid_base_url") return COPY.SSRF_REJECTION;
     }
   }
   return error instanceof Error ? error.message : "unknown error";

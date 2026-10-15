@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import SettingsView from "../routes/SettingsView";
+import { ApiError } from "../lib/api";
+import { COPY } from "../routes/setup/copy";
 
 const { useSettingsMock, mutateAsyncMock, fetchModelsMock } = vi.hoisted(() => ({
   useSettingsMock: vi.fn(),
@@ -351,6 +353,38 @@ describe("SettingsView", () => {
     );
     expect(fetchModelsMock).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("shows the friendly SSRF copy when the base_url is rejected", async () => {
+    // The API answers a rejected base_url with 422 and a {code,message}
+    // detail object (server/api/routers/settings.py, BaseUrlRejected). The
+    // wizard maps that code to Spanish copy; the hub must too, instead of
+    // leaking the raw "API error 422".
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, default_model: null, allowed_models: [] },
+      isLoading: false,
+    });
+    mutateAsyncMock.mockRejectedValue(
+      new ApiError(422, {
+        detail: {
+          code: "invalid_base_url",
+          message: "base_url must point to a public host",
+        },
+      }),
+    );
+    render(<SettingsView />);
+
+    fireEvent.change(screen.getByLabelText("Proveedor"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("URL base"), {
+      target: { value: "http://localhost:1234/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    const alert = screen.getByRole("alert").textContent ?? "";
+    expect(alert).toContain(COPY.SSRF_REJECTION);
+    expect(alert).not.toMatch(/API error 422/);
+    expect(fetchModelsMock).not.toHaveBeenCalled();
   });
 
   it("shows plain success without probing when the provider is cleared", async () => {
