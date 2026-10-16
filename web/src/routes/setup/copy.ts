@@ -5,6 +5,30 @@ export const COPY = {
   // Step labels
   STEPS: ["Proveedor", "Credenciales", "Modelo", "Prueba de conexión", "Listo"],
 
+  // Step labels of the fused guided flow (provider -> credentials -> model).
+  // The connection test and the confirmation are no longer steps: they are the
+  // result of saving, which is what the user can actually observe.
+  GUIDED_STEPS: ["Proveedor", "Credenciales", "Modelo", "Resultado"],
+
+  // Provider step (shared by every screen since the fusion).
+  PROVIDER_REQUIRED: "Selecciona un proveedor",
+  // A stored provider that no shipped preset carries is offered, never
+  // dropped: the label keeps the raw id visible so it can be recognized.
+  LEGACY_PROVIDER_LABEL: (id: string) => `Otro (${id})`,
+  LEGACY_PROVIDER_HINT:
+    "Este proveedor quedó guardado por una versión anterior de Datara. Al guardar, revisá que la URL base sea la correcta.",
+
+  // Honest save lifecycle copy: a successful PUT is not enough to claim
+  // "Connected" — the probe has the last word.
+  STATUS: {
+    SAVED: "Ajustes guardados",
+    CONNECTED: "Guardado · Conectado",
+    UNVERIFIED: (detail: string) => `Guardado, pero falló la conexión: ${detail}`,
+    SAVE_ERROR: (detail: string) => `No se pudieron guardar los ajustes: ${detail}`,
+    SAVING: "Guardando...",
+    CHECKING: "Comprobando...",
+  },
+
   // Buttons
   BUTTONS: {
     PREVIOUS: "Anterior",
