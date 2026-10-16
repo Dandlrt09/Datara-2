@@ -101,9 +101,17 @@ export default function Setup() {
   // step pre-filled from current settings; there is no server-side wizard state).
   useEffect(() => {
     if (settings) {
+      // Prefill any saved provider (all 5 presets are selectable since D6).
+      // A stored value outside the presets (legacy row) is not a radio any
+      // option carries: keep the form value honest ("") instead of leaving a
+      // phantom provider the UI can neither show nor select. RHF's radio
+      // `required` already blocks advancing while nothing is checked, so this
+      // is state hygiene, not a live symptom (R3-PREFILL, B1 advisories).
+      const savedProvider = settings.provider_type ?? "";
       reset({
-        // Prefill any saved provider (all 5 presets are selectable since D6).
-        providerType: settings.provider_type ?? "",
+        providerType: PRESETS.some((p) => p.id === savedProvider)
+          ? savedProvider
+          : "",
         baseUrl: settings.base_url || "",
         apiKey: "",
         model: settings.default_model || "",

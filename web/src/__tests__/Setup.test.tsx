@@ -481,6 +481,27 @@ describe("Setup", () => {
     expect(ollamaRadio.checked).toBe(true);
   });
 
+  it("leaves an unknown saved provider_type unselected so the required guard holds", async () => {
+    setupMocks({
+      provider_type: "legacy-provider",
+      base_url: "https://legacy.example.com/v1",
+      default_model: "legacy-model",
+    });
+    renderWizard();
+
+    // An unknown stored value is not a preset: no radio is selected and the
+    // form value stays "" (R3-PREFILL). Locks the state the advisory asked
+    // for, so a phantom provider can never become load-bearing.
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.every((r) => !r.checked)).toBe(true);
+
+    clickNext();
+
+    expect(await screen.findByText("Selecciona un proveedor")).toBeTruthy();
+    expect(screen.getByLabelText("Ollama")).toBeTruthy();
+    expect(screen.queryByPlaceholderText("https://...")).toBeNull();
+  });
+
   it("offers the full live model list for an unrestricted provider and accepts any model", async () => {
     mockModelsState(
       [
