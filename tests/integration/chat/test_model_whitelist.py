@@ -418,3 +418,112 @@ class TestModelWhitelist:
         content = resp.content.decode()
         assert "event: done" in content
         assert "model_not_allowed" not in content
+
+    def test_restricted_provider_model_gated(
+        self, client, auth_cookie, session_id, monkeypatch
+    ):
+        """D6 mirror case: a restricted provider (openrouter) keeps the gate.
+
+        Same setup as the unrestricted test above, but the provider stays
+        gated: an arbitrary id is rejected at chat time, no LLM call happens
+        and nothing is persisted.
+        """
+        from server.api.routers import settings as settings_module
+
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "gpt-4o-mini"}),
+        )
+
+        cookie = auth_cookie
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "openrouter",
+                "default_model": "z-ai/glm-5.3-flash",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+
+        resp = client.post(
+            f"/api/sessions/{session_id}/chat",
+            json={"question": "What is 2+2?"},
+            headers={"Cookie": cookie},
+        )
+
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert detail["code"] == "model_not_allowed"
+        assert "z-ai/glm-5.3-flash" in detail["message"]
+
+        messages = client.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Cookie": cookie},
+        ).json()
+        assert messages == []
+
+    def test_restricted_provider_forwards_the_resolved_model(
+        self, client, auth_cookie, session_id, monkeypatch
+    ):
+        """D6: the gated provider forwards the resolved whitelisted model.
+
+        The saved model (``gpt-4o``) must be the one handed to the provider —
+        not the ``_DEFAULT_MODEL`` fallback (``gpt-4o-2024-08-06``, outside the
+        tiny whitelist), which the gate would have rejected.
+        """
+        from server.api.routers import chat as chat_module
+        from server.api.routers import settings as settings_module
+
+        monkeypatch.setattr(
+            settings_module,
+            "ALLOWED_MODELS",
+            frozenset({"gpt-4o", "gpt-4o-mini"}),
+        )
+
+        cookie = auth_cookie
+        resp = client.put(
+            "/api/settings",
+            json={
+                "provider_type": "openrouter",
+                "default_model": "gpt-4o",
+                "api_key": "sk-test-key",
+            },
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+
+        mock_provider = MagicMock()
+        mock_complete = AsyncMock()
+        mock_complete.return_value = MagicMock(
+            text="Test explanation",
+            structured_data={"code": "print(2+2)", "explanation": "The sum is 4"},
+            model="gpt-4o",
+            provider="openai",
+            usage=MagicMock(tokens_in=10, tokens_out=20, cost_usd=0.001),
+        )
+        mock_provider.complete = mock_complete
+        mock_build_provider = MagicMock(return_value=mock_provider)
+
+        mock_run_code = AsyncMock()
+        mock_run_code.return_value = {
+            "status": "ok",
+            "text": "4",
+            "figures": [],
+            "tables": [],
+        }
+
+        with patch.object(chat_module, "build_provider", mock_build_provider), \
+             patch("server.api.routers.chat.run_code", mock_run_code):
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "What is 2+2?"},
+                headers={"Cookie": cookie},
+            )
+
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        mock_build_provider.assert_called_once()
+        assert mock_build_provider.call_args.kwargs["model"] == "gpt-4o"
+        assert mock_complete.call_count >= 1
