@@ -74,6 +74,11 @@ ALLOWED_MODELS = _load_allowed_models()
 # / Custom into dead-ends at chat time (model_not_allowed). These providers
 # own their model catalogs and are trusted; only OpenRouter and the legacy
 # env-fallback (provider_type is None) stay gated.
+#
+# This frozenset is the source of truth. The web UI mirrors it in
+# web/src/routes/settings/modelGate.ts so the wizard and the hub render the
+# model list the server will accept; tests/unit/architecture/
+# test_model_gate_parity.py fails the build when the mirror drifts.
 _UNRESTRICTED_PROVIDERS = frozenset({"groq", "ollama", "lmstudio", "custom"})
 
 
