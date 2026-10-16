@@ -16,10 +16,6 @@ vi.mock("../routes/SettingsView", () => ({
 vi.mock("../routes/ArchiveList", () => ({
   default: () => <div data-testid="archives-view"><h1>Archives</h1></div>,
 }));
-vi.mock("../routes/Setup", () => ({
-  default: () => <div data-testid="setup-view"><h1>Setup</h1></div>,
-}));
-
 const { useSettingsMock } = vi.hoisted(() => ({ useSettingsMock: vi.fn() }));
 
 vi.mock("../queries/useSettings", () => ({
@@ -79,7 +75,7 @@ describe("Navigation smoke (R-TestWall-3)", () => {
   });
 });
 
-describe("Settings fusion — arrangement variants and first-use landing", () => {
+describe("Ajustes — una sola pantalla y el aterrizaje de primer uso", () => {
   beforeEach(() => {
     useSettingsMock.mockReset();
     useSettingsMock.mockReturnValue({
@@ -90,37 +86,17 @@ describe("Settings fusion — arrangement variants and first-use landing", () =>
     });
   });
 
-  it("variant A sends /app/setup back to the one settings screen", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/setup?variante=a", path: "/app/*" });
+  it("sends the old /app/setup URL back to the single settings screen", async () => {
+    renderWithProviders(<AppShell />, { route: "/app/setup", path: "/app/*" });
 
     expect(await screen.findByTestId("settings-view")).toBeTruthy();
-    expect(screen.queryByTestId("setup-view")).toBeNull();
   });
 
-  it("variant B sends /app/setup back to the one settings screen", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/setup?variante=b", path: "/app/*" });
+  it("lands on Ajustes when nothing is configured", async () => {
+    renderWithProviders(<AppShell />, { route: "/app", path: "/app/*" });
 
+    // The guided flow is Ajustes' own default mode there (S5).
     expect(await screen.findByTestId("settings-view")).toBeTruthy();
-    expect(screen.queryByTestId("setup-view")).toBeNull();
-  });
-
-  it("variant C keeps the guided route reachable", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/setup?variante=c", path: "/app/*" });
-
-    expect(await screen.findByTestId("setup-view")).toBeTruthy();
-  });
-
-  it("lands on the guided flow when nothing is configured", async () => {
-    renderWithProviders(<AppShell />, { route: "/app?variante=a", path: "/app/*" });
-
-    // Variant A carries the guided flow inside the settings screen.
-    expect(await screen.findByTestId("settings-view")).toBeTruthy();
-  });
-
-  it("lands on the guided route of variant C when nothing is configured", async () => {
-    renderWithProviders(<AppShell />, { route: "/app?variante=c", path: "/app/*" });
-
-    expect(await screen.findByTestId("setup-view")).toBeTruthy();
   });
 
   it("lands on chat once a provider and a model are stored", async () => {
@@ -135,7 +111,7 @@ describe("Settings fusion — arrangement variants and first-use landing", () =>
       error: null,
       refetch: vi.fn(),
     });
-    renderWithProviders(<AppShell />, { route: "/app?variante=a", path: "/app/*" });
+    renderWithProviders(<AppShell />, { route: "/app", path: "/app/*" });
 
     expect(await screen.findByTestId("chat-view")).toBeTruthy();
   });

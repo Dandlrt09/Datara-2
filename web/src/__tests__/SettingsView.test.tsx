@@ -71,10 +71,17 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-/** Variant B is the plain full view: no mode switch, no guided link. */
+/**
+ * The full view, reached through the mode switch when the guided flow is what
+ * opens by default (an unconfigured app).
+ */
 function renderHub(overrides: Record<string, unknown> = {}) {
   setupMocks(overrides);
-  return renderWithProviders(<SettingsView />, { route: "/app/settings?variante=b" });
+  const utils = renderWithProviders(<SettingsView />, { route: "/app/settings" });
+  if (screen.queryAllByRole("radio").length > 0) {
+    fireEvent.click(screen.getByRole("button", { name: "Avanzado" }));
+  }
+  return utils;
 }
 
 beforeEach(() => {
@@ -84,7 +91,7 @@ beforeEach(() => {
   setupMocks();
 });
 
-describe("SettingsView — the full view (variant B)", () => {
+describe("SettingsView — la vista completa (Avanzado)", () => {
   it("renders the fields without an infinite render loop", () => {
     // Regression: reset() used to run during render, looping forever (blank
     // screen). If the loop returns, this test times out.
@@ -345,10 +352,53 @@ describe("SettingsView — the full view (variant B)", () => {
   });
 });
 
-describe("SettingsView — the arrangement variants", () => {
-  it("variant A opens the guided flow when nothing is configured, and switches to the full view", () => {
+describe("SettingsView — el modo no se cambia solo", () => {
+  it("keeps the guided flow when saving the provider makes the app configured (O10)", async () => {
+    // Reproduces what the usability round found: the provider had been cleared
+    // but a model was still stored, so the app opened in the guided flow.
+    // Saving the provider flipped "is it configured?" to true, and because the
+    // mode was re-derived on every render, the screen jumped to the full view
+    // and cut the step-by-step in half.
+    const live: Record<string, unknown> = {
+      ...emptySettings,
+      provider_type: null,
+      default_model: "gpt-4o",
+      has_api_key: false,
+    };
+    useSettingsMock.mockImplementation(() => ({
+      data: live,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }));
+    // The PUT updates the stored row; the settings query would refetch it.
+    mutateAsyncMock.mockImplementation(async (data: Record<string, unknown>) => {
+      Object.assign(live, data);
+      return { ...live };
+    });
+    fetchModelsMock.mockResolvedValue({ models: [], error: null });
+
+    renderWithProviders(<SettingsView />, { route: "/app/settings" });
+
+    // Unconfigured: the guided flow is open (provider radios, not a dropdown).
+    fireEvent.click(screen.getByRole("radio", { name: /OpenRouter/ }));
+    fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.NEXT }));
+    fireEvent.change(await screen.findByPlaceholderText("sk-..."), {
+      target: { value: "sk-test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.NEXT }));
+
+    // Still guided after the save: the step indicator is the discriminator, the
+    // full view has no steps at all.
+    expect(await screen.findByText(COPY.GUIDED_STEPS[3])).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+});
+
+describe("SettingsView — los dos modos (la forma elegida)", () => {
+  it("opens the guided flow when nothing is configured, and switches to the full view", () => {
     setupMocks();
-    renderWithProviders(<SettingsView />, { route: "/app/settings?variante=a" });
+    renderWithProviders(<SettingsView />, { route: "/app/settings" });
 
     // Unconfigured: guided by default (S5), so the provider radios are shown.
     expect(screen.getByRole("radio", { name: /OpenRouter/ })).toBeTruthy();
@@ -358,47 +408,41 @@ describe("SettingsView — the arrangement variants", () => {
     expect(screen.getByLabelText("URL base")).toBeTruthy();
   });
 
-  it("variant A returns from the embedded guided flow to the full view", () => {
+  it("returns from the guided flow to the full view", () => {
     setupMocks();
-    renderWithProviders(<SettingsView />, { route: "/app/settings?variante=a" });
+    renderWithProviders(<SettingsView />, { route: "/app/settings" });
 
     expect(screen.getByRole("radio", { name: /OpenRouter/ })).toBeTruthy();
     fireEvent.click(screen.getByText("Volver a la vista completa"));
     expect(screen.getByLabelText("URL base")).toBeTruthy();
   });
 
-  it("variant A opens the full view when the app is already configured", () => {
+  it("opens the full view when the app is already configured, with the way back offered", () => {
     setupMocks({ provider_type: "openrouter", default_model: "gpt-4o", has_api_key: true });
-    renderWithProviders(<SettingsView />, { route: "/app/settings?variante=a" });
+    renderWithProviders(<SettingsView />, { route: "/app/settings" });
 
     expect(screen.getByLabelText("URL base")).toBeTruthy();
     expect(screen.queryByRole("radio")).toBeNull();
+    // The switch stays available: the guided flow is never a one-way door.
+    expect(screen.getByRole("button", { name: "Guiado" })).toBeTruthy();
   });
 
-  it("variant B never shows a mode switch or a guided link", () => {
+  it("never links to a second settings screen", () => {
+    // The arrangement that won puts everything in one screen; the other two and
+    // their link to /app/setup were deleted with the scaffolding.
     setupMocks();
-    renderWithProviders(<SettingsView />, { route: "/app/settings?variante=b" });
+    renderWithProviders(<SettingsView />, { route: "/app/settings" });
 
-    expect(screen.queryByText("Avanzado")).toBeNull();
     expect(screen.queryByText("Configurar paso a paso")).toBeNull();
-    // Still the full view even with nothing configured: B has no guided mode.
-    expect(screen.getByLabelText("URL base")).toBeTruthy();
   });
 
-  it("variant C keeps the full view here and links to the guided route", () => {
+  it("ignores a stale ?variante= left in a bookmark", () => {
     setupMocks();
     renderWithProviders(<SettingsView />, { route: "/app/settings?variante=c" });
 
-    const link = screen.getByText("Configurar paso a paso") as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toBe("/app/setup?variante=c");
-    expect(screen.getByLabelText("URL base")).toBeTruthy();
-  });
-
-  it("falls back to the default variant for an unknown value", () => {
-    setupMocks({ provider_type: "openrouter", default_model: "gpt-4o", has_api_key: true });
-    renderWithProviders(<SettingsView />, { route: "/app/settings?variante=zzz" });
-
-    // Variant A shows the mode switch.
-    expect(screen.getByText("Avanzado")).toBeTruthy();
+    // Nothing reads that parameter any more: an old bookmark cannot resurrect a
+    // deleted arrangement.
+    expect(screen.getByRole("radio", { name: /OpenRouter/ })).toBeTruthy();
+    expect(screen.queryByText("Configurar paso a paso")).toBeNull();
   });
 });

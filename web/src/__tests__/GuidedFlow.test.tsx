@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
-import Setup from "../routes/Setup";
+import SettingsView from "../routes/SettingsView";
 import { renderWithProviders } from "./test-utils";
 import { COPY } from "../routes/setup/copy";
 import { RECOMMENDED_MODELS } from "../routes/settings/recommended";
@@ -82,8 +82,21 @@ const OLLAMA = "Ollama";
 const LMSTUDIO = "LM Studio";
 const CUSTOM = "Custom (clave de API requerida)";
 
+/**
+ * The guided flow as the user reaches it: it is one of the two modes of the
+ * Ajustes screen (the arrangement the Ronda 10 usability pass chose), not a
+ * standalone page.
+ *
+ * The mode is picked explicitly: an unconfigured app opens Guiado by itself, but
+ * a configured one opens Avanzado, and every test here needs the same starting
+ * point regardless of its stored-settings fixture.
+ */
 function renderSetup() {
-  return renderWithProviders(<Setup />, { route: "/app/setup" });
+  const utils = renderWithProviders(<SettingsView />, { route: "/app/settings" });
+  if (screen.queryAllByRole("radio").length === 0) {
+    fireEvent.click(screen.getByRole("button", { name: "Guiado" }));
+  }
+  return utils;
 }
 
 function choose(name: string | RegExp) {
@@ -119,7 +132,7 @@ beforeEach(() => {
   setupMocks();
 });
 
-describe("Setup — guided flow", () => {
+describe("Ajustes — el flujo guiado (modo Guiado)", () => {
   it("shows the four guided steps and never the old five", () => {
     renderSetup();
 

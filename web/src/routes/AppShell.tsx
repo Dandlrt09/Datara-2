@@ -1,10 +1,9 @@
 import { lazy, Suspense, useEffect, useCallback } from "react";
-import { Routes, Route, useNavigate, Link, Navigate, useSearchParams } from "react-router-dom";
+import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
 import { useMe, useLogout } from "../queries/useAuth";
 import { useSettings } from "../queries/useSettings";
 import { isProviderConfigured } from "./settings/configured";
-import { readSettingsVariant, type SettingsVariant } from "./settings/variant";
 import { useSessions } from "../queries/useSessions";
 import { useFilesGlobal } from "../queries/useFiles";
 import { useChatStore } from "../stores/useChatStore";
@@ -18,7 +17,6 @@ const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
-const Setup = lazy(() => import("./Setup"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -45,24 +43,16 @@ function withErrorBoundary(viewName: string, Element: React.ComponentType) {
 /**
  * Where /app lands, decided once.
  *
- * An app with nothing configured opens the guided flow instead of an empty chat
- * that cannot answer (S5); once a provider and a model are stored, chat is the
- * destination and Ajustes is the only door to configuration. Login redirects
- * here rather than straight to chat, so the decision lives in one place.
+ * An app with nothing configured opens Ajustes, which in turn opens its guided
+ * mode (S5); once a provider and a model are stored, chat is the destination
+ * and Ajustes is the only door to configuration. Login redirects here rather
+ * than straight to chat, so the decision lives in one place.
  */
-function AppLanding({ variant }: { variant: SettingsVariant }) {
+function AppLanding() {
   const { data: settings, isLoading } = useSettings();
   if (isLoading) return <Loading />;
-  // One rule, one place: the engine asks the same helper to decide whether the
-  // guided flow opens by default.
   const configured = isProviderConfigured(settings);
-  if (!configured) {
-    return variant === "c" ? (
-      <Navigate to="/app/setup?variante=c" replace />
-    ) : (
-      <Navigate to={`/app/settings?variante=${variant}`} replace />
-    );
-  }
+  if (!configured) return <Navigate to="/app/settings" replace />;
   return <Navigate to="/app/chat" replace />;
 }
 
@@ -79,10 +69,6 @@ function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
 
 export default function AppShell() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  // Experiment scaffolding: which arrangement of the fused settings screen is
-  // rendered. Deleted with the losing variants (see settings/variant.ts).
-  const variant = readSettingsVariant(searchParams.get("variante"));
   const { data: user, isLoading, error } = useMe();
   const logout = useLogout();
   const queryClient = useQueryClient();
@@ -292,24 +278,14 @@ export default function AppShell() {
                 path="/settings"
                 element={withErrorBoundary("Settings", SettingsView)}
               />
-              {/* Variant C keeps the guided flow on its own route; the other
-                  variants send /app/setup back to Ajustes, where the same flow
-                  lives as a mode of the one screen. */}
-              <Route
-                path="/setup"
-                element={
-                  variant === "c" ? (
-                    withErrorBoundary("Setup", Setup)
-                  ) : (
-                    <Navigate to={`/app/settings?variante=${variant}`} replace />
-                  )
-                }
-              />
+              {/* The guided flow lives inside Ajustes as one of its two modes;
+                  the old standalone URL keeps working for bookmarks. */}
+              <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
               <Route
                 path="/archives"
                 element={withErrorBoundary("Archives", ArchiveList)}
               />
-              <Route index element={<AppLanding variant={variant} />} />
+              <Route index element={<AppLanding />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
