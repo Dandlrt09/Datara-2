@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 
@@ -16,6 +16,12 @@ vi.mock("../routes/SettingsView", () => ({
 vi.mock("../routes/ArchiveList", () => ({
   default: () => <div data-testid="archives-view"><h1>Archives</h1></div>,
 }));
+const { useSettingsMock } = vi.hoisted(() => ({ useSettingsMock: vi.fn() }));
+
+vi.mock("../queries/useSettings", () => ({
+  useSettings: () => useSettingsMock(),
+  useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 
 vi.mock("../queries/useAuth", () => ({
   useMe: () => ({
@@ -30,33 +36,83 @@ vi.mock("../queries/useAuth", () => ({
 import AppShell from "../routes/AppShell";
 
 describe("Navigation smoke (R-TestWall-3)", () => {
+  // `path: "/app/*"` is load-bearing: AppShell's own <Routes> hang off the
+  // /app/* parent in App.tsx, and its child paths only resolve against it.
+  // Rendered bare at "/app/archives", every child route misses and the 404
+  // catches it — which the old assertions could not see, because they only
+  // checked the sidebar labels (present on every page).
   it("renders Chat view at /app/chat", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/chat" });
+    renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
-    expect(screen.getByText("Chat")).toBeTruthy();
+    // The route components are lazy: the assertion has to wait for the
+    // Suspense boundary to resolve, not read the fallback.
+    expect(await screen.findByTestId("chat-view")).toBeTruthy();
+    expect(screen.queryByText("404")).toBeNull();
   });
 
   it("renders Files view at /app/files", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/files" });
+    renderWithProviders(<AppShell />, { route: "/app/files", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
-    expect(screen.getByText("Files")).toBeTruthy();
+    expect(await screen.findByTestId("files-view")).toBeTruthy();
   });
 
   it("renders Settings view at /app/settings", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/settings" });
+    renderWithProviders(<AppShell />, { route: "/app/settings", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
-    expect(screen.getByText("Settings")).toBeTruthy();
+    expect(await screen.findByTestId("settings-view")).toBeTruthy();
   });
 
   it("renders Archives view at /app/archives", async () => {
-    renderWithProviders(<AppShell />, { route: "/app/archives" });
+    renderWithProviders(<AppShell />, { route: "/app/archives", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
-    expect(screen.getByText("Archives")).toBeTruthy();
+    expect(await screen.findByTestId("archives-view")).toBeTruthy();
   });
 
   it("renders sidebar navigation links", () => {
-    renderWithProviders(<AppShell />, { route: "/app/chat" });
+    renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
     expect(screen.getByText("test@test.com")).toBeTruthy();
+  });
+});
+
+describe("Ajustes — una sola pantalla y el aterrizaje de primer uso", () => {
+  beforeEach(() => {
+    useSettingsMock.mockReset();
+    useSettingsMock.mockReturnValue({
+      data: { user_id: 1, has_api_key: false, provider_type: null, default_model: null },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it("sends the old /app/setup URL back to the single settings screen", async () => {
+    renderWithProviders(<AppShell />, { route: "/app/setup", path: "/app/*" });
+
+    expect(await screen.findByTestId("settings-view")).toBeTruthy();
+  });
+
+  it("lands on Ajustes when nothing is configured", async () => {
+    renderWithProviders(<AppShell />, { route: "/app", path: "/app/*" });
+
+    // The guided flow is Ajustes' own default mode there (S5).
+    expect(await screen.findByTestId("settings-view")).toBeTruthy();
+  });
+
+  it("lands on chat once a provider and a model are stored", async () => {
+    useSettingsMock.mockReturnValue({
+      data: {
+        user_id: 1,
+        has_api_key: true,
+        provider_type: "openrouter",
+        default_model: "gpt-4o",
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderWithProviders(<AppShell />, { route: "/app", path: "/app/*" });
+
+    expect(await screen.findByTestId("chat-view")).toBeTruthy();
   });
 });

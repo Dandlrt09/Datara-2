@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useCallback } from "react";
-import { Routes, Route, useNavigate, Link } from "react-router-dom";
+import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
 import { useMe, useLogout } from "../queries/useAuth";
+import { useSettings } from "../queries/useSettings";
+import { isProviderConfigured } from "./settings/configured";
 import { useSessions } from "../queries/useSessions";
 import { useFilesGlobal } from "../queries/useFiles";
 import { useChatStore } from "../stores/useChatStore";
@@ -15,7 +17,6 @@ const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
-const Setup = lazy(() => import("./Setup"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -37,6 +38,22 @@ function withErrorBoundary(viewName: string, Element: React.ComponentType) {
       <Element />
     </RouteErrorBoundary>
   );
+}
+
+/**
+ * Where /app lands, decided once.
+ *
+ * An app with nothing configured opens Ajustes, which in turn opens its guided
+ * mode (S5); once a provider and a model are stored, chat is the destination
+ * and Ajustes is the only door to configuration. Login redirects here rather
+ * than straight to chat, so the decision lives in one place.
+ */
+function AppLanding() {
+  const { data: settings, isLoading } = useSettings();
+  if (isLoading) return <Loading />;
+  const configured = isProviderConfigured(settings);
+  if (!configured) return <Navigate to="/app/settings" replace />;
+  return <Navigate to="/app/chat" replace />;
 }
 
 /** Return a copy of *sessions* sorted newest-first by ``updated_at``.
@@ -261,14 +278,14 @@ export default function AppShell() {
                 path="/settings"
                 element={withErrorBoundary("Settings", SettingsView)}
               />
-              <Route
-                path="/setup"
-                element={withErrorBoundary("Setup", Setup)}
-              />
+              {/* The guided flow lives inside Ajustes as one of its two modes;
+                  the old standalone URL keeps working for bookmarks. */}
+              <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
               <Route
                 path="/archives"
                 element={withErrorBoundary("Archives", ArchiveList)}
               />
+              <Route index element={<AppLanding />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
