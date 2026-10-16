@@ -35,6 +35,7 @@ import {
   type ModelInfo,
   type ModelsResponse,
 } from "../setup/useFetchModels";
+import { isProviderConfigured } from "./configured";
 import { isModelRestricted } from "./modelGate";
 import { modelsForProvider, type RecommendedModel } from "./recommended";
 
@@ -106,6 +107,13 @@ export function saveErrorMessage(error: unknown): string {
 export interface ProviderSetup {
   settings: UserSettings | undefined;
   isLoading: boolean;
+  /** A stored provider and a stored model (see `configured.ts`). */
+  isConfigured: boolean;
+  /** The stored provider id ("" when none was ever saved). */
+  storedProvider: string;
+  /** Failure of the settings query itself (the screen shows it and can retry). */
+  settingsError: Error | null;
+  refetchSettings(): void;
 
   form: UseFormReturn<ProviderForm>;
   values: ProviderForm;
@@ -124,6 +132,8 @@ export interface ProviderSetup {
   allowedModels: string[];
   modelOptions: string[];
   recommendedModels: RecommendedModel[];
+  /** Provider-specific placeholder for the free-text model entry. */
+  modelPlaceholder: string;
 
   liveModels: ModelInfo[];
   modelsLoading: boolean;
@@ -134,7 +144,13 @@ export interface ProviderSetup {
   visibleModels: ModelInfo[];
 
   validateProvider(values: ProviderForm): string | null;
-  validateCredentials(values: ProviderForm): string | null;
+  /**
+   * `requireApiKey` belongs to the guided flow, where the step exists to
+   * collect the key and an empty one would send the user forward with nothing.
+   * The full view deliberately does not require it: the server falls back to
+   * the OPENAI_API_KEY environment variable, which the client cannot see.
+   */
+  validateCredentials(values: ProviderForm, requireApiKey?: boolean): string | null;
   validateModel(values: ProviderForm): string | null;
 
   persist(scope: SaveScope): Promise<SaveResult>;
@@ -146,7 +162,7 @@ export interface ProviderSetup {
 }
 
 export function useProviderSetup(): ProviderSetup {
-  const { data: settings, isLoading } = useSettings();
+  const { data: settings, isLoading, error: settingsError, refetch } = useSettings();
   const updateSettings = useUpdateSettings();
   const {
     models,
@@ -179,6 +195,8 @@ export function useProviderSetup(): ProviderSetup {
     storedProvider !== "" && !PRESETS.some((p) => p.id === storedProvider)
       ? storedProvider
       : null;
+
+  const isConfigured = isProviderConfigured(settings);
 
   const providerOptions: ProviderOption[] = [
     ...PRESETS.map((p) => ({ ...p, legacy: false })),
@@ -225,6 +243,8 @@ export function useProviderSetup(): ProviderSetup {
   const isRestricted = isModelRestricted(values.provider_type);
   const allowedModels = settings?.allowed_models ?? [];
   const recommendedModels = modelsForProvider(values.provider_type);
+  const modelPlaceholder =
+    COPY.MODEL_PLACEHOLDERS[values.provider_type] ?? COPY.MODEL_PLACEHOLDER_DEFAULT;
 
   const chooseProvider = useCallback(
     (id: string) => {
@@ -277,17 +297,15 @@ export function useProviderSetup(): ProviderSetup {
   const validateProvider = (v: ProviderForm) =>
     v.provider_type ? null : COPY.PROVIDER_REQUIRED;
 
-  const validateCredentials = (v: ProviderForm) => {
+  const validateCredentials = (v: ProviderForm, requireApiKey?: boolean) => {
     const option = providerOptions.find((p) => p.id === v.provider_type);
     if (!option) return COPY.PROVIDER_REQUIRED;
     if (option.id === "custom" && !v.base_url.trim()) return COPY.BASE_URL_REQUIRED;
+    if (!requireApiKey || !option.apiKeyRequired) return null;
     // A stored key counts: re-entering the flow must not force retyping a key
     // the server already holds (the PUT keeps it when api_key is omitted).
     const hasStoredKey = settings?.has_api_key === true;
-    if (option.apiKeyRequired && !v.api_key.trim() && !hasStoredKey) {
-      return COPY.KEY_REQUIRED;
-    }
-    return null;
+    return v.api_key.trim() || hasStoredKey ? null : COPY.KEY_REQUIRED;
   };
 
   const validateModel = (v: ProviderForm) => {
@@ -330,6 +348,11 @@ export function useProviderSetup(): ProviderSetup {
       const saved = await updateSettings.mutateAsync(
         buildPayload(form.getValues(), scope),
       );
+      // Leave the in-flight status on success. Without this, every screen that
+      // derives "busy" from it stays disabled forever: the guided flow saved
+      // the credentials, kept `saving`, and its Finalizar button could never
+      // submit the model (regression caught by Setup.test.tsx).
+      setStatus("saved");
       // The server now holds the key; the input must not keep showing it as
       // if it still had to be sent.
       if (scope !== "model") setValue("api_key", "");
@@ -381,6 +404,10 @@ export function useProviderSetup(): ProviderSetup {
   return {
     settings,
     isLoading,
+    isConfigured,
+    storedProvider,
+    settingsError: settingsError ?? null,
+    refetchSettings: () => void refetch(),
     form,
     values,
     providerOptions,
@@ -396,6 +423,7 @@ export function useProviderSetup(): ProviderSetup {
     allowedModels,
     modelOptions,
     recommendedModels,
+    modelPlaceholder,
     liveModels: models,
     modelsLoading,
     modelsError,

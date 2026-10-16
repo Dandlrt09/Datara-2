@@ -20,9 +20,6 @@ vi.mock("../queries/useSettings", () => ({
     mutateAsync: mutateMock,
     mutate: mutateMock,
     isPending: false,
-    isSuccess: false,
-    isError: false,
-    error: null,
   }),
 }));
 
@@ -34,7 +31,7 @@ const emptySettings = {
   user_id: 1,
   has_api_key: false,
   default_model: null,
-  // Mirrors the shipped whitelist: base models + the WU5 recommended catalog.
+  // Mirrors the shipped whitelist: base models + the curated catalog.
   allowed_models: [
     "gpt-4o",
     "gpt-4o-mini",
@@ -44,7 +41,20 @@ const emptySettings = {
   base_url: null,
 };
 
-function setupMocks(settingsOverrides: Record<string, unknown> = {}) {
+interface LiveModel {
+  id: string;
+  name: string;
+}
+interface ProbeError {
+  code: string;
+  message: string;
+}
+
+function setupMocks(
+  settingsOverrides: Record<string, unknown> = {},
+  models: LiveModel[] = [],
+  fetchError: ProbeError | null = null
+) {
   useSettingsMock.mockReset();
   mutateMock.mockReset();
   fetchModelsMock.mockReset();
@@ -53,567 +63,468 @@ function setupMocks(settingsOverrides: Record<string, unknown> = {}) {
   useSettingsMock.mockReturnValue({
     data: { ...emptySettings, ...settingsOverrides },
     isLoading: false,
+    error: null,
+    refetch: vi.fn(),
   });
   mutateMock.mockResolvedValue(undefined);
-  fetchModelsMock.mockResolvedValue({ models: [], error: null });
-  useFetchModelsMock.mockReturnValue({
-    models: [],
-    isLoading: false,
-    error: null,
-    fetchModels: fetchModelsMock,
-  });
-}
-
-// Point the component's useFetchModels hook at a concrete fetch result shape.
-function mockModelsState(models: unknown[], error: { code: string; message: string } | null) {
+  fetchModelsMock.mockResolvedValue({ models, error: fetchError });
   useFetchModelsMock.mockReturnValue({
     models,
     isLoading: false,
-    error: error ? new Error(error.message) : null,
+    error: fetchError ? new Error(fetchError.message) : null,
     fetchModels: fetchModelsMock,
   });
 }
 
-function renderWizard() {
+const OPENROUTER = "OpenRouter (clave de API requerida)";
+const GROQ = "Groq (clave de API requerida)";
+const OLLAMA = "Ollama";
+const LMSTUDIO = "LM Studio";
+const CUSTOM = "Custom (clave de API requerida)";
+
+function renderSetup() {
   return renderWithProviders(<Setup />, { route: "/app/setup" });
 }
 
-function selectPreset(label: string) {
-  fireEvent.click(screen.getByLabelText(label));
+function choose(name: string | RegExp) {
+  fireEvent.click(screen.getByRole("radio", { name }));
 }
 
-function clickNext() {
-  fireEvent.click(screen.getByText(COPY.BUTTONS.NEXT));
+function next() {
+  fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.NEXT }));
 }
 
-async function reachModelStep() {
-  selectPreset("OpenRouter (clave de API requerida)");
-  clickNext();
-  const keyInput = await screen.findByPlaceholderText("sk-...");
-  fireEvent.change(keyInput, { target: { value: "sk-test" } });
-  clickNext();
-  await screen.findByText("Modelo predeterminado");
+/**
+ * Advance the model step by clicking Finalizar (save the model, then probe).
+ *
+ * This is the real user path. It used to dispatch the form's submit event
+ * instead, because the button was stuck disabled by the lifecycle bug now
+ * guarded at the end of this file.
+ */
+function finish() {
+  fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.FINISH }));
 }
 
-async function fillFreeTextModel(value: string) {
-  const input = await screen.findByPlaceholderText("gpt-4o, llama3.2:latest, etc.");
+function previous() {
+  fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS }));
+}
+
+async function enterKey(value = "sk-test") {
+  const input = await screen.findByPlaceholderText("sk-...");
   fireEvent.change(input, { target: { value } });
+  return input as HTMLInputElement;
 }
 
-async function reachGroqModelStep() {
-  selectPreset("Groq (clave de API requerida)");
-  clickNext();
-  const keyInput = await screen.findByPlaceholderText("sk-...");
-  fireEvent.change(keyInput, { target: { value: "gsk-test" } });
-  clickNext();
-  await screen.findByText("Modelo predeterminado");
-}
+beforeEach(() => {
+  setupMocks();
+});
 
-async function reachOllamaModelStep() {
-  selectPreset("Ollama");
-  clickNext();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
-  );
-  clickNext();
-  await screen.findByText("Modelo predeterminado");
-}
+describe("Setup — guided flow", () => {
+  it("shows the four guided steps and never the old five", () => {
+    renderSetup();
 
-async function reachCustomModelStep() {
-  selectPreset("Custom (clave de API requerida)");
-  clickNext();
-  const urlInput = await screen.findByPlaceholderText("https://...");
-  fireEvent.change(urlInput, { target: { value: "https://api.example.com/v1" } });
-  fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-test" } });
-  clickNext();
-  await screen.findByText("Modelo predeterminado");
-}
-
-describe("Setup", () => {
-  beforeEach(() => {
-    setupMocks();
-  });
-
-  it("renders the provider selection step with presets and the step indicator", () => {
-    renderWizard();
-
-    expect(screen.getByText("Configuración del proveedor")).toBeTruthy();
-    COPY.STEPS.forEach((label) => {
+    expect(COPY.GUIDED_STEPS).toHaveLength(4);
+    for (const label of COPY.GUIDED_STEPS) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    });
-    expect(screen.getByLabelText("OpenRouter (clave de API requerida)")).toBeTruthy();
-    expect(screen.getByLabelText("Ollama")).toBeTruthy();
-    expect(screen.getByLabelText("LM Studio")).toBeTruthy();
-    expect(screen.getByLabelText("Groq (clave de API requerida)")).toBeTruthy();
-    expect(screen.getByLabelText("Custom (clave de API requerida)")).toBeTruthy();
-  });
-
-  it("allows every preset to be selected (D6 provider-aware gate)", () => {
-    renderWizard();
-
-    for (const label of [
-      "OpenRouter (clave de API requerida)",
-      "Ollama",
-      "LM Studio",
-      "Groq (clave de API requerida)",
-      "Custom (clave de API requerida)",
-    ]) {
-      expect((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(false);
     }
-    expect(screen.queryByText("Próximamente")).toBeNull();
+    // The connection test and the confirmation stopped being steps by design.
+    expect(screen.queryByText("Prueba de conexión")).toBeNull();
+    expect(screen.queryByText("Listo")).toBeNull();
   });
 
-  it("advances a previously unsupported preset to the model step", async () => {
-    renderWizard();
+  it("offers the five presets as selectable radios and requires a choice", async () => {
+    renderSetup();
 
-    // Ollama requires no key: credentials step has no key field. Wait for the
-    // step transition (setStep is async within handleSubmit) before advancing.
-    selectPreset("Ollama");
-    clickNext();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
-    );
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(5);
+    expect(radios.every((radio) => !radio.disabled)).toBe(true);
+    for (const name of [OPENROUTER, OLLAMA, LMSTUDIO, GROQ, CUSTOM]) {
+      expect(screen.getByRole("radio", { name })).toBeTruthy();
+    }
+
+    next();
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe(COPY.PROVIDER_REQUIRED);
+    // Still on the provider step.
+    expect(screen.getByRole("radio", { name: OLLAMA })).toBeTruthy();
+  });
+
+  it("offers a stored provider that no preset carries and lets it continue", async () => {
+    setupMocks({
+      provider_type: "mistral",
+      base_url: "https://api.mistral.ai/v1",
+      has_api_key: true,
+    });
+    renderSetup();
+
+    const legacy = screen.getByRole("radio", {
+      name: /Otro \(mistral\)/,
+    }) as HTMLInputElement;
+    expect(legacy.checked).toBe(true);
+
+    choose(/Otro \(mistral\)/);
+    next();
+
+    expect(await screen.findByPlaceholderText("sk-...")).toBeTruthy();
+    expect(screen.getByText(/guardada/)).toBeTruthy();
+  });
+
+  it("shows the endpoint note and no key field for a keyless provider, and advances", async () => {
+    renderSetup();
+
+    choose(OLLAMA);
+    next();
+
+    expect(await screen.findByText(COPY.KEYLESS_NO_KEY_REQUIRED("Ollama"))).toBeTruthy();
+    expect(screen.getByText(/Endpoint que usará Datara:/)).toBeTruthy();
+    expect(screen.getByText("http://localhost:11434/v1")).toBeTruthy();
+    expect(screen.getByText(COPY.KEYLESS_SERVER_HINT("Ollama"))).toBeTruthy();
+    // Read-only: no key field for a keyless provider.
     expect(screen.queryByPlaceholderText("sk-...")).toBeNull();
-    clickNext();
+
+    next();
 
     expect(await screen.findByText("Modelo predeterminado")).toBeTruthy();
   });
 
-  it("shows an informative credentials block for keyless providers (Ollama)", async () => {
-    renderWizard();
-
-    selectPreset("Ollama");
-    clickNext();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
-    );
-
-    // The credentials step is not empty: it explains no key is needed, shows
-    // the effective endpoint, and hints the local server must be running.
-    expect(screen.getByRole("heading", { name: "Credenciales" })).toBeTruthy();
-    expect(screen.getByText(COPY.KEYLESS_NO_KEY_REQUIRED("Ollama"))).toBeTruthy();
-    expect(screen.getByText("http://localhost:11434/v1")).toBeTruthy();
-    expect(screen.getByText(COPY.KEYLESS_SERVER_HINT("Ollama"))).toBeTruthy();
-
-    // Read-only: no key field and no custom URL input.
-    expect(screen.queryByPlaceholderText("sk-...")).toBeNull();
-    expect(screen.queryByText("URL base *")).toBeNull();
-  });
-
-  it("blocks advancing without a provider and shows an error", async () => {
-    renderWizard();
-
-    clickNext();
-
-    expect(await screen.findByText("Selecciona un proveedor")).toBeTruthy();
-    // Still on the provider step.
-    expect(screen.getByLabelText("Ollama")).toBeTruthy();
-  });
-
-  it("advances to credentials once a provider is selected", async () => {
-    renderWizard();
-
-    selectPreset("OpenRouter (clave de API requerida)");
-    clickNext();
-
-    expect(await screen.findByPlaceholderText("sk-...")).toBeTruthy();
-    expect(screen.getByText("Clave de API *")).toBeTruthy();
-  });
-
-  it("blocks advancing with an empty key and shows the key-required copy", async () => {
-    renderWizard();
-
-    selectPreset("OpenRouter (clave de API requerida)");
-    clickNext();
+  it("validates the key, accepts a stored key, and requires the custom base url", async () => {
+    // Empty key with no stored key: blocked.
+    const a = renderSetup();
+    choose(OPENROUTER);
+    next();
     await screen.findByPlaceholderText("sk-...");
-
-    clickNext();
-
+    next();
     expect(await screen.findByText(COPY.KEY_REQUIRED)).toBeTruthy();
-    // Still on the credentials step.
     expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
-  });
+    a.unmount();
 
-  it("shows a model dropdown when the model fetch succeeds", async () => {
-    mockModelsState(
-      [
-        { id: "gpt-4o", name: "GPT-4o" },
-        { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-      ],
-      null
-    );
-    renderWizard();
-
-    await reachModelStep();
-
-    const select = await screen.findByRole("combobox");
-    expect(select).toBeTruthy();
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toContain("GPT-4o");
-    expect(options).toContain("GPT-4o Mini");
-  });
-
-  it("filters the model dropdown with the search box and recovers after clearing", async () => {
-    setupMocks({ allowed_models: ["gpt-4o", "gpt-4o-mini", "z-ai/glm-5.3-flash"] });
-    mockModelsState(
-      [
-        { id: "gpt-4o", name: "GPT-4o" },
-        { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
-      ],
-      null
-    );
-    renderWizard();
-
-    await reachModelStep();
-
-    const search = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
-    fireEvent.change(search, { target: { value: "GLM" } });
-
-    const select = screen.getByRole("combobox");
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toContain("GLM 5.3 Flash");
-    expect(options).not.toContain("GPT-4o");
-
-    // No matches: the dropdown disappears and a hint is shown.
-    fireEvent.change(search, { target: { value: "zzz" } });
-    expect(await screen.findByText(`${COPY.MODEL_SEARCH_NO_RESULTS} "zzz".`)).toBeTruthy();
-    expect(screen.queryByRole("combobox")).toBeNull();
-
-    // Clearing the query restores the full list.
-    fireEvent.change(search, { target: { value: "" } });
-    const restored = screen.getByRole("combobox");
-    expect(Array.from(restored.querySelectorAll("option")).length).toBe(4); // placeholder + 3 models
-  });
-
-  it("hides fetched models that are not in the whitelist", async () => {
-    setupMocks({ allowed_models: ["gpt-4o"] });
-    mockModelsState(
-      [
-        { id: "gpt-4o", name: "GPT-4o" },
-        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
-      ],
-      null
-    );
-    renderWizard();
-
-    await reachModelStep();
-
-    const select = await screen.findByRole("combobox");
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toContain("GPT-4o");
-    expect(options).not.toContain("GLM 5.3 Flash");
-  });
-
-  it("shows the free-text fallback when the model fetch fails", async () => {
-    mockModelsState([], { code: "timeout", message: "timed out" });
-    renderWizard();
-
-    await reachModelStep();
-
-    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
-    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
-  });
-
-  it("shows the free-text fallback when the fetched list is empty (no error)", async () => {
-    renderWizard();
-
-    await reachModelStep();
-
-    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
-    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
-  });
-
-  it("shows the recommended OpenRouter models first in the model step", async () => {
-    setupMocks();
-    renderWizard();
-
-    await reachModelStep();
-
-    expect(await screen.findByText("Modelos recomendados")).toBeTruthy();
-    expect(screen.getByText("Claude Sonnet 5.5")).toBeTruthy();
-    expect(screen.getByText("Ling 3.1 Flash")).toBeTruthy();
-    expect(screen.getAllByText("(Recomendado)").length).toBeGreaterThan(0);
-    // Both token prices are visible (foolproof for analysts; two paid models
-    // share the same $2/$10 price).
+    // A stored key advances without retyping.
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    const b = renderSetup();
     expect(
-      screen.getAllByText("Entrada $2.00 / Salida $10.00 por 1M tokens").length,
-    ).toBeGreaterThan(0);
+      (screen.getByRole("radio", { name: OPENROUTER }) as HTMLInputElement).checked
+    ).toBe(true);
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    expect(await screen.findByText("Modelo predeterminado")).toBeTruthy();
+    b.unmount();
+
+    // Custom without a base url: blocked even with a key typed.
+    setupMocks();
+    const c = renderSetup();
+    choose(CUSTOM);
+    next();
+    await enterKey("sk-x");
+    next();
+    expect(await screen.findByText(COPY.BASE_URL_REQUIRED)).toBeTruthy();
+    expect(screen.getByText("URL base")).toBeTruthy();
+    c.unmount();
   });
 
-  it("submits a recommended model directly from the catalog", async () => {
+  it("persists credentials in one PUT, keeps a rejected save on the step, and never renders the key", async () => {
+    const a = renderSetup();
+    choose(OPENROUTER);
+    next();
+    await enterKey("sk-secret");
+    next();
+
+    await waitFor(() =>
+      expect(mutateMock).toHaveBeenCalledWith({
+        provider_type: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+        api_key: "sk-secret",
+      })
+    );
+    // Exactly one PUT for the credentials scope, and no default_model in it.
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Modelo predeterminado")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("sk-secret");
+    a.unmount();
+
+    // A rejected PUT (SSRF guard) keeps the user on the credentials step.
     setupMocks();
-    renderWizard();
+    mutateMock.mockRejectedValue({
+      body: { detail: { code: "invalid_base_url", message: "blocked" } },
+    });
+    const b = renderSetup();
+    choose(CUSTOM);
+    next();
+    await enterKey("sk-secret");
+    fireEvent.change(screen.getByLabelText("URL base"), {
+      target: { value: "https://mio.example.com/v1" },
+    });
+    next();
 
-    await reachModelStep();
-    fireEvent.click(screen.getByText("Claude Sonnet 5.5"));
-    clickNext();
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(COPY.SSRF_REJECTION)
+    );
+    expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("sk-secret");
+    b.unmount();
+  });
 
+  it("restricted provider: whitelist dropdown without fetch, catalog labels, gate and empty whitelist", async () => {
+    // A: the whitelist arrives with the settings; no live fetch is needed.
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    const a = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+
+    const select = (await screen.findByLabelText(
+      "Modelo predeterminado"
+    )) as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    const options = Array.from(select.options).map((option) => option.textContent);
+    // Labels come from the curated catalog, ids stay raw when unknown.
+    expect(options).toContain("Claude Sonnet 5.5");
+    expect(options).toContain("gpt-4o");
+    expect(fetchModelsMock).not.toHaveBeenCalled();
+    a.unmount();
+
+    // B: a model outside the whitelist is blocked.
+    setupMocks({
+      provider_type: "openrouter",
+      has_api_key: true,
+      default_model: "openai/not-whitelisted",
+      allowed_models: ["gpt-4o"],
+    });
+    const b = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    expect(
+      (
+        (await screen.findByLabelText(
+          "Modelo predeterminado"
+        )) as HTMLSelectElement
+      ).value
+    ).toBe("openai/not-whitelisted");
+    finish();
+    expect(await screen.findByText(COPY.MODEL_NOT_ALLOWED)).toBeTruthy();
+    b.unmount();
+
+    // C: an empty whitelist must not dead-end the flow.
+    setupMocks({ provider_type: "openrouter", has_api_key: true, allowed_models: [] });
+    const c = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    fireEvent.click(await screen.findByRole("button", { name: /Claude Sonnet 5\.5/ }));
+    finish();
     await waitFor(() =>
       expect(mutateMock).toHaveBeenCalledWith({
         default_model: "anthropic/claude-sonnet-5.5",
       })
     );
+    c.unmount();
   });
 
-  it("blocks a non-whitelisted model on the fetch-failure fallback path", async () => {
-    setupMocks({ allowed_models: ["gpt-4o"] });
-    mockModelsState([], { code: "timeout", message: "timed out" });
-    renderWizard();
+  it("unrestricted provider: free text, placeholders, live list and search filter", async () => {
+    // A: free text accepts any non-empty value, with the Groq placeholder.
+    const a = renderSetup();
+    choose(GROQ);
+    next();
+    await enterKey("gsk-test");
+    next();
+    const free = (await screen.findByLabelText(
+      "Modelo predeterminado"
+    )) as HTMLInputElement;
+    expect(free.tagName).toBe("INPUT");
+    expect(free.placeholder).toBe(COPY.MODEL_PLACEHOLDERS.groq);
+    fireEvent.change(free, { target: { value: "openai/gpt-oss-120b" } });
+    expect(free.value).toBe("openai/gpt-oss-120b");
+    a.unmount();
 
-    await reachModelStep();
-
-    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
-    await fillFreeTextModel("not-allowed/model");
-    clickNext();
-
-    expect(await screen.findByText(COPY.MODEL_NOT_ALLOWED)).toBeTruthy();
+    // B: the placeholder is provider-specific.
+    setupMocks({ provider_type: "ollama" });
+    const b = renderSetup();
+    next();
+    await screen.findByRole("button", { name: COPY.BUTTONS.PREVIOUS });
+    next();
     expect(
-      mutateMock.mock.calls.some(
-        (call) => call[0] && "default_model" in call[0]
-      )
-    ).toBe(false);
-    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
-  });
+      (
+        (await screen.findByLabelText(
+          "Modelo predeterminado"
+        )) as HTMLInputElement
+      ).placeholder
+    ).toBe(COPY.MODEL_PLACEHOLDERS.ollama);
+    b.unmount();
 
-  it("does not dead-end setup when no whitelist is known", async () => {
-    // Regression: an absent or empty allowed_models must not reject every
-    // model at submit time (the chat-time gate and its banner are the backstop).
-    setupMocks({ allowed_models: [] });
-    renderWizard();
-
-    await reachModelStep();
-    await fillFreeTextModel("any/provider-model");
-    clickNext();
-
-    await waitFor(() =>
-      expect(
-        mutateMock.mock.calls.some(
-          (call) => call[0] && call[0].default_model === "any/provider-model"
-        )
-      ).toBe(true)
-    );
-    expect(screen.queryByText(COPY.MODEL_NOT_ALLOWED)).toBeNull();
-  });
-
-  it("passes the connection test, enables Finalizar, and reaches the done step", async () => {
-    renderWizard();
-
-    await reachModelStep();
-    await fillFreeTextModel("gpt-4o");
-    clickNext();
-
-    // Entering the test step runs the probe automatically.
-    await waitFor(() => expect(fetchModelsMock).toHaveBeenCalled());
-    const finish = await screen.findByText(COPY.BUTTONS.FINISH);
-    await waitFor(() => expect((finish as HTMLButtonElement).disabled).toBe(false));
-
-    fireEvent.click(finish);
-
-    expect(await screen.findByText(COPY.DONE_CONFIRMATION)).toBeTruthy();
-    expect(screen.getByText(COPY.BUTTONS.EXIT)).toBeTruthy();
-  });
-
-  it("fails the connection test with the spec copy and passes after Reintentar", async () => {
-    fetchModelsMock.mockResolvedValue({
-      models: [],
-      error: { code: "timeout", message: "provider timed out" },
-    });
-    renderWizard();
-
-    await reachModelStep();
-    await fillFreeTextModel("gpt-4o");
-    clickNext();
-
-    expect(await screen.findByText(COPY.TEST_FAILED)).toBeTruthy();
-    expect(screen.getByText(COPY.BUTTONS.RETRY)).toBeTruthy();
-    const finish = screen.getByText(COPY.BUTTONS.FINISH) as HTMLButtonElement;
-    expect(finish.disabled).toBe(true);
-
-    fetchModelsMock.mockResolvedValue({ models: [], error: null });
-    fireEvent.click(screen.getByText(COPY.BUTTONS.RETRY));
-    await waitFor(() => expect((finish as HTMLButtonElement).disabled).toBe(false));
-
-    fireEvent.click(finish);
-    expect(await screen.findByText(COPY.DONE_CONFIRMATION)).toBeTruthy();
-  });
-
-  it("stays on the credentials step when the OpenRouter save fails", async () => {
-    mutateMock.mockRejectedValue(new Error("boom"));
-    renderWizard();
-
-    selectPreset("OpenRouter (clave de API requerida)");
-    clickNext();
-    const keyInput = await screen.findByPlaceholderText("sk-...");
-    fireEvent.change(keyInput, { target: { value: "sk-test" } });
-
-    clickNext();
-
-    expect(await screen.findByText("Error al guardar configuración")).toBeTruthy();
-    // Still on the credentials step.
-    expect(screen.getByPlaceholderText("sk-...")).toBeTruthy();
-  });
-
-  it("prefills the selectable provider from saved settings on re-entry", () => {
-    setupMocks({
-      provider_type: "openrouter",
-      base_url: "https://openrouter.ai/api/v1",
-      default_model: "anthropic/claude-sonnet-5.5",
-    });
-    renderWizard();
-
-    const openrouterRadio = screen.getByLabelText(
-      "OpenRouter (clave de API requerida)",
-    ) as HTMLInputElement;
-    expect(openrouterRadio.checked).toBe(true);
-  });
-
-  it("pre-checks any saved provider (D6 unlock)", () => {
-    setupMocks({
-      provider_type: "ollama",
-      base_url: "http://localhost:11434/v1",
-      default_model: "llama3",
-    });
-    renderWizard();
-
-    const ollamaRadio = screen.getByLabelText("Ollama") as HTMLInputElement;
-    expect(ollamaRadio.disabled).toBe(false);
-    expect(ollamaRadio.checked).toBe(true);
-  });
-
-  it("leaves an unknown saved provider_type unselected so the required guard holds", async () => {
-    setupMocks({
-      provider_type: "legacy-provider",
-      base_url: "https://legacy.example.com/v1",
-      default_model: "legacy-model",
-    });
-    renderWizard();
-
-    // An unknown stored value is not a preset: no radio is selected and the
-    // form value stays "" (R3-PREFILL). Locks the state the advisory asked
-    // for, so a phantom provider can never become load-bearing.
-    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
-    expect(radios.every((r) => !r.checked)).toBe(true);
-
-    clickNext();
-
-    expect(await screen.findByText("Selecciona un proveedor")).toBeTruthy();
-    expect(screen.getByLabelText("Ollama")).toBeTruthy();
-    expect(screen.queryByPlaceholderText("https://...")).toBeNull();
-  });
-
-  it("offers the full live model list for an unrestricted provider and accepts any model", async () => {
-    mockModelsState(
+    // C: "Cargar modelos" loads the live list, and the search box filters it.
+    setupMocks(
+      { provider_type: "custom", base_url: "https://mio.example.com/v1", has_api_key: true },
       [
-        { id: "llama3.2:latest", name: "Llama 3.2" },
-        { id: "qwen2.5:7b", name: "Qwen 2.5" },
-      ],
-      null
+        { id: "mio/uno", name: "Mío Uno" },
+        { id: "mio/dos", name: "Mío Dos" },
+      ]
     );
-    renderWizard();
+    const c = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
 
-    selectPreset("Ollama");
-    clickNext();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: COPY.BUTTONS.PREVIOUS })).toBeTruthy()
-    );
-    clickNext();
-    await screen.findByText("Modelo predeterminado");
-
-    const select = await screen.findByRole("combobox");
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toContain("Llama 3.2");
-    expect(options).toContain("Qwen 2.5");
-
-    // Recommended OpenRouter cards are OpenRouter-only (B2 extends them).
-    expect(screen.queryByText("Modelos recomendados")).toBeNull();
-
-    fireEvent.change(select, { target: { value: "llama3.2:latest" } });
-    clickNext();
-
-    await waitFor(() =>
-      expect(mutateMock).toHaveBeenCalledWith({ default_model: "llama3.2:latest" })
-    );
-  });
-
-  it("shows the selected provider's recommended models (Groq) with real prices", async () => {
-    renderWizard();
-
-    await reachGroqModelStep();
-
-    expect(await screen.findByText("Modelos recomendados")).toBeTruthy();
-    expect(screen.getByText("GPT-OSS 120B")).toBeTruthy();
-    expect(screen.getByText("GPT-OSS 20B")).toBeTruthy();
-    expect(screen.getByText("Qwen 3.8 27B (preview)")).toBeTruthy();
-    expect(screen.getByText("Entrada $0.15 / Salida $0.60 por 1M tokens")).toBeTruthy();
-    expect(screen.getByText("(Recomendado)")).toBeTruthy();
-
-    const link = screen.getByRole("link", { name: /obtener una clave de api en groq/i });
-    expect(link.getAttribute("href")).toBe("https://console.groq.com/keys");
-  });
-
-  it("submits a recommended Groq model directly", async () => {
-    renderWizard();
-
-    await reachGroqModelStep();
-    fireEvent.click(await screen.findByText("GPT-OSS 120B"));
-    clickNext();
-
-    await waitFor(() =>
-      expect(mutateMock).toHaveBeenCalledWith({ default_model: "openai/gpt-oss-120b" })
-    );
-  });
-
-  it("re-runs the model fetch from the Reintentar button in the model step", async () => {
-    renderWizard();
-
-    await reachModelStep();
+    const search = await screen.findByPlaceholderText(COPY.MODEL_SEARCH_PLACEHOLDER);
+    fireEvent.change(search, { target: { value: "dos" } });
+    const filtered = Array.from(
+      (screen.getByLabelText("Modelo predeterminado") as HTMLSelectElement).options
+    ).map((option) => option.textContent);
+    expect(filtered).toContain("Mío Dos");
+    expect(filtered).not.toContain("Mío Uno");
 
     fetchModelsMock.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.RETRY }));
-
+    fireEvent.click(screen.getByRole("button", { name: COPY.BUTTONS.LOAD_MODELS }));
     await waitFor(() => expect(fetchModelsMock).toHaveBeenCalledTimes(1));
+    c.unmount();
   });
 
-  it("uses the Groq placeholder in the fallback model entry", async () => {
-    mockModelsState([], { code: "timeout", message: "timed out" });
-    renderWizard();
+  it("a recommended card sets the model and Finalizar persists it, then probes", async () => {
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
 
-    await reachGroqModelStep();
+    fireEvent.click(await screen.findByRole("button", { name: /Claude Sonnet 5\.5/ }));
+    expect(
+      (screen.getByLabelText("Modelo predeterminado") as HTMLSelectElement).value
+    ).toBe("anthropic/claude-sonnet-5.5");
 
-    expect(await screen.findByPlaceholderText("openai/gpt-oss-120b")).toBeTruthy();
+    mutateMock.mockClear();
+    finish();
+    await waitFor(() =>
+      expect(mutateMock).toHaveBeenCalledWith({
+        default_model: "anthropic/claude-sonnet-5.5",
+      })
+    );
+    // No provider_type in the model-scope payload, and the probe ran once.
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the Ollama placeholder and local-server hint when the fetch fails", async () => {
-    mockModelsState([], { code: "timeout", message: "timed out" });
-    renderWizard();
+  it("result step reports a good probe, a failed probe, retries and offers the chat", async () => {
+    // A: a good probe claims Connected.
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    const a = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    fireEvent.click(await screen.findByRole("button", { name: /Claude Sonnet 5\.5/ }));
+    finish();
 
-    await reachOllamaModelStep();
+    expect(await screen.findByText(COPY.STATUS.CONNECTED)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ir al chat" })).toBeTruthy();
+    a.unmount();
+
+    // B: a probe error reports the honest copy plus a Retry that re-saves and re-probes.
+    setupMocks({ provider_type: "openrouter", has_api_key: true }, [], {
+      code: "timeout",
+      message: "sin respuesta",
+    });
+    const b = renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    fireEvent.click(await screen.findByRole("button", { name: /Claude Sonnet 5\.5/ }));
+    finish();
+
+    expect(
+      await screen.findByText(COPY.STATUS.UNVERIFIED("sin respuesta"))
+    ).toBeTruthy();
+    const retry = screen.getByRole("button", { name: COPY.BUTTONS.RETRY });
+    mutateMock.mockClear();
+    fetchModelsMock.mockClear();
+    fireEvent.click(retry);
+    await waitFor(() => expect(mutateMock).toHaveBeenCalledTimes(1));
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
+    b.unmount();
+  });
+
+  it("Anterior goes back one step and clears the step error", async () => {
+    renderSetup();
+    choose(OPENROUTER);
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    expect(await screen.findByText(COPY.KEY_REQUIRED)).toBeTruthy();
+
+    previous();
+
+    expect(await screen.findByRole("radio", { name: OPENROUTER })).toBeTruthy();
+    expect(screen.queryByText(COPY.KEY_REQUIRED)).toBeNull();
+  });
+
+  it("keeps Finalizar enabled after saving credentials, and the model reaches the provider", async () => {
+    // Regression: persist() used to leave the status on "saving" after a
+    // successful partial save. GuidedFlow derives `busy` from that status, so
+    // Finalizar stayed disabled forever and the model was never saved nor
+    // probed: the guided setup dead-ended on its own success.
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    renderSetup();
+    next();
+    await screen.findByPlaceholderText("sk-...");
+    next();
+    await screen.findByText("Modelo predeterminado");
+
+    const finishButton = screen.getByRole("button", {
+      name: COPY.BUTTONS.FINISH,
+    }) as HTMLButtonElement;
+    expect(finishButton.disabled).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Modelo predeterminado"), {
+      target: { value: "gpt-4o" },
+    });
+    mutateMock.mockClear();
+    fetchModelsMock.mockClear();
+    fireEvent.click(finishButton);
+
+    await waitFor(() => expect(mutateMock).toHaveBeenCalledTimes(1));
+    expect(fetchModelsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the list warning and the empty-field error together (no dedupe)", async () => {
+    // The old wizard suppressed the orange warning while the red error showed.
+    // They are two different facts now (the list did not arrive / the field is
+    // empty) and both are worth saying. This test is the decision's witness.
+    setupMocks({ provider_type: "groq" }, [], { code: "timeout", message: "sin respuesta" });
+    renderSetup();
+    choose(GROQ);
+    next();
+    await enterKey("gsk-test");
+    next();
 
     expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
-    expect(screen.getByText(COPY.MODEL_LOCAL_SERVER_HINT("Ollama"))).toBeTruthy();
-    expect(screen.getByPlaceholderText("llama3.2, qwen2.5, etc.")).toBeTruthy();
-  });
 
-  it("uses the generic placeholder for custom", async () => {
-    renderWizard();
-
-    await reachCustomModelStep();
-
-    expect(screen.getByPlaceholderText("gpt-4o, llama3.2:latest, etc.")).toBeTruthy();
-  });
-
-  it("shows a single required message in the fallback state (orange+red dedupe)", async () => {
-    mockModelsState([], { code: "timeout", message: "timed out" });
-    renderWizard();
-
-    await reachModelStep();
-    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
-
-    clickNext();
+    finish();
 
     expect(await screen.findByText(COPY.MODEL_REQUIRED)).toBeTruthy();
-    // The orange hint is replaced by the single red validation error.
+    expect(screen.getByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
+  });
+
+  it("falls back to free text with the local-server hint for a keyless provider", async () => {
+    setupMocks({ provider_type: "ollama" }, [], { code: "network", message: "sin red" });
+    renderSetup();
+    choose(OLLAMA);
+    next();
+    next();
+
+    expect(await screen.findByText(COPY.MODEL_LIST_FALLBACK)).toBeTruthy();
+    // The likely missing piece is the local server, so name it.
+    expect(screen.getByText(COPY.MODEL_LOCAL_SERVER_HINT("Ollama"))).toBeTruthy();
+    expect(screen.getByPlaceholderText(COPY.MODEL_PLACEHOLDERS.ollama)).toBeTruthy();
+  });
+
+  it("falls back to free text when the list comes back empty without an error", async () => {
+    setupMocks({ provider_type: "groq" }, [], null);
+    renderSetup();
+    choose(GROQ);
+    next();
+    await enterKey("gsk-test");
+    next();
+
+    // Await the re-render: advancing a step happens inside an async handler.
+    expect((await screen.findByLabelText("Modelo predeterminado")).tagName).toBe("INPUT");
     expect(screen.queryByText(COPY.MODEL_LIST_FALLBACK)).toBeNull();
   });
 });

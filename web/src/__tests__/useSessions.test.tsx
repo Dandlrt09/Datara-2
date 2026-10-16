@@ -63,11 +63,16 @@ vi.mock("../stores/useWizardStore", () => ({
 // Stable navigate spy so tests can assert on cross-session navigation.
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 
-// Mock react-router so AppShell doesn't require a real router context
+// Mock react-router so AppShell doesn't require a real router context.
+// Every router export AppShell imports has to be here: the whole module is
+// replaced, so a missing name is `undefined` at call time (AppShell reads
+// `?variante=` to pick the settings arrangement under experiment).
 vi.mock("react-router-dom", () => ({
   Routes: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Route: () => null,
+  Navigate: () => null,
   useNavigate: () => navigateMock,
+  useSearchParams: () => [new URLSearchParams(""), vi.fn()],
   Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 

@@ -16,7 +16,9 @@ export default function RegisterScreen() {
   const onSubmit = async (data: RegisterForm) => {
     try {
       await registerMut.mutateAsync(data);
-      navigate("/app/chat");
+      // /app decides where to land (guided setup when nothing is configured,
+      // chat otherwise): one decision point, not one per entry screen.
+      navigate("/app");
     } catch (err) {
       // handled by UI state
     }

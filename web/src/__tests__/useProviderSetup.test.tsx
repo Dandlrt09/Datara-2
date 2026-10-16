@@ -156,14 +156,31 @@ describe("useProviderSetup — validation", () => {
     setupMocks({ has_api_key: true });
     const { result: withStoredKey } = renderEngine();
     expect(
-      withStoredKey.current.validateCredentials(blankForm({ provider_type: "openrouter" })),
+      withStoredKey.current.validateCredentials(
+        blankForm({ provider_type: "openrouter" }),
+        true,
+      ),
     ).toBeNull();
 
     setupMocks({ has_api_key: false });
     const { result: withoutKey } = renderEngine();
     expect(
-      withoutKey.current.validateCredentials(blankForm({ provider_type: "openrouter" })),
+      withoutKey.current.validateCredentials(
+        blankForm({ provider_type: "openrouter" }),
+        true,
+      ),
     ).toBe(COPY.KEY_REQUIRED);
+  });
+
+  it("never requires an api key in the full view, where the env fallback may be in use", () => {
+    setupMocks({ has_api_key: false });
+    const { result } = renderEngine();
+
+    // The server falls back to OPENAI_API_KEY, which the client cannot see:
+    // demanding a stored key here would block a working deployment.
+    expect(
+      result.current.validateCredentials(blankForm({ provider_type: "openrouter" })),
+    ).toBeNull();
   });
 
   it("never asks a key from a keyless provider", () => {
@@ -350,6 +367,10 @@ describe("useProviderSetup — payload scoping", () => {
     });
     // The server holds the key now; the field must not keep it.
     expect(result.current.values.api_key).toBe("");
+    // Regression: a successful partial save must leave the in-flight status,
+    // otherwise every screen deriving "busy" from it stays disabled forever
+    // (the guided flow's Finalizar button could never submit the model).
+    expect(result.current.status).toBe("saved");
   });
 
   it("omits the provider when saving the model only", async () => {
@@ -363,5 +384,37 @@ describe("useProviderSetup — payload scoping", () => {
     });
 
     expect(mutateMock).toHaveBeenCalledWith({ default_model: "gpt-4o" });
+  });
+
+  it("sends an empty base_url as \"\" (clear), never null, for both screens", async () => {
+    // The old wizard sent `null` here, which the server reads as "keep the
+    // stored URL": clearing a URL was impossible from that screen. The engine
+    // sends "" (the API documents an empty string as "clear").
+    setupMocks({ provider_type: "custom", base_url: null, has_api_key: true });
+    const { result } = renderEngine();
+    await waitFor(() => expect(result.current.values.provider_type).toBe("custom"));
+
+    await act(async () => {
+      await result.current.persist("credentials");
+    });
+
+    expect(mutateMock).toHaveBeenCalledWith({ provider_type: "custom", base_url: "" });
+  });
+
+  it("reports a thrown probe as unverified instead of crashing", async () => {
+    // Only the {models, error} shape used to be pinned; a transport that throws
+    // (DNS, proxy, abort) must still end in an honest status.
+    setupMocks({ provider_type: "openrouter", has_api_key: true });
+    fetchModelsMock.mockRejectedValue(new Error("boom"));
+    const { result } = renderEngine();
+    await waitFor(() => expect(result.current.values.provider_type).toBe("openrouter"));
+    act(() => result.current.form.setValue("default_model", "gpt-4o"));
+
+    await act(async () => {
+      await result.current.persistAndProbe("model");
+    });
+
+    expect(result.current.status).toBe("saved-unverified");
+    expect(result.current.statusDetail).toBe("boom");
   });
 });
