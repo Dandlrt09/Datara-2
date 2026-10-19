@@ -87,6 +87,63 @@ class TestAuthSessions:
         assert await store.get_auth_session_by_token_hash("th_expired") is None
 
 
+class TestUpdateUserPassword:
+    async def test_update_user_password_changes_hash(self, store):
+        user = await store.create_user("alice@example.com", "old_hash")
+        changed = await store.update_user_password(user["id"], "new_hash")
+        assert changed is True
+        refreshed = await store.get_user_by_id(user["id"])
+        assert refreshed["password_hash"] == "new_hash"
+
+    async def test_update_user_password_missing_user_returns_false(self, store):
+        changed = await store.update_user_password(999, "new_hash")
+        assert changed is False
+
+    async def test_update_user_password_only_targets_one_user(self, store):
+        alice = await store.create_user("alice@example.com", "a_hash")
+        bob = await store.create_user("bob@example.com", "b_hash")
+        await store.update_user_password(alice["id"], "a_new")
+        assert (await store.get_user_by_id(alice["id"]))["password_hash"] == "a_new"
+        assert (await store.get_user_by_id(bob["id"]))["password_hash"] == "b_hash"
+
+
+class TestDeleteOtherAuthSessions:
+    async def test_deletes_others_and_keeps_current(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "keep_hash")
+        await store.create_auth_session(user["id"], "other_1")
+        await store.create_auth_session(user["id"], "other_2")
+
+        deleted = await store.delete_other_auth_sessions(user["id"], "keep_hash")
+
+        assert deleted == 2
+        assert await store.get_auth_session_by_token_hash("keep_hash") is not None
+        assert await store.get_auth_session_by_token_hash("other_1") is None
+        assert await store.get_auth_session_by_token_hash("other_2") is None
+
+    async def test_only_deletes_sessions_of_that_user(self, store):
+        alice = await store.create_user("alice@example.com", "hash")
+        bob = await store.create_user("bob@example.com", "hash")
+        await store.create_auth_session(alice["id"], "alice_keep")
+        await store.create_auth_session(alice["id"], "alice_other")
+        await store.create_auth_session(bob["id"], "bob_session")
+
+        deleted = await store.delete_other_auth_sessions(alice["id"], "alice_keep")
+
+        assert deleted == 1
+        assert await store.get_auth_session_by_token_hash("alice_other") is None
+        assert await store.get_auth_session_by_token_hash("bob_session") is not None
+
+    async def test_no_others_returns_zero(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "only_hash")
+
+        deleted = await store.delete_other_auth_sessions(user["id"], "only_hash")
+
+        assert deleted == 0
+        assert await store.get_auth_session_by_token_hash("only_hash") is not None
+
+
 class TestChatSessions:
     async def test_create_and_list(self, store):
         user = await store.create_user("alice@example.com", "hash")

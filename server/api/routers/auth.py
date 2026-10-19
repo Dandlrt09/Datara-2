@@ -36,6 +36,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -147,3 +152,43 @@ async def me(
 ):
     """Return the current authenticated user."""
     return UserResponse(id=user["id"], email=user["email"])
+
+
+@router.post("/password", status_code=204)
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Change the authenticated user's password.
+
+    Verifies the current password, rejects a new password shorter than 8
+    characters, re-hashes and persists the new one, then deletes every other
+    session of the user while keeping the caller's session alive.
+
+    On wrong current password: 401.
+    On short new password: 422.
+    On success: 204.
+    """
+    if not verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+
+    await store.update_user_password(user["id"], hash_password(body.new_password))
+
+    raw_token: str | None = request.cookies.get("session_id")
+    if raw_token:
+        await store.delete_other_auth_sessions(user["id"], hash_token(raw_token))
+
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return None

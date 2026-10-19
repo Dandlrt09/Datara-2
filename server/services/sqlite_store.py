@@ -129,6 +129,18 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
+    async def update_user_password(self, user_id: int, password_hash: str) -> bool:
+        """Replace a user's stored password hash.
+
+        Returns True if a row changed, False if the user does not exist.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
     # ── Auth Sessions ────────────────────────────────────────────────────────────
 
     async def create_auth_session(
@@ -180,6 +192,23 @@ class SqliteStore:
             (token_hash,),
         )
         await self.conn.commit()
+
+    async def delete_other_auth_sessions(
+        self,
+        user_id: int,
+        keep_token_hash: str,
+    ) -> int:
+        """Delete a user's auth sessions except the one identified by token_hash.
+
+        Used at password change: closes every other session while keeping the
+        session that made the change alive. Returns the deleted row count.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?",
+            (user_id, keep_token_hash),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
 
     async def sweep_expired_sessions(self) -> int:
         """Delete all expired auth sessions. Returns count of deleted rows."""
