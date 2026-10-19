@@ -24,6 +24,7 @@ const EXPECTED_ROUTES: RouteEntry[] = [
   { method: "POST", pattern: "/api/auth/login", present: true },
   { method: "POST", pattern: "/api/auth/register", present: true },
   { method: "POST", pattern: "/api/auth/logout", present: true },
+  { method: "POST", pattern: "/api/auth/password", present: true },
 
   // Sessions
   { method: "GET", pattern: "/api/sessions", present: true },

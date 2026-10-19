@@ -16,6 +16,9 @@ vi.mock("../routes/SettingsView", () => ({
 vi.mock("../routes/ArchiveList", () => ({
   default: () => <div data-testid="archives-view"><h1>Archives</h1></div>,
 }));
+vi.mock("../routes/ProfileView", () => ({
+  default: () => <div data-testid="profile-view"><h1>Perfil</h1></div>,
+}));
 const { useSettingsMock } = vi.hoisted(() => ({ useSettingsMock: vi.fn() }));
 
 vi.mock("../queries/useSettings", () => ({
@@ -30,6 +33,7 @@ vi.mock("../queries/useAuth", () => ({
     error: null,
   }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useChangePassword: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
 }));
 
 // Import AppShell AFTER mocks are hoisted
@@ -68,10 +72,22 @@ describe("Navigation smoke (R-TestWall-3)", () => {
     expect(await screen.findByTestId("archives-view")).toBeTruthy();
   });
 
+  it("renders Profile view at /app/profile", async () => {
+    renderWithProviders(<AppShell />, { route: "/app/profile", path: "/app/*" });
+    expect(screen.getByText("Datara")).toBeTruthy();
+    expect(await screen.findByTestId("profile-view")).toBeTruthy();
+  });
+
   it("renders sidebar navigation links", () => {
     renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
     expect(screen.getByText("Datara")).toBeTruthy();
     expect(screen.getByText("test@test.com")).toBeTruthy();
+  });
+
+  it("links the sidebar user block to the profile", () => {
+    renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
+    const link = screen.getByRole("link", { name: /test@test\.com/ });
+    expect(link.getAttribute("href")).toBe("/app/profile");
   });
 });
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useCallback } from "react";
 import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
-import { useMe, useLogout } from "../queries/useAuth";
+import { useMe } from "../queries/useAuth";
 import { useSettings } from "../queries/useSettings";
 import { isProviderConfigured } from "./settings/configured";
 import { useSessions } from "../queries/useSessions";
@@ -11,12 +11,14 @@ import { RouteErrorBoundary } from "../components/ErrorCard";
 import { WizardOverlay } from "../components/WizardOverlay";
 import { useWizardStore } from "../stores/useWizardStore";
 import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
+import { displayNameFromEmail } from "../lib/displayName";
 import type { ChatSession } from "../queries/useSessions";
 
 const ChatView = lazy(() => import("./ChatView"));
 const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
+const ProfileView = lazy(() => import("./ProfileView"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -70,7 +72,6 @@ function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
 export default function AppShell() {
   const navigate = useNavigate();
   const { data: user, isLoading, error } = useMe();
-  const logout = useLogout();
   const queryClient = useQueryClient();
 
   // Query hooks for trigger conditions - use same query keys as views (shared cache)
@@ -223,10 +224,7 @@ export default function AppShell() {
   if (isLoading) return <div>Checking auth...</div>;
   if (!user) return null;
 
-  const handleLogout = async () => {
-    await logout.mutateAsync();
-    navigate("/login", { replace: true });
-  };
+  const displayName = displayNameFromEmail(user.email);
 
   return (
     <>
@@ -255,10 +253,63 @@ export default function AppShell() {
             Settings
           </Link>
           <div style={{ marginTop: "auto" }}>
-            <p style={{ fontSize: "0.85em", color: "#666" }}>{user.email}</p>
-            <button onClick={handleLogout} disabled={logout.isPending}>
-              Log out
-            </button>
+            <Link
+              to="/app/profile"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: 4,
+                borderRadius: 8,
+                textDecoration: "none",
+                color: "inherit",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  background: "#e9ecef",
+                  color: "#333",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {displayName.charAt(0).toUpperCase()}
+              </span>
+              <span
+                style={{ display: "flex", flexDirection: "column", minWidth: 0 }}
+              >
+                <span
+                  style={{
+                    fontSize: "0.9em",
+                    fontWeight: 500,
+                    color: "#333",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {displayName}
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.8em",
+                    color: "#666",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {user.email}
+                </span>
+              </span>
+            </Link>
           </div>
         </nav>
 
@@ -284,6 +335,10 @@ export default function AppShell() {
               <Route
                 path="/archives"
                 element={withErrorBoundary("Archives", ArchiveList)}
+              />
+              <Route
+                path="/profile"
+                element={withErrorBoundary("Profile", ProfileView)}
               />
               <Route index element={<AppLanding />} />
               <Route path="*" element={<NotFound />} />
