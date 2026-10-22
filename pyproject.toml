@@ -1,8 +1,10 @@
 [project]
 name = "datara"
 version = "0.1.0"
-description = "Open-core data analysis tool with AI-powered chat"
+description = "Source-available data analysis tool with AI-powered chat"
 requires-python = ">=3.12"
+license = "FSL-1.1-MIT"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.optional-dependencies]

@@ -1,6 +1,6 @@
 # Datara
 
-Open-core data analysis tool with AI-powered chat. Upload datasets, ask questions in natural language, and get structured analysis with code, charts, and tables — all from your browser.
+Source-available data analysis tool with AI-powered chat. Upload datasets, ask questions in natural language, and get structured analysis with code, charts, and tables — all from your browser.
 
 ## Architecture
 
@@ -35,4 +35,14 @@ uv run pytest
 
 ## License
 
-MIT
+Datara is source-available under the [Functional Source License 1.1, MIT Future
+License](LICENSE) (FSL-1.1-MIT).
+
+You may use, copy, modify, and redistribute Datara for any purpose except a
+Competing Use: offering it to others as a commercial product or service that
+substitutes for Datara, or that offers the same or substantially similar
+functionality. Internal use, non-commercial education and research, and
+professional services for a licensee are explicitly permitted.
+
+Every version becomes available under the MIT license on the second anniversary
+of the date it was made available. See [LICENSE](LICENSE) for the full terms.
