@@ -55,3 +55,33 @@ class TestFormatNarrativeNumbers:
 
     def test_empty_text_passthrough(self):
         assert _format_narrative_numbers("") == ""
+
+
+class TestFormatNarrativeNumbersInternational:
+    """The user's number_format preference drives which convention wins."""
+
+    def test_full_precision_float_uses_international_convention(self):
+        assert (
+            _format_narrative_numbers(
+                "La media es 2500.8230981333336 segun el perfil.", number_format="intl"
+            )
+            == "La media es 2,500.823098 segun el perfil."
+        )
+
+    def test_spanish_input_is_rewritten_to_international(self):
+        assert (
+            _format_narrative_numbers(
+                "Total 1.234.567,8901234 verificado.", number_format="intl"
+            )
+            == "Total 1,234,567.890123 verificado."
+        )
+
+    def test_short_decimals_untouched_in_international_mode(self):
+        text = "El monto va de 5.0 a 5000.0 con media de 2500.82."
+        assert _format_narrative_numbers(text, number_format="intl") == text
+
+    def test_omitted_argument_still_defaults_to_spanish(self):
+        assert (
+            _format_narrative_numbers("La media es 2500.8230981333336.")
+            == "La media es 2.500,823098."
+        )

@@ -53,6 +53,12 @@ from server.services.error_taxonomy import (
 )
 from server.services.events import SessionEvent, SessionEventType
 from server.services.llm_openai import OpenAIProvider
+from server.services.preferences import (
+    NUMBER_FORMAT_ES,
+    effective_preferences,
+    grounding_number_instruction,
+    narrative_number_instruction,
+)
 from server.services.sandbox_local import run_code
 from server.services.sqlite_store import SqliteStore
 from server.services.provider_registry import build_provider, ProviderType
@@ -255,17 +261,18 @@ def _to_spanish_number(english: str) -> str:
     return english.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
-def _format_narrative_numbers(text: str) -> str:
+def _format_narrative_numbers(text: str, number_format: str = NUMBER_FORMAT_ES) -> str:
     """Cap decimal places of numeric literals in narrative text to 6.
 
-    Rewrites matched literals to the Spanish convention (dot thousands, comma
+    Rewrites matched literals to the user's chosen convention (Spanish by
+    default: dot thousands, comma decimal; ``intl``: comma thousands, dot
     decimal) rounded to 6 places with trailing zeros stripped. Shorter
     decimals, integers, and non-numeric tokens (prod_004, dates) pass through.
     """
     def _repl(match: re.Match[str]) -> str:
         value = _parse_narrative_number(match.group(0))
         english = f"{value:,.6f}".rstrip("0").rstrip(".")
-        return _to_spanish_number(english)
+        return english if number_format == "intl" else _to_spanish_number(english)
 
     return _NARRATIVE_NUMBER.sub(_repl, text)
 
@@ -296,13 +303,19 @@ def _build_repair_feedback(error: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
+def build_system_prompt(
+    profiles: list[dict[str, Any]] | None = None,
+    number_format: str = NUMBER_FORMAT_ES,
+) -> str:
     """Assemble the chat system prompt.
 
     Single source of truth shared by the chat router and the regression
     bench (scripts/bench.py). The bench previously used a hand-copied
     template that had drifted from this assembly AND never included the
     profile JSON, so it validated a prompt the app did not run.
+
+    ``number_format`` is the user's preference ("es" or "intl"); the default
+    reproduces the pre-preference Spanish prompt byte-for-byte.
     """
     system_prompt = (
         "You are a data analysis assistant. The user's datasets are described below. "
@@ -405,8 +418,8 @@ def build_system_prompt(profiles: list[dict[str, Any]] | None = None) -> str:
         "IMPORTANT: in the pre-code explanation describe WHAT you will compute — NEVER invent or estimate specific result values; "
         "the exact numbers only exist after the code executes."
         "\n\nIMPORTANT — narrative quality: Write natural professional Spanish. Start with the conclusion or key finding. "
-        "Format numeric values in Spanish convention: dot as thousands separator and comma as decimal separator, ≤6 decimal places (e.g. 5.035.600,021 — never full-precision floats like 2500.8230981333336). Drop unnecessary trailing zeros (write 5.020.000, not 5.020.000,0). "
-        "Never dump raw column listings or generate unsolicited charts. "
+        + narrative_number_instruction(number_format)
+        + "Never dump raw column listings or generate unsolicited charts. "
         "No Markdown formatting: use plain text, no **bold**, no bullet lists."
         "\n\nIMPORTANT — single result table: assign the final result to EXACTLY ONE df_ variable (df_result or df_<name>). "
         "Never store the same data under two df_ names (each df_ renders as a separate table): reuse and overwrite the same variable instead. "
@@ -613,9 +626,19 @@ async def chat_stream(
             # Step 3: Load context
             context = await build_chat_context(store, user_id=user_id, chat_session=session_id)
 
+            # The user's display preference decides which number convention the
+            # prompt asks for AND which one the deterministic backstop below
+            # rewrites to ("una regla de formato por llamada": every call
+            # carries its own rule).
+            number_format = effective_preferences(
+                await store.get_user_settings(user_id)
+            )["number_format"]
+
             # Build the system prompt with profiles (single source of truth,
             # shared with the regression bench)
-            system_prompt = build_system_prompt(context["profiles"])
+            system_prompt = build_system_prompt(
+                context["profiles"], number_format=number_format
+            )
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             llm_messages.extend(context["messages"])
@@ -664,7 +687,8 @@ async def chat_stream(
 
             structured = llm_response.structured_data or {}
             explanation = _format_narrative_numbers(
-                structured.get("explanation", llm_response.text) or ""
+                structured.get("explanation", llm_response.text) or "",
+                number_format=number_format,
             )
             code = structured.get("code", "")
 
@@ -803,7 +827,8 @@ async def chat_stream(
                 repair_structured = repair_response.structured_data or {}
                 repair_code = repair_structured.get("code", "")
                 repair_explanation = _format_narrative_numbers(
-                    repair_structured.get("explanation", repair_response.text) or ""
+                    repair_structured.get("explanation", repair_response.text) or "",
+                    number_format=number_format,
                 )
                 if not repair_code.strip():
                     # No code produced: terminate with the FIRST failure's
@@ -938,8 +963,8 @@ async def chat_stream(
                                 "The code has now executed and produced results below. "
                                 "Rewrite the explanation to be grounded in the ACTUAL computed numbers. "
                                 "Copy numeric values EXACTLY as they appear in the provided results — never round them. "
-                                "Format numbers in Spanish convention: dot thousands separator, comma decimal separator (e.g. 76.036.762,77), dropping unnecessary trailing zeros. "
-                                "Keep every key computed value, do not drop any. For long results never enumerate every row: "
+                                + grounding_number_instruction(number_format)
+                                + "Keep every key computed value, do not drop any. For long results never enumerate every row: "
                                 "highlight only the top 2-3 inline and refer to the table for the rest. "
                                 "Do not keep the original estimates: the rewritten narrative must contain ONLY the real computed values. "
                                 "Refer to results naturally (e.g. 'la tabla', 'el gráfico'), never by variable names like df_result. "
@@ -954,7 +979,8 @@ async def chat_stream(
                             temperature=0.1,
                         )
                         grounded_narrative = _format_narrative_numbers(
-                            grounding_response.text.strip()
+                            grounding_response.text.strip(),
+                            number_format=number_format,
                         )
                         grounding_usage = grounding_response.usage
                         if grounded_narrative:

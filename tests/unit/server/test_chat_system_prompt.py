@@ -77,3 +77,14 @@ class TestProfilesPresentPathUnchanged:
         prompt = build_system_prompt(_PROFILE)
         assert "assign every requested result table" not in prompt
         assert "assign the single result table to a DataFrame variable named df_result" in prompt
+
+
+class TestNumberFormatPreference:
+    def test_default_prompt_keeps_the_spanish_rule(self):
+        prompt = build_system_prompt(_PROFILE)
+        assert "Format numeric values in Spanish convention" in prompt
+
+    def test_international_preference_swaps_the_rule(self):
+        prompt = build_system_prompt(_PROFILE, number_format="intl")
+        assert "Format numeric values in international convention" in prompt
+        assert "Format numeric values in Spanish convention" not in prompt
