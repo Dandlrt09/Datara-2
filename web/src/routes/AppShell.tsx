@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useCallback } from "react";
 import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
-import { useMe } from "../queries/useAuth";
+import { useMe, type User } from "../queries/useAuth";
 import { useSettings } from "../queries/useSettings";
 import { isProviderConfigured } from "./settings/configured";
 import { useSessions } from "../queries/useSessions";
@@ -12,6 +12,7 @@ import { WizardOverlay } from "../components/WizardOverlay";
 import { useWizardStore } from "../stores/useWizardStore";
 import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
 import { PreferencesProvider, usePreferences } from "../lib/preferences";
+import { PendingDeletionScreen } from "../components/PendingDeletionScreen";
 import { landingDestination } from "../lib/landing";
 import { displayNameFromEmail } from "../lib/displayName";
 import type { ChatSession } from "../queries/useSessions";
@@ -81,6 +82,34 @@ function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
 export default function AppShell() {
   const navigate = useNavigate();
   const { data: user, isLoading, error } = useMe();
+
+  useEffect(() => {
+    if (!isLoading && (error || !user)) {
+      navigate("/login", { replace: true });
+    }
+  }, [user, isLoading, error, navigate]);
+
+  if (isLoading) return <div>Checking auth...</div>;
+  if (!user) return null;
+
+  // A scheduled deletion locks the app (S6/S7): the only paths are cancelling
+  // the deletion or signing out. Rendered before the shell's data hooks so a
+  // pending account opens no session/file queries or SSE stream (D6).
+  if (user.pending_deletion_at) {
+    return (
+      <PreferencesProvider>
+        <PendingDeletionScreen deadline={user.pending_deletion_at} />
+      </PreferencesProvider>
+    );
+  }
+
+  return <AppShellContent user={user} />;
+}
+
+/** The signed-in app shell. Split from `AppShell` so the pending-deletion gate
+ * can short-circuit before any of these data hooks run (D6). */
+function AppShellContent({ user }: { user: User }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // Query hooks for trigger conditions - use same query keys as views (shared cache)
@@ -223,15 +252,6 @@ export default function AppShell() {
   }, [queryClient]);
 
   useSessionEvents({ onEvent, onReconnected });
-
-  useEffect(() => {
-    if (!isLoading && (error || !user)) {
-      navigate("/login", { replace: true });
-    }
-  }, [user, isLoading, error, navigate]);
-
-  if (isLoading) return <div>Checking auth...</div>;
-  if (!user) return null;
 
   const displayName = displayNameFromEmail(user.email);
 

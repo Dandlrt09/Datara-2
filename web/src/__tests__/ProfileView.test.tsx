@@ -13,6 +13,8 @@ vi.mock("../queries/useAuth", () => ({
   useMe: () => useMeMock(),
   useLogout: () => ({ mutateAsync: logoutMock, isPending: false }),
   useChangePassword: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
+  useRequestAccountDeletion: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
+  useCancelAccountDeletion: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("react-router-dom", async (importOriginal) => {
@@ -64,6 +66,14 @@ describe("ProfileView", () => {
 
     await waitFor(() => expect(logoutMock).toHaveBeenCalledTimes(1));
     expect(navigateMock).toHaveBeenCalledWith("/login", { replace: true });
+  });
+
+  it("opens the delete-account dialog from the danger zone", () => {
+    renderWithProviders(<ProfileView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar mi cuenta" }));
+
+    expect(screen.getByRole("dialog", { name: "Eliminar cuenta" })).toBeTruthy();
   });
 
   it("shows a loading state while the user is unknown", () => {

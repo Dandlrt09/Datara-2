@@ -6,6 +6,10 @@ import {
   PASSWORD_CHANGED_NOTICE,
 } from "../components/ChangePasswordDialog";
 import PreferencesCard from "../components/PreferencesCard";
+import {
+  DeleteAccountDialog,
+  DELETION_SCHEDULED_NOTICE,
+} from "../components/DeleteAccountDialog";
 import { displayNameFromEmail } from "../lib/displayName";
 import { colors, typography } from "../design/tokens";
 
@@ -59,11 +63,22 @@ export default function ProfileView() {
   const { data: user, isLoading } = useMe();
   const logout = useLogout();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const handleLogout = async () => {
     await logout.mutateAsync();
     navigate("/login", { replace: true });
+  };
+
+  const handleDeletionScheduled = () => {
+    // Requesting deletion closes every session server-side (S5): land on the
+    // login screen with the notice, where the user can sign in again to cancel.
+    setDeleteDialogOpen(false);
+    navigate("/login", {
+      replace: true,
+      state: { notice: DELETION_SCHEDULED_NOTICE },
+    });
   };
 
   if (isLoading) {
@@ -175,6 +190,34 @@ export default function ProfileView() {
       </section>
 
       <PreferencesCard />
+
+      <section
+        style={{ ...cardStyle, borderColor: "#f2b8b5", background: "#fff8f7" }}
+      >
+        <div style={rowStyle}>
+          <div>
+            <span style={{ ...rowLabelStyle, color: "#c62828" }}>
+              Eliminar cuenta
+            </span>
+            <span style={rowSublabelStyle}>
+              Se borra en 7 días. Puedes cancelarlo antes de esa fecha.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDeleteDialogOpen(true)}
+            style={{ ...secondaryButtonStyle, color: "#c62828", borderColor: "#f2b8b5" }}
+          >
+            Eliminar mi cuenta
+          </button>
+        </div>
+      </section>
+
+      <DeleteAccountDialog
+        open={deleteDialogOpen}
+        onSuccess={handleDeletionScheduled}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
 
       <ChangePasswordDialog
         open={dialogOpen}

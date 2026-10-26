@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithProviders } from "./test-utils";
 import LoginScreen from "../routes/LoginScreen";
+import { DELETION_SCHEDULED_NOTICE } from "../components/DeleteAccountDialog";
 
 const { useLoginMock } = vi.hoisted(() => ({
   useLoginMock: vi.fn(),
@@ -37,6 +40,29 @@ describe("LoginScreen", () => {
     });
     renderWithProviders(<LoginScreen />);
     expect(screen.getByText("Invalid credentials")).toBeTruthy();
+  });
+
+  it("shows the deletion notice carried in navigation state (S5)", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            { pathname: "/login", state: { notice: DELETION_SCHEDULED_NOTICE } },
+          ]}
+        >
+          <LoginScreen />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe(DELETION_SCHEDULED_NOTICE);
+  });
+
+  it("shows no notice when navigation state is empty", () => {
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("shows generic error on non-401 failure", () => {

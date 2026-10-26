@@ -4,6 +4,8 @@ import { api } from "../lib/api";
 export interface User {
   id: number;
   email: string;
+  /** Scheduled purge deadline in the grace period, or null (S3). */
+  pending_deletion_at: string | null;
 }
 
 export function useMe() {
@@ -33,6 +35,34 @@ export function useRegister() {
       api.post<User>("/api/auth/register", data),
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
+    },
+  });
+}
+
+/**
+ * Schedule the account for deletion after the grace period (S2).
+ *
+ * The server closes every session on success, so the whole cache is dropped —
+ * nothing cached is valid after the account is scheduled (S5).
+ */
+export function useRequestAccountDeletion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { confirmation: string; current_password: string }) =>
+      api.post<undefined>("/api/auth/account/delete", data),
+    onSuccess: () => {
+      qc.clear();
+    },
+  });
+}
+
+/** Cancel a scheduled deletion so the account survives (S3). */
+export function useCancelAccountDeletion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<undefined>("/api/auth/account/cancel-deletion"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
   });
 }

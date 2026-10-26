@@ -1,5 +1,5 @@
 import { useForm } from "react-hook-form";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useLogin } from "../queries/useAuth";
 import { ApiError } from "../lib/api";
 
@@ -10,8 +10,13 @@ interface LoginForm {
 
 export default function LoginScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const login = useLogin();
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>();
+
+  // A deletion request lands here with a one-shot notice (S5); the exact purge
+  // date is shown on the interstitial after signing in (S7).
+  const notice = (location.state as { notice?: string } | null)?.notice;
 
   const onSubmit = async (data: LoginForm) => {
     try {
@@ -28,6 +33,21 @@ export default function LoginScreen() {
     <div style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}>
       <h1>Datara</h1>
       <h2>Log in</h2>
+      {notice && (
+        <p
+          role="status"
+          style={{
+            background: "#fff8f7",
+            border: "1px solid #f2b8b5",
+            color: "#c62828",
+            padding: 12,
+            borderRadius: 6,
+            marginBottom: 16,
+          }}
+        >
+          {notice}
+        </p>
+      )}
       <form onSubmit={handleSubmit(onSubmit)}>
         <div style={{ marginBottom: 16 }}>
           <input
