@@ -20,13 +20,3 @@ export function formatNumberEs(value: number, maxFractionDigits = 6): string {
   const sign = negative && !isZero ? "-" : "";
   return sign + grouped + (fraction ? `,${fraction}` : "");
 }
-
-/**
- * Format a table cell for display: `null`/`undefined` become an em dash,
- * numbers use the Spanish formatter, anything else falls back to `String`.
- */
-export function formatTableValue(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "number") return formatNumberEs(value);
-  return String(value);
-}
