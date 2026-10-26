@@ -72,9 +72,20 @@ describe("PendingDeletionScreen", () => {
 
   it("renders the absolute deadline when that preference is set", () => {
     settingsState.data = { date_format: "absolute" };
+    // The stored deadline is UTC (that is the shape `GET /api/auth/me` returns)
+    // and the screen shows it in the reader's own zone, so the expectation is
+    // derived from the same instant instead of hardcoded: in a zone west of
+    // Greenwich this instant is still 31/12/2098 locally.
+    const deadlineUtc = new Date("2099-01-01T00:00:00Z");
+    const expected = new RegExp(
+      `${String(deadlineUtc.getDate()).padStart(2, "0")}/${String(
+        deadlineUtc.getMonth() + 1,
+      ).padStart(2, "0")}/${deadlineUtc.getFullYear()}`,
+    );
+
     renderScreen("2099-01-01 00:00:00", true);
 
-    expect(screen.getByText(/01\/01\/2099/)).toBeTruthy();
+    expect(screen.getByText(expected)).toBeTruthy();
   });
 
   it("cancels the deletion from the primary action", () => {

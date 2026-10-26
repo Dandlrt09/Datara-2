@@ -59,6 +59,17 @@ describe("preference formatters", () => {
     expect(formatTimestamp("not-a-date", "absolute")).toBe("—");
   });
 
+  it("formatTimestamp reads a zone-less database timestamp as UTC", () => {
+    // One in the morning in UTC: on any machine west of Greenwich this is still
+    // the previous day, so a local-time parse would land on the wrong date.
+    const utc = new Date("2026-10-27T01:09:18Z");
+    const expected = `${String(utc.getDate()).padStart(2, "0")}/${String(
+      utc.getMonth() + 1,
+    ).padStart(2, "0")}/${utc.getFullYear()}`;
+
+    expect(formatTimestamp("2026-10-27 01:09:18", "absolute")).toBe(expected);
+  });
+
   it("formatCost renders each currency symbol, and none is a bare number", () => {
     expect(formatCost(0.125, "US$")).toBe("US$ 0,1250");
     expect(formatCost(0.125, "$")).toBe("$ 0,1250");

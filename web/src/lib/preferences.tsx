@@ -18,7 +18,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useSettings, type UserSettings } from "../queries/useSettings";
 import { formatNumberEs } from "./formatNumbers";
-import { formatRelativeTimeEs } from "./relativeTime";
+import { formatRelativeTimeEs, toUtcIso } from "./relativeTime";
 
 export type NumberFormat = "es" | "intl";
 export type DateFormat = "relative" | "absolute";
@@ -105,7 +105,7 @@ export function formatTimestamp(
   dateFormat: DateFormat = "relative",
 ): string {
   if (dateFormat === "relative") return formatRelativeTimeEs(iso);
-  const date = new Date(iso);
+  const date = new Date(toUtcIso(iso));
   if (Number.isNaN(date.getTime())) return "—";
   const day = String(date.getDate()).padStart(2, "0");
   const month = String(date.getMonth() + 1).padStart(2, "0");
