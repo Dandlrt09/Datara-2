@@ -38,13 +38,15 @@ async def purge_due_deletions(store: SqliteStore) -> int:
     purged = 0
     for user_id in user_ids:
         try:
-            deleted = await store.purge_user(user_id)
+            deleted = await store.purge_due_user(user_id)
         except Exception:
             logger.exception("Failed to purge account %s; skipping", user_id)
             continue
+        # A False here means the account cancelled or rescheduled between the
+        # listing and this delete (race): keep its bytes too.
         if deleted:
             purged += 1
-        remove_user_uploads(user_id)
+            remove_user_uploads(user_id)
     if purged:
         logger.info("Purged %d account(s) past their deletion deadline", purged)
     return purged

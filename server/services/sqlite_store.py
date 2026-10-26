@@ -182,14 +182,22 @@ class SqliteStore:
         )
         return [row[0] for row in rows]
 
-    async def purge_user(self, user_id: int) -> bool:
-        """Delete a user row; every child table cascades (S10).
+    async def purge_due_user(self, user_id: int) -> bool:
+        """Delete a user row only while its deletion is still due (S10, D1).
 
-        The database is the source of truth: the caller removes uploads from
-        disk separately and best-effort (D5/D7). Returns True if a row was
-        deleted (False if the user was already gone).
+        The ``DELETE`` re-checks the deadline in the same statement instead of
+        trusting the sweep's earlier listing, so an account that was cancelled
+        or rescheduled in between is kept (cancel-vs-purge race). Every child
+        table cascades; the caller removes uploads from disk separately and
+        best-effort (D5/D7). Returns True if a row was deleted.
         """
-        cursor = await self.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        cursor = await self.conn.execute(
+            "DELETE FROM users "
+            "WHERE id = ? "
+            "AND pending_deletion_at IS NOT NULL "
+            "AND pending_deletion_at <= datetime('now')",
+            (user_id,),
+        )
         await self.conn.commit()
         return cursor.rowcount > 0
 

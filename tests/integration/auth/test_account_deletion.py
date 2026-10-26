@@ -177,8 +177,9 @@ class TestPurgeUser:
             )
         )
         asyncio.run(store.conn.commit())
+        _expire_now(store, user["id"])
 
-        assert asyncio.run(store.purge_user(user["id"])) is True
+        assert asyncio.run(store.purge_due_user(user["id"])) is True
         assert asyncio.run(store.get_user_by_id(user["id"])) is None
 
         async def _counts():
@@ -197,7 +198,35 @@ class TestPurgeUser:
         }
 
     def test_purge_unknown_user_changes_nothing(self, store):
-        assert asyncio.run(store.purge_user(999)) is False
+        assert asyncio.run(store.purge_due_user(999)) is False
+
+    def test_purge_skips_an_account_cancelled_after_the_listing(self, store):
+        """Cancel-vs-purge race (native review R1/R3/R4).
+
+        The delete is conditional on the deadline still being due, so an
+        account cancelled after the sweep listed it survives.
+        """
+        user = _make_user(store)
+        asyncio.run(store.request_user_deletion(user["id"]))
+        _expire_now(store, user["id"])
+        assert asyncio.run(store.list_due_deletion_user_ids()) == [user["id"]]
+
+        asyncio.run(store.cancel_user_deletion(user["id"]))
+
+        assert asyncio.run(store.purge_due_user(user["id"])) is False
+        assert asyncio.run(store.get_user_by_id(user["id"])) is not None
+
+    def test_purge_skips_an_account_rescheduled_after_the_listing(self, store):
+        """A deadline pushed into the future after listing must not purge."""
+        user = _make_user(store)
+        asyncio.run(store.request_user_deletion(user["id"]))
+        _expire_now(store, user["id"])
+
+        # Re-requesting moves the deadline seven days out.
+        asyncio.run(store.request_user_deletion(user["id"]))
+
+        assert asyncio.run(store.purge_due_user(user["id"])) is False
+        assert asyncio.run(store.get_user_by_id(user["id"])) is not None
 
 
 _DELETE_BODY = {"confirmation": "ELIMINAR", "current_password": PASSWORD}
@@ -389,14 +418,14 @@ class TestPurgeDueDeletions:
         _expire_now(store, second["id"])
         _seed_uploads(files_router.UPLOADS_DIR, first["id"])
 
-        original = store.purge_user
+        original = store.purge_due_user
 
         async def flaky(user_id):
             if user_id == first["id"]:
                 raise RuntimeError("simulated failure")
             return await original(user_id)
 
-        monkeypatch.setattr(store, "purge_user", flaky)
+        monkeypatch.setattr(store, "purge_due_user", flaky)
 
         purged = asyncio.run(purge_due_deletions(store))
 
@@ -409,6 +438,33 @@ class TestPurgeDueDeletions:
     def test_without_due_accounts_is_a_noop(self, store):
         _make_user(store)
         assert asyncio.run(purge_due_deletions(store)) == 0
+
+    def test_cancel_between_listing_and_purge_keeps_the_account(
+        self, store, tmp_path, monkeypatch
+    ):
+        """The sweep's list-then-delete window must not delete a cancelled
+        account (native review R1/R3/R4)."""
+        monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
+        user = _make_user(store)
+        asyncio.run(store.request_user_deletion(user["id"]))
+        _expire_now(store, user["id"])
+        _seed_uploads(files_router.UPLOADS_DIR, user["id"])
+
+        # Simulate the interleaving: the sweep already listed this id, then the
+        # user cancelled before the delete ran.
+        stale = asyncio.run(store.list_due_deletion_user_ids())
+        assert stale == [user["id"]]
+        asyncio.run(store.cancel_user_deletion(user["id"]))
+
+        async def stale_list():
+            return stale  # the snapshot taken before the cancel
+
+        monkeypatch.setattr(store, "list_due_deletion_user_ids", stale_list)
+
+        assert asyncio.run(purge_due_deletions(store)) == 0
+        assert asyncio.run(store.get_user_by_id(user["id"])) is not None
+        # A kept account keeps its bytes: no rmtree happened.
+        assert (files_router.UPLOADS_DIR / str(user["id"])).exists()
 
     def test_deadline_exactly_now_is_due(self, store):
         """The due comparison is inclusive: a deadline equal to now purges."""
