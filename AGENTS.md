@@ -53,6 +53,13 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 - Graceful uvicorn shutdown hangs on browser keep-alive connections; `kill -9` when needed.
 - Never pipe pytest through other commands (`pytest | tail && commit` masks the exit code).
 - **Native review / #4030**: before `gentle-ai review status ... --next-transition`, run `git worktree list --porcelain` and `git worktree prune --dry-run -v`; if anything is listed as prunable, run `git worktree prune` first. A stale registered worktree makes the OpenCode transport reject the reviewer (`opencode_review_transport_binding_invalid`, Gentle AI #4030) even when the review target is healthy.
+- **Native review from an ext4 clone**: reviewing the repo in place on `/mnt/c` (9p) is unreliable — `candidate-view` times out first (`checkout-index` after 10 s) and the heavy reviewer capture (~100 KB prompts) can end in `operation_timeout`, leaving a stuck partial lineage and burning tokens for nothing. Run the review from an ext4 clone instead:
+
+  ```bash
+  git clone --no-local "/mnt/c/Users/Danieldlrt09/Proyectos/Datara 2" "$HOME/datara-review"
+  ```
+
+  `$HOME` is ext4 and `--no-local` copies every local ref, including the **unpushed** candidate commits. Then pass `workspaceRoot=/home/<user>/datara-review` on every `gentle_review` call (inspect, start, status, capture, acknowledge). In a clean clone `inspect` sees an empty working tree, so supply the committed range in the START `input`: `{"baseRef":"<base-commit>","committedOnly":true,...}`. The review is bound to the clone's repository context, so it is the review of record even though the code lives in the other checkout.
 
 ## Conventions
 
