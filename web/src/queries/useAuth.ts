@@ -8,6 +8,21 @@ export interface User {
   pending_deletion_at: string | null;
 }
 
+/** One open auth session as returned by `GET /api/auth/sessions` (T2.4). */
+export interface ActiveSession {
+  id: number;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  is_current: boolean;
+}
+
+/** The sessions payload: the list plus the unseen-new-session marker. */
+export interface ActiveSessions {
+  sessions: ActiveSession[];
+  new_session_at: string | null;
+}
+
 export function useMe() {
   return useQuery({
     queryKey: ["auth", "me"],
@@ -88,5 +103,46 @@ export function useChangePassword() {
   return useMutation({
     mutationFn: (data: { current_password: string; new_password: string }) =>
       api.post<undefined>("/api/auth/password", data),
+  });
+}
+
+/**
+ * List the signed-in user's open auth sessions, most recent activity first.
+ *
+ * Uses the `["auth", "sessions"]` cache key on purpose: `["sessions"]` already
+ * belongs to the *chat* sessions (`useSessions.ts`) and the two must not share
+ * a cache entry.
+ */
+export function useActiveSessions() {
+  return useQuery({
+    queryKey: ["auth", "sessions"],
+    queryFn: () => api.get<ActiveSessions>("/api/auth/sessions"),
+  });
+}
+
+/** Close one session by id. The server rejects the caller's own session. */
+export function useCloseSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete<undefined>(`/api/auth/sessions/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth", "sessions"] }),
+  });
+}
+
+/** Close every session except the caller's ("close the others"). */
+export function useCloseOtherSessions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<undefined>("/api/auth/sessions"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth", "sessions"] }),
+  });
+}
+
+/** Mark the new-session notice as seen so it stops showing. */
+export function useAcknowledgeNewSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<undefined>("/api/auth/sessions/notice-ack"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth", "sessions"] }),
   });
 }

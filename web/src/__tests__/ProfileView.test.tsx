@@ -15,6 +15,14 @@ vi.mock("../queries/useAuth", () => ({
   useChangePassword: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
   useRequestAccountDeletion: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
   useCancelAccountDeletion: () => ({ mutate: vi.fn(), isPending: false }),
+  useActiveSessions: () => ({
+    data: { sessions: [], new_session_at: null },
+    isLoading: false,
+    error: null,
+  }),
+  useCloseSession: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
+  useCloseOtherSessions: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
+  useAcknowledgeNewSession: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("react-router-dom", async (importOriginal) => {
