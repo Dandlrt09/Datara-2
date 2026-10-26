@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 DATARA_DB_PATH = resolve_db_path()
 
+# D2 (T2): the user-agent header is caller-controlled and unbounded, and the
+# sessions list only needs enough of it to say "Chrome en Windows".
+USER_AGENT_MAX_LENGTH = 120
+
+# D8 (T2): a session's last activity is rewritten at most once per this many
+# seconds, so a polling page (the chat) cannot turn every request into a write.
+ACTIVITY_TOUCH_SECONDS = 300
+
 # ── Accent folding ───────────────────────────────────────────────────────────
 # SQLite's ``lower()`` is ASCII-only and SQLite has no ``unaccent``; migrations
 # here are ``.sql``-only, so an accent-folded column cannot be backfilled in
@@ -216,25 +224,174 @@ class SqliteStore:
         user_id: int,
         token_hash: str,
         ttl_seconds: int = 28800,
+        user_agent: str | None = None,
     ) -> dict[str, Any]:
         """Create a new auth session row.
 
+        ``user_agent`` is stored truncated to ``USER_AGENT_MAX_LENGTH`` (D2);
+        an empty value is stored as NULL, since it says no more than a missing
+        one. No IP address is ever stored.
+
         Returns the full row (id, user_id, token_hash, created_at, expires_at,
-        last_seen_at).
+        last_seen_at, user_agent).
         """
+        stored_user_agent = user_agent[:USER_AGENT_MAX_LENGTH] if user_agent else None
         cursor = await self.conn.execute(
-            "INSERT INTO auth_sessions (user_id, token_hash, expires_at) "
-            "VALUES (?, ?, datetime('now', ? || ' seconds'))",
-            (user_id, token_hash, str(ttl_seconds)),
+            "INSERT INTO auth_sessions "
+            "(user_id, token_hash, expires_at, user_agent) "
+            "VALUES (?, ?, datetime('now', ? || ' seconds'), ?)",
+            (user_id, token_hash, str(ttl_seconds), stored_user_agent),
         )
         await self.conn.commit()
         row_id = cursor.lastrowid
         rows = await self.conn.execute_fetchall(
-            "SELECT id, user_id, token_hash, created_at, expires_at, last_seen_at "
+            "SELECT id, user_id, token_hash, created_at, expires_at, last_seen_at, "
+            "user_agent "
             "FROM auth_sessions WHERE id = ?",
             (row_id,),
         )
         return dict(rows[0])
+
+    async def get_auth_session_by_id(
+        self,
+        user_id: int,
+        session_id: int,
+    ) -> dict[str, Any] | None:
+        """Return one session of that user, or None.
+
+        Owner-scoped: an id owned by somebody else is indistinguishable from an
+        id that does not exist, so the caller cannot probe for other users'
+        sessions (the router answers 404 either way).
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_id, token_hash, user_agent, created_at, expires_at, "
+            "last_seen_at "
+            "FROM auth_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def list_auth_sessions(
+        self,
+        user_id: int,
+        current_token_hash: str,
+    ) -> list[dict[str, Any]]:
+        """List a user's live sessions, most recent activity first.
+
+        ``token_hash`` is deliberately never returned: the caller identifies the
+        row it is asking from through ``is_current`` (D3), which is the only
+        thing the API needs to expose. Expired rows are filtered here as well as
+        by the hourly sweep, so a session can never be listed as usable when it
+        is not.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, user_agent, created_at, last_seen_at, "
+            "(token_hash = ?) AS is_current "
+            "FROM auth_sessions "
+            "WHERE user_id = ? AND expires_at > datetime('now') "
+            "ORDER BY last_seen_at DESC, id DESC",
+            (current_token_hash, user_id),
+        )
+        return [{**dict(row), "is_current": bool(row["is_current"])} for row in rows]
+
+    async def touch_auth_session(
+        self,
+        token_hash: str,
+        min_interval_seconds: int = ACTIVITY_TOUCH_SECONDS,
+    ) -> bool:
+        """Record activity on a session, at most once per interval (D8).
+
+        The threshold lives in the UPDATE itself, so two concurrent requests
+        cannot read-modify-write the same row and an unknown or expired token
+        simply matches nothing instead of raising. Returns True when the row was
+        actually rewritten.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE auth_sessions SET last_seen_at = datetime('now') "
+            "WHERE token_hash = ? "
+            "AND last_seen_at < datetime('now', ?)",
+            (token_hash, f"{int(min_interval_seconds) * -1} seconds"),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_auth_session_row(self, user_id: int, session_id: int) -> int:
+        """Delete one session by id, owner-scoped (D5). Returns rows deleted.
+
+        The row is what makes the closed browser fail: its next authenticated
+        request finds no session and gets a 401.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
+    async def pending_new_session_at(
+        self,
+        user_id: int,
+        current_token_hash: str,
+    ) -> str | None:
+        """Return when the newest unacknowledged *other* live session that was
+        created after this one was created, or None (D4/D9).
+
+        Only younger sessions count (S6: "a session created after mine"): the
+        mark is per user, so on the newest session every older one would
+        otherwise be announced as a new session, dated before it existed.
+
+        The acknowledgement mark is a session id, not a timestamp: ids are
+        monotonic (``AUTOINCREMENT`` never reuses one), while these timestamps
+        only have second granularity, so a login in the same second as an
+        acknowledgement would otherwise be invisible forever. A NULL mark means
+        the user never acknowledged anything, so any younger live session
+        counts.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, created_at FROM auth_sessions "
+            "WHERE user_id = ? AND token_hash != ? "
+            "AND expires_at > datetime('now') "
+            "AND id > (SELECT id FROM auth_sessions WHERE token_hash = ?) "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, current_token_hash, current_token_hash),
+        )
+        if not rows:
+            return None
+        newest_id = rows[0]["id"]
+        newest_at = rows[0]["created_at"]
+
+        seen = await self.conn.execute_fetchall(
+            "SELECT sessions_notice_seen_session_id AS seen_id FROM users WHERE id = ?",
+            (user_id,),
+        )
+        seen_id = seen[0]["seen_id"] if seen else None
+        if seen_id is not None and newest_id <= seen_id:
+            return None
+        return newest_at
+
+    async def mark_sessions_notice_seen(
+        self,
+        user_id: int,
+        current_token_hash: str,
+    ) -> None:
+        """Acknowledge the new-session notice up to the newest other live
+        session (D9).
+
+        Storing the observed id rather than ``now`` keeps the acknowledgement
+        idempotent and race-free: a session created after this call still has a
+        higher id and will warn again, even inside the same second.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT COALESCE(MAX(id), 0) AS newest_id FROM auth_sessions "
+            "WHERE user_id = ? AND token_hash != ? "
+            "AND expires_at > datetime('now')",
+            (user_id, current_token_hash),
+        )
+        await self.conn.execute(
+            "UPDATE users SET sessions_notice_seen_session_id = ? WHERE id = ?",
+            (rows[0]["newest_id"], user_id),
+        )
+        await self.conn.commit()
 
     async def get_auth_session_by_token_hash(
         self,

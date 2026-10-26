@@ -144,6 +144,235 @@ class TestDeleteOtherAuthSessions:
         assert await store.get_auth_session_by_token_hash("only_hash") is not None
 
 
+class TestActiveSessions:
+    """Active sessions list, real activity and the new-session notice (T2).
+
+    ``_age_activity`` backdates a row the way real history would: timestamps
+    here have second granularity, so ordering and the activity threshold cannot
+    be observed without it. The notice does not need it, because its mark is a
+    session id.
+    """
+
+    async def _age_activity(self, store, token_hash: str, minutes: int) -> None:
+        await store.conn.execute(
+            "UPDATE auth_sessions SET last_seen_at = datetime('now', ?) "
+            "WHERE token_hash = ?",
+            (f"-{minutes} minutes", token_hash),
+        )
+        await store.conn.commit()
+
+    async def test_create_session_stores_the_user_agent(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/141.0"
+
+        session = await store.create_auth_session(user["id"], "th_ua", user_agent=ua)
+
+        assert session["user_agent"] == ua
+
+    async def test_create_session_without_user_agent_is_null(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+
+        session = await store.create_auth_session(user["id"], "th_no_ua")
+
+        assert session["user_agent"] is None
+
+    async def test_create_session_with_an_empty_user_agent_is_null(self, store):
+        """An empty header says no more than a missing one (D2)."""
+        user = await store.create_user("alice@example.com", "hash")
+
+        session = await store.create_auth_session(user["id"], "th_empty_ua", user_agent="")
+
+        assert session["user_agent"] is None
+
+    async def test_create_session_truncates_the_user_agent(self, store):
+        """D2: the header is caller-controlled and unbounded; the column is not."""
+        user = await store.create_user("alice@example.com", "hash")
+
+        session = await store.create_auth_session(
+            user["id"], "th_long_ua", user_agent="x" * 500
+        )
+
+        assert len(session["user_agent"]) == 120
+        assert session["user_agent"] == "x" * 120
+
+    async def test_list_sessions_is_owner_scoped_and_marks_the_current_one(self, store):
+        alice = await store.create_user("alice@example.com", "hash")
+        bob = await store.create_user("bob@example.com", "hash")
+        alice_current = await store.create_auth_session(alice["id"], "th_a1")
+        await store.create_auth_session(alice["id"], "th_a2")
+        await store.create_auth_session(bob["id"], "th_b1")
+
+        listed = await store.list_auth_sessions(alice["id"], "th_a1")
+
+        assert len(listed) == 2
+        current = [row for row in listed if row["is_current"]]
+        assert [row["id"] for row in current] == [alice_current["id"]]
+
+    async def test_list_sessions_excludes_expired_ones(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_live")
+        await store.create_auth_session(user["id"], "th_dead", ttl_seconds=-1)
+
+        listed = await store.list_auth_sessions(user["id"], "th_live")
+
+        assert [row["is_current"] for row in listed] == [True]
+
+    async def test_list_sessions_orders_by_last_activity(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        current = await store.create_auth_session(user["id"], "th_now")
+        older = await store.create_auth_session(user["id"], "th_older")
+        newest = await store.create_auth_session(user["id"], "th_newest")
+        await self._age_activity(store, "th_older", 30)
+        await self._age_activity(store, "th_now", 10)
+
+        listed = await store.list_auth_sessions(user["id"], "th_now")
+
+        assert [row["id"] for row in listed] == [
+            newest["id"],
+            current["id"],
+            older["id"],
+        ]
+
+    async def test_touch_skips_a_recent_mark(self, store):
+        """D8: inside the threshold the row is left alone (no write)."""
+        user = await store.create_user("alice@example.com", "hash")
+        created = await store.create_auth_session(user["id"], "th_recent")
+
+        touched = await store.touch_auth_session("th_recent")
+
+        assert touched is False
+        listed = await store.list_auth_sessions(user["id"], "th_recent")
+        assert listed[0]["last_seen_at"] == created["last_seen_at"]
+
+    async def test_touch_rewrites_a_stale_mark(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_stale")
+        await self._age_activity(store, "th_stale", 10)
+        stale = await store.get_auth_session_by_token_hash("th_stale")
+
+        touched = await store.touch_auth_session("th_stale")
+
+        assert touched is True
+        listed = await store.list_auth_sessions(user["id"], "th_stale")
+        assert listed[0]["last_seen_at"] > stale["last_seen_at"]
+
+    async def test_touch_ignores_an_unknown_token(self, store):
+        assert await store.touch_auth_session("th_missing") is False
+
+    async def test_get_session_by_id_is_owner_scoped(self, store):
+        alice = await store.create_user("alice@example.com", "hash")
+        bob = await store.create_user("bob@example.com", "hash")
+        alice_session = await store.create_auth_session(alice["id"], "th_a")
+        bob_session = await store.create_auth_session(bob["id"], "th_b")
+
+        assert (
+            await store.get_auth_session_by_id(alice["id"], alice_session["id"])
+        ) is not None
+        assert await store.get_auth_session_by_id(alice["id"], bob_session["id"]) is None
+        assert await store.get_auth_session_by_id(alice["id"], 9999) is None
+
+    async def test_delete_session_row_is_owner_scoped(self, store):
+        """A foreign id must not close anything (D5)."""
+        alice = await store.create_user("alice@example.com", "hash")
+        bob = await store.create_user("bob@example.com", "hash")
+        alice_session = await store.create_auth_session(alice["id"], "th_a")
+        bob_session = await store.create_auth_session(bob["id"], "th_b")
+
+        assert await store.delete_auth_session_row(alice["id"], bob_session["id"]) == 0
+        assert await store.get_auth_session_by_token_hash("th_b") is not None
+
+        assert await store.delete_auth_session_row(alice["id"], alice_session["id"]) == 1
+        assert await store.get_auth_session_by_token_hash("th_a") is None
+
+    async def test_delete_session_row_missing_returns_zero(self, store):
+        alice = await store.create_user("alice@example.com", "hash")
+        assert await store.delete_auth_session_row(alice["id"], 4242) == 0
+
+    async def test_pending_notice_is_none_without_other_sessions(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_only")
+
+        assert await store.pending_new_session_at(user["id"], "th_only") is None
+
+    async def test_no_notice_on_the_newest_session(self, store):
+        """S6: the notice means a session was created after *this* one.
+
+        The mark is per user, so without the age check the newest session would
+        announce an older, unacknowledged one as "a new session", with a date
+        from before it existed.
+        """
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_old")
+        newest = await store.create_auth_session(user["id"], "th_new")
+
+        assert (
+            await store.pending_new_session_at(user["id"], "th_old")
+            == newest["created_at"]
+        )
+        assert await store.pending_new_session_at(user["id"], "th_new") is None
+
+    async def test_pending_notice_reports_the_newest_other_session(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_mine")
+        other = await store.create_auth_session(user["id"], "th_other")
+
+        pending = await store.pending_new_session_at(user["id"], "th_mine")
+
+        assert pending == other["created_at"]
+
+    async def test_acknowledging_the_notice_clears_it(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_mine")
+        await store.create_auth_session(user["id"], "th_other")
+
+        await store.mark_sessions_notice_seen(user["id"], "th_mine")
+
+        assert await store.pending_new_session_at(user["id"], "th_mine") is None
+
+    async def test_notice_reappears_for_a_session_created_after_the_mark(self, store):
+        """A login in the same second as the acknowledgement still warns."""
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_mine")
+        await store.create_auth_session(user["id"], "th_acked")
+        await store.mark_sessions_notice_seen(user["id"], "th_mine")
+        later = await store.create_auth_session(user["id"], "th_later")
+
+        assert (
+            await store.pending_new_session_at(user["id"], "th_mine")
+            == later["created_at"]
+        )
+
+    async def test_acknowledging_alone_still_warns_on_a_later_session(self, store):
+        """Acknowledging with no other session must not swallow the next one."""
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_only")
+        await store.mark_sessions_notice_seen(user["id"], "th_only")
+        later = await store.create_auth_session(user["id"], "th_phone")
+
+        assert (
+            await store.pending_new_session_at(user["id"], "th_only")
+            == later["created_at"]
+        )
+
+    async def test_acknowledging_is_idempotent(self, store):
+        user = await store.create_user("alice@example.com", "hash")
+        await store.create_auth_session(user["id"], "th_mine")
+        await store.create_auth_session(user["id"], "th_other")
+
+        await store.mark_sessions_notice_seen(user["id"], "th_mine")
+        await store.mark_sessions_notice_seen(user["id"], "th_mine")
+
+        assert await store.pending_new_session_at(user["id"], "th_mine") is None
+
+    async def test_pending_notice_is_owner_scoped(self, store):
+        alice = await store.create_user("alice@example.com", "hash")
+        bob = await store.create_user("bob@example.com", "hash")
+        await store.create_auth_session(alice["id"], "th_alice")
+        await store.create_auth_session(bob["id"], "th_bob")
+
+        assert await store.pending_new_session_at(alice["id"], "th_alice") is None
+
+
 class TestChatSessions:
     async def test_create_and_list(self, store):
         user = await store.create_user("alice@example.com", "hash")

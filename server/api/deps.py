@@ -7,6 +7,7 @@ the authenticated user (or raises 401).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -14,6 +15,8 @@ from fastapi import Cookie, Depends, HTTPException, Request, status
 from server.api import store as api_store
 from server.services.auth_service import hash_token
 from server.services.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 
 async def get_store() -> SqliteStore:
@@ -66,4 +69,14 @@ async def current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+
+    # Real last activity (T2/D8): the store only writes when the current mark is
+    # older than the threshold, so a polling page cannot turn every request into
+    # a write. Bookkeeping must never break an otherwise valid request, so a
+    # failure here is logged and the request continues.
+    try:
+        await store.touch_auth_session(token_hash)
+    except Exception:
+        logger.warning("Failed to record session activity", exc_info=True)
+
     return user
