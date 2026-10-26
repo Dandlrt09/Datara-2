@@ -7,6 +7,7 @@ import {
 } from "../components/ChangePasswordDialog";
 import PreferencesCard from "../components/PreferencesCard";
 import ActiveSessionsCard from "../components/ActiveSessionsCard";
+import NewSessionNotice from "../components/NewSessionNotice";
 import {
   DeleteAccountDialog,
   DELETION_SCHEDULED_NOTICE,
@@ -103,6 +104,8 @@ export default function ProfileView() {
         </p>
       )}
 
+
+      <NewSessionNotice />
 
       <section style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
