@@ -58,7 +58,7 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), message in English, **no** AI attribution or `Co-Authored-By`.
 - Identifiers/comments in English; user-facing chat copy in natural professional Spanish; docs/specs in English.
-- Full test suite must stay green before pushing: backend ~357, web ~88.
+- Full test suite must stay green before pushing: backend ~788, web ~569.
 
 ## Architecture rules (earned, do not break)
 
