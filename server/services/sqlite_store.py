@@ -277,7 +277,8 @@ class SqliteStore:
 
     async def get_user_settings(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
-            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, updated_at "
+            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, "
+            "number_format, date_format, currency_symbol, open_behavior, updated_at "
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
@@ -300,6 +301,10 @@ class SqliteStore:
         default_model: str | None = None,
         provider_type: str | None = None,
         base_url: str | None = None,
+        number_format: str | None = None,
+        date_format: str | None = None,
+        currency_symbol: str | None = None,
+        open_behavior: str | None = None,
         provider_type_provided: bool = False,
         base_url_provided: bool = False,
     ) -> dict[str, Any]:
@@ -315,24 +320,32 @@ class SqliteStore:
             else None
         )
         await self.conn.execute(
-            "INSERT INTO user_settings (user_id, api_key_enc, default_model, provider_type, base_url, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, datetime('now')) "
+            "INSERT INTO user_settings (user_id, api_key_enc, default_model, provider_type, base_url, "
+            "number_format, date_format, currency_symbol, open_behavior, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
             "ON CONFLICT(user_id) DO UPDATE SET "
             "  api_key_enc = COALESCE(?, api_key_enc),"
             "  default_model = COALESCE(?, default_model),"
             "  provider_type = CASE WHEN ? THEN ? ELSE provider_type END,"
             "  base_url = CASE WHEN ? THEN ? ELSE base_url END,"
+            "  number_format = COALESCE(?, number_format),"
+            "  date_format = COALESCE(?, date_format),"
+            "  currency_symbol = COALESCE(?, currency_symbol),"
+            "  open_behavior = COALESCE(?, open_behavior),"
             "  updated_at = datetime('now')",
             (
                 user_id, encrypted_key, default_model, provider_type, base_url,
+                number_format, date_format, currency_symbol, open_behavior,
                 encrypted_key, default_model,
                 int(provider_type_provided), provider_type,
                 int(base_url_provided), base_url,
+                number_format, date_format, currency_symbol, open_behavior,
             ),
         )
         await self.conn.commit()
         rows = await self.conn.execute_fetchall(
-            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, updated_at "
+            "SELECT user_id, api_key_enc, default_model, provider_type, base_url, "
+            "number_format, date_format, currency_symbol, open_behavior, updated_at "
             "FROM user_settings WHERE user_id = ?",
             (user_id,),
         )

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from server.api.deps import current_user, get_store
 from server.services.base_url_guard import BaseUrlRejected, validate_base_url
+from server.services.preferences import effective_preferences
 from server.services.provider_registry import fetch_models
 from server.services.sqlite_store import SqliteStore
 
@@ -102,6 +103,13 @@ class SettingsResponse(BaseModel):
     allowed_models: list[str] = []
     provider_type: Literal["openrouter", "ollama", "lmstudio", "groq", "custom"] | None = None
     base_url: str | None = None
+    # Display preferences. GET always answers with the effective value, so a
+    # user without a settings row still sees the behavior that was in place
+    # before preferences existed.
+    number_format: Literal["es", "intl"] = "es"
+    date_format: Literal["relative", "absolute"] = "relative"
+    currency_symbol: Literal["US$", "$", "USD", "none"] = "US$"
+    open_behavior: Literal["new_session", "last_session"] = "new_session"
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -109,6 +117,10 @@ class SettingsUpdateRequest(BaseModel):
     default_model: str | None = None
     provider_type: Literal["openrouter", "ollama", "lmstudio", "groq", "custom"] | None = None
     base_url: str | None = Field(default=None, min_length=0)  # empty string allowed → clear
+    number_format: Literal["es", "intl"] | None = None
+    date_format: Literal["relative", "absolute"] | None = None
+    currency_symbol: Literal["US$", "$", "USD", "none"] | None = None
+    open_behavior: Literal["new_session", "last_session"] | None = None
 
     @field_validator("default_model")
     @classmethod
@@ -157,9 +169,12 @@ async def get_settings(
 ):
     """Return the current user's settings (no key material)."""
     settings = await store.get_user_settings(user["id"])
+    preferences = effective_preferences(settings)
     if settings is None:
         return SettingsResponse(
-            user_id=user["id"], allowed_models=sorted(ALLOWED_MODELS)
+            user_id=user["id"],
+            allowed_models=sorted(ALLOWED_MODELS),
+            **preferences,
         )
     return SettingsResponse(
         user_id=settings["user_id"],
@@ -168,6 +183,7 @@ async def get_settings(
         provider_type=settings["provider_type"],
         base_url=settings["base_url"],
         allowed_models=sorted(ALLOWED_MODELS),
+        **preferences,
     )
 
 
@@ -233,6 +249,10 @@ async def update_settings(
         base_url=body.base_url,  # None or normalized value
         provider_type_provided=provider_type_provided,
         base_url_provided=base_url_provided,
+        number_format=body.number_format,
+        date_format=body.date_format,
+        currency_symbol=body.currency_symbol,
+        open_behavior=body.open_behavior,
     )
     return SettingsResponse(
         user_id=result["user_id"],
@@ -241,6 +261,7 @@ async def update_settings(
         provider_type=result["provider_type"],
         base_url=result["base_url"],
         allowed_models=sorted(ALLOWED_MODELS),
+        **effective_preferences(result),
     )
 
 
