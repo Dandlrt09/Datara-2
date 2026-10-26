@@ -39,6 +39,60 @@ def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
     assert db_path.exists()
 
 
+def test_lifespan_purges_accounts_past_their_deadline(tmp_path, monkeypatch):
+    """A due deletion must actually be purged at boot (T3, S3/S10).
+
+    The grace period is only honest if the sweep really runs: seed an account
+    whose deadline already passed, boot the real lifespan, and assert the row
+    is gone while a still-cancellable account survives.
+    """
+    import asyncio
+    import sqlite3
+
+    import server.api.routers.files as files_router
+    from server.migrate import apply_migrations
+    from server.services.sqlite_store import SqliteStore
+
+    db_path = tmp_path / "purge" / "datara.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DATARA_DB_PATH", str(db_path))
+    # Never let the purge touch the real server/uploads/ tree.
+    monkeypatch.setattr(files_router, "UPLOADS_DIR", tmp_path / "uploads")
+
+    # Seed through the PRODUCTION runner so the migrations table is recorded;
+    # otherwise the boot's own runner re-applies them and logs a failure.
+    apply_migrations(str(db_path))
+    store = SqliteStore(db_path=str(db_path))
+
+    async def _seed():
+        await store.connect()
+        due = await store.create_user("due@datara.local", "hash")
+        kept = await store.create_user("kept@datara.local", "hash")
+        await store.conn.execute(
+            "UPDATE users SET pending_deletion_at = datetime('now', '-1 hour') "
+            "WHERE id = ?",
+            (due["id"],),
+        )
+        await store.conn.execute(
+            "UPDATE users SET pending_deletion_at = datetime('now', '+1 hour') "
+            "WHERE id = ?",
+            (kept["id"],),
+        )
+        await store.conn.commit()
+        return due["id"], kept["id"]
+
+    due_id, kept_id = asyncio.run(_seed())
+    asyncio.run(store.close())
+
+    with TestClient(app):
+        conn = sqlite3.connect(str(db_path))
+        remaining = {row[0] for row in conn.execute("SELECT id FROM users")}
+        conn.close()
+
+    assert due_id not in remaining
+    assert kept_id in remaining
+
+
 def test_spa_fallback_serves_app_shell_for_client_routes(tmp_path, monkeypatch):
     """Full reload on a client-side route (/login, /app/...) must return the
     SPA shell, not a 404 — the server has no such files on disk."""

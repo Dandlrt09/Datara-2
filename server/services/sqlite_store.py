@@ -107,7 +107,8 @@ class SqliteStore:
             await self.conn.commit()
             row_id = cursor.lastrowid
             row = await self.conn.execute_fetchall(
-                "SELECT id, email, password_hash, created_at FROM users WHERE id = ?",
+                "SELECT id, email, password_hash, created_at, pending_deletion_at "
+                "FROM users WHERE id = ?",
                 (row_id,),
             )
             return dict(row[0])
@@ -117,14 +118,16 @@ class SqliteStore:
     async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Look up a user by email. Returns None if not found."""
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, password_hash, created_at FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, created_at, pending_deletion_at "
+            "FROM users WHERE email = ?",
             (email,),
         )
         return dict(rows[0]) if rows else None
 
     async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, password_hash, created_at FROM users WHERE id = ?",
+            "SELECT id, email, password_hash, created_at, pending_deletion_at "
+            "FROM users WHERE id = ?",
             (user_id,),
         )
         return dict(rows[0]) if rows else None
@@ -140,6 +143,63 @@ class SqliteStore:
         )
         await self.conn.commit()
         return cursor.rowcount > 0
+
+    async def request_user_deletion(
+        self, user_id: int, grace_days: int = 7
+    ) -> bool:
+        """Schedule an account purge ``grace_days`` from now (S3).
+
+        Writes the PURGE DEADLINE into ``pending_deletion_at`` (D1). Calling it
+        again pushes the deadline out. Returns True if the user existed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET pending_deletion_at = datetime('now', ? || ' days') "
+            "WHERE id = ?",
+            (str(grace_days), user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def cancel_user_deletion(self, user_id: int) -> bool:
+        """Clear a scheduled purge so the account survives (S3).
+
+        Returns True if the user existed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET pending_deletion_at = NULL WHERE id = ?",
+            (user_id,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def list_due_deletion_user_ids(self) -> list[int]:
+        """User ids whose deletion deadline already passed (D1)."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT id FROM users "
+            "WHERE pending_deletion_at IS NOT NULL "
+            "AND pending_deletion_at <= datetime('now') "
+            "ORDER BY id",
+        )
+        return [row[0] for row in rows]
+
+    async def purge_user(self, user_id: int) -> bool:
+        """Delete a user row; every child table cascades (S10).
+
+        The database is the source of truth: the caller removes uploads from
+        disk separately and best-effort (D5/D7). Returns True if a row was
+        deleted (False if the user was already gone).
+        """
+        cursor = await self.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_all_auth_sessions(self, user_id: int) -> int:
+        """Delete every auth session of a user (D3). Returns rows deleted."""
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_sessions WHERE user_id = ?", (user_id,)
+        )
+        await self.conn.commit()
+        return cursor.rowcount
 
     # ── Auth Sessions ────────────────────────────────────────────────────────────
 

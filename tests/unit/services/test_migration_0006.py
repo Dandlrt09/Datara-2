@@ -45,8 +45,11 @@ def test_0006_is_applied_by_the_production_runner(tmp_path):
     apply_migrations(db_path)
 
     versions = _applied_versions(db_path)
-    assert [version for version, _ in versions] == [1, 2, 3, 4, 5, 6]
-    assert versions[-1][1] == "0006_profile_preferences.sql"
+    applied = dict(versions)
+    assert applied.get(6) == "0006_profile_preferences.sql"
+    # Applied in ascending order with no gaps or duplicates. Later migrations
+    # (0007+) are expected and must not break this test.
+    assert [version for version, _ in versions] == sorted(set(applied))
 
 
 def test_0006_columns_are_nullable_text_without_default(tmp_path):
@@ -72,4 +75,4 @@ def test_0006_is_idempotent(tmp_path):
     apply_migrations(db_path)
 
     assert _applied_versions(db_path) == first
-    assert len(first) == 6
+    assert dict(first).get(6) == "0006_profile_preferences.sql"

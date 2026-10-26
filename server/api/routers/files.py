@@ -171,6 +171,27 @@ def remove_session_uploads(user_id: int, chat_session: str) -> None:
         )
 
 
+def remove_user_uploads(user_id: int) -> None:
+    """Remove a user's whole uploads directory from disk (best-effort).
+
+    Called by the deferred account purge (T3/S10): once the ``users`` row is
+    deleted its DB rows cascade, but the bytes under
+    ``UPLOADS_DIR/<user_id>/`` would otherwise stay orphaned. Never raises — a
+    filesystem failure is logged and the purge must still succeed (D7).
+    """
+    user_dir = UPLOADS_DIR / str(user_id)
+    try:
+        if user_dir.is_dir():
+            shutil.rmtree(user_dir)
+    except OSError:
+        logger.warning(
+            "Best-effort cleanup failed: could not remove upload dir for "
+            "user %s",
+            user_id,
+            exc_info=True,
+        )
+
+
 _SUPPORTED_EXTENSIONS = frozenset({".csv", ".tsv", ".xlsx", ".json"})
 
 

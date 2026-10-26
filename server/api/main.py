@@ -23,7 +23,11 @@ from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
 from server.migrate import apply_migrations
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
-from server.services.session_cleanup import sweep_expired, start_background_sweep
+from server.services.session_cleanup import (
+    purge_due_deletions,
+    start_background_sweep,
+    sweep_expired,
+)
 from server.services.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
@@ -104,6 +108,14 @@ async def lifespan(app: FastAPI):
             logger.info("Swept %d expired session(s) on startup", swept)
     except Exception:
         logger.exception("Startup session sweep failed")
+
+    # Step 2b: purge accounts past their deletion deadline (T3)
+    try:
+        purged = await purge_due_deletions(store)
+        if purged:
+            logger.info("Purged %d due account(s) on startup", purged)
+    except Exception:
+        logger.exception("Startup account purge failed")
 
     # Step 3: sweep orphan sandbox temp dirs
     try:
