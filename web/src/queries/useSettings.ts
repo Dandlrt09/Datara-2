@@ -11,6 +11,11 @@ export interface UserSettings {
   allowed_models?: string[];
   provider_type?: "openrouter" | "ollama" | "lmstudio" | "groq" | "custom" | null;
   base_url?: string | null;
+  /** Display preferences. GET always answers with an effective value. */
+  number_format?: "es" | "intl";
+  date_format?: "relative" | "absolute";
+  currency_symbol?: "US$" | "$" | "USD" | "none";
+  open_behavior?: "new_session" | "last_session";
 }
 
 export function useSettings() {
@@ -28,6 +33,10 @@ export function useUpdateSettings() {
       default_model?: string;
       provider_type?: "openrouter" | "ollama" | "lmstudio" | "groq" | "custom" | null;
       base_url?: string | null;
+      number_format?: "es" | "intl";
+      date_format?: "relative" | "absolute";
+      currency_symbol?: "US$" | "$" | "USD" | "none";
+      open_behavior?: "new_session" | "last_session";
     }) =>
       api.put<UserSettings>("/api/settings", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),

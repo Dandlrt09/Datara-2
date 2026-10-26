@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { ProfileSummary } from "../queries/useFiles";
-import { formatTableValue } from "../lib/formatNumbers";
+import { usePreferences, formatTableValue, type NumberFormat } from "../lib/preferences";
 
 /** Defensive view of one column's stats: any field may be absent. */
 interface ColumnStats {
@@ -18,8 +18,8 @@ interface ColumnStats {
  * anything else → `String(v)`. Kept exported so the formatting rule stays
  * unit-testable and shared by every cell.
  */
-export function formatStat(value: unknown): string {
-  return formatTableValue(value);
+export function formatStat(value: unknown, numberFormat: NumberFormat = "es"): string {
+  return formatTableValue(value, numberFormat);
 }
 
 export interface ProfileTableProps {
@@ -48,6 +48,7 @@ const headerStyle: CSSProperties = {
  * (D5), byte-identical to the previous raw dump.
  */
 export function ProfileTable({ profile }: ProfileTableProps) {
+  const { numberFormat } = usePreferences();
   const columns = profile?.schema?.columns ?? [];
   const stats = (profile?.stats ?? {}) as Record<string, ColumnStats | undefined>;
 
@@ -72,10 +73,10 @@ export function ProfileTable({ profile }: ProfileTableProps) {
                 <tr key={`${column.name}-${index}`}>
                   <td style={cellStyle}>{column.name}</td>
                   <td style={cellStyle}>{column.dtype}</td>
-                  <td style={cellStyle}>{formatStat(columnStats?.null_count)}</td>
-                  <td style={cellStyle}>{formatStat(columnStats?.unique_count)}</td>
-                  <td style={cellStyle}>{formatStat(columnStats?.min)}</td>
-                  <td style={cellStyle}>{formatStat(columnStats?.max)}</td>
+                  <td style={cellStyle}>{formatStat(columnStats?.null_count, numberFormat)}</td>
+                  <td style={cellStyle}>{formatStat(columnStats?.unique_count, numberFormat)}</td>
+                  <td style={cellStyle}>{formatStat(columnStats?.min, numberFormat)}</td>
+                  <td style={cellStyle}>{formatStat(columnStats?.max, numberFormat)}</td>
                 </tr>
               );
             })}

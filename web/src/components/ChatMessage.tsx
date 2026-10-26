@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { colors, radii, spacing, typography } from "../design/tokens";
+import { usePreferences, formatCost } from "../lib/preferences";
 import PlotlyChart from "./PlotlyChart";
 import DataFrameTable from "./DataFrameTable";
 
@@ -32,12 +33,6 @@ interface ChatMessageProps {
  * independent of their ICU data. */
 function formatThousands(n: number): string {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-}
-
-/** Format an estimated USD cost with a Spanish decimal comma (0.125 →
- * "0,1250"). Four decimals keep tiny per-turn costs readable. */
-function formatCost(usd: number): string {
-  return usd.toFixed(4).replace(".", ",");
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -167,6 +162,7 @@ export default function ChatMessage({
   hasLaterMessages,
 }: ChatMessageProps) {
   const isUser = role === "user";
+  const { currencySymbol } = usePreferences();
   // Regenerate is an assistant-only affordance, parent-gated exactly like
   // onEdit: without onRegenerate (not the last answer, or a turn is already
   // streaming) nothing renders.
@@ -220,7 +216,7 @@ export default function ChatMessage({
         costUsd == null
           ? "costo no disponible"
           : costUsd > 0
-            ? `US$ ${formatCost(costUsd)}`
+            ? formatCost(costUsd, currencySymbol)
             : null,
       ]
         .filter((part): part is string => part !== null)

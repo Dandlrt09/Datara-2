@@ -8,7 +8,7 @@ import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileTable } from "../components/ProfileTable";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
-import { formatNumberEs } from "../lib/formatNumbers";
+import { usePreferences, formatNumber } from "../lib/preferences";
 
 /** Row shape rendered by the table. `FileListItem` already satisfies it; the
  * per-session endpoint returns `FileResponse` (no `session_title`), so the
@@ -371,6 +371,7 @@ function FileRow({
   onDelete: () => void;
   deletePending: boolean;
 }) {
+  const { numberFormat } = usePreferences();
   const { data: profile } = useProfile(file.id);
   const isXlsx = file.format === "xlsx";
   // Lazy per-row sheet list: only fetched when the user opens the picker,
@@ -462,8 +463,8 @@ function FileRow({
         )}
       </td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.format}</td>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.row_count == null ? "—" : formatNumberEs(file.row_count)}</td>
-      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{formatNumberEs(file.size_bytes / 1024, 1) + " KB"}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.row_count == null ? "—" : formatNumber(file.row_count, numberFormat)}</td>
+      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{formatNumber(file.size_bytes / 1024, numberFormat, 1) + " KB"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{file.session_title ?? "—"}</td>
       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
         {isXlsx && (

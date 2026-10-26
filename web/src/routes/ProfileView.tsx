@@ -5,6 +5,7 @@ import {
   ChangePasswordDialog,
   PASSWORD_CHANGED_NOTICE,
 } from "../components/ChangePasswordDialog";
+import PreferencesCard from "../components/PreferencesCard";
 import { displayNameFromEmail } from "../lib/displayName";
 import { colors, typography } from "../design/tokens";
 
@@ -172,6 +173,8 @@ export default function ProfileView() {
           Cerrar sesión
         </button>
       </section>
+
+      <PreferencesCard />
 
       <ChangePasswordDialog
         open={dialogOpen}

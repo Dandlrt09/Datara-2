@@ -12,8 +12,7 @@ import { ErrorCard } from "../components/ErrorCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import ArchiveSnapshot from "../components/ArchiveSnapshot";
 import { colors } from "../design/tokens";
-import { formatNumberEs } from "../lib/formatNumbers";
-import { formatRelativeTimeEs } from "../lib/relativeTime";
+import { usePreferences, formatNumber, formatTimestamp } from "../lib/preferences";
 import { api } from "../lib/api";
 import {
   archiveToMarkdown,
@@ -323,6 +322,7 @@ function ArchiveCard({
   onRequestDelete: () => void;
 }) {
   const [primaryFile, ...extraFiles] = archive.files ?? [];
+  const { numberFormat, dateFormat } = usePreferences();
 
   const renameArchive = useRenameArchive();
   const [isRenaming, setIsRenaming] = useState(false);
@@ -334,10 +334,10 @@ function ArchiveCard({
 
   const summaryParts: string[] = [];
   if (archive.row_count != null) {
-    summaryParts.push(`${formatNumberEs(archive.row_count)} filas`);
+    summaryParts.push(`${formatNumber(archive.row_count, numberFormat)} filas`);
   }
   if (archive.column_count != null) {
-    summaryParts.push(`${formatNumberEs(archive.column_count)} columnas`);
+    summaryParts.push(`${formatNumber(archive.column_count, numberFormat)} columnas`);
   }
   const summary = summaryParts.join(" · ");
 
@@ -474,7 +474,7 @@ function ArchiveCard({
             )}
             <span style={{ fontSize: 12, color: colors.textMuted }}>
               {archive.created_at
-                ? formatRelativeTimeEs(archive.created_at)
+                ? formatTimestamp(archive.created_at, dateFormat)
                 : "—"}
             </span>
           </div>

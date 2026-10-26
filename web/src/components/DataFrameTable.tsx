@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatNumberEs, formatTableValue } from "../lib/formatNumbers";
+import { usePreferences, formatNumber, formatTableValue } from "../lib/preferences";
 
 interface DataFrameTableProps {
   columns: string[];
@@ -52,6 +52,7 @@ export default function DataFrameTable({
   rows,
   totalRows,
 }: DataFrameTableProps) {
+  const { numberFormat } = usePreferences();
   const [sortKey, setSortKey] = useState<number | null>(null);
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -157,7 +158,7 @@ export default function DataFrameTable({
                       borderBottom: "1px solid #eee",
                     }}
                   >
-                    {formatTableValue(cell)}
+                    {formatTableValue(cell, numberFormat)}
                   </td>
                 ))}
               </tr>
@@ -168,7 +169,7 @@ export default function DataFrameTable({
       </div>
       {totalRows != null && totalRows > rows.length && (
         <p style={{ margin: "4px 0 0", color: "#777", fontSize: "0.8em" }}>
-          {`Mostrando las primeras ${rows.length} de ${formatNumberEs(totalRows)} filas.`}
+          {`Mostrando las primeras ${rows.length} de ${formatNumber(totalRows, numberFormat)} filas.`}
         </p>
       )}
     </div>

@@ -11,6 +11,8 @@ import { RouteErrorBoundary } from "../components/ErrorCard";
 import { WizardOverlay } from "../components/WizardOverlay";
 import { useWizardStore } from "../stores/useWizardStore";
 import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
+import { PreferencesProvider, usePreferences } from "../lib/preferences";
+import { landingDestination } from "../lib/landing";
 import { displayNameFromEmail } from "../lib/displayName";
 import type { ChatSession } from "../queries/useSessions";
 
@@ -52,10 +54,17 @@ function withErrorBoundary(viewName: string, Element: React.ComponentType) {
  */
 function AppLanding() {
   const { data: settings, isLoading } = useSettings();
+  const { openBehavior } = usePreferences();
+  const sessionsQuery = useSessions();
   if (isLoading) return <Loading />;
-  const configured = isProviderConfigured(settings);
-  if (!configured) return <Navigate to="/app/settings" replace />;
-  return <Navigate to="/app/chat" replace />;
+  const target = landingDestination({
+    configured: isProviderConfigured(settings),
+    openBehavior,
+    sessionsLoading: sessionsQuery.isLoading,
+    newestSessionId: sortSessionsNewestFirst(sessionsQuery.data ?? [])[0]?.id ?? null,
+  });
+  if (target === null) return <Loading />;
+  return <Navigate to={target} replace />;
 }
 
 /** Return a copy of *sessions* sorted newest-first by ``updated_at``.
@@ -315,35 +324,37 @@ export default function AppShell() {
 
         {/* Main content */}
         <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
-          <Suspense fallback={<Loading />}>
-            <Routes>
-              <Route
-                path="/chat/:sessionId?"
-                element={withErrorBoundary("Chat", ChatView)}
-              />
-              <Route
-                path="/files"
-                element={withErrorBoundary("Files", FilesView)}
-              />
-              <Route
-                path="/settings"
-                element={withErrorBoundary("Settings", SettingsView)}
-              />
-              {/* The guided flow lives inside Ajustes as one of its two modes;
-                  the old standalone URL keeps working for bookmarks. */}
-              <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
-              <Route
-                path="/archives"
-                element={withErrorBoundary("Archives", ArchiveList)}
-              />
-              <Route
-                path="/profile"
-                element={withErrorBoundary("Profile", ProfileView)}
-              />
-              <Route index element={<AppLanding />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
+          <PreferencesProvider>
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route
+                  path="/chat/:sessionId?"
+                  element={withErrorBoundary("Chat", ChatView)}
+                />
+                <Route
+                  path="/files"
+                  element={withErrorBoundary("Files", FilesView)}
+                />
+                <Route
+                  path="/settings"
+                  element={withErrorBoundary("Settings", SettingsView)}
+                />
+                {/* The guided flow lives inside Ajustes as one of its two modes;
+                    the old standalone URL keeps working for bookmarks. */}
+                <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
+                <Route
+                  path="/archives"
+                  element={withErrorBoundary("Archives", ArchiveList)}
+                />
+                <Route
+                  path="/profile"
+                  element={withErrorBoundary("Profile", ProfileView)}
+                />
+                <Route index element={<AppLanding />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </PreferencesProvider>
         </main>
 
         {/* Wizard overlay - mounted inside root flex div after main */}
