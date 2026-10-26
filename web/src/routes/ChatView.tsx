@@ -664,8 +664,13 @@ export default function ChatView() {
         </QueryError>
       </div>
 
-      {/* Chat area */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      {/* Chat area.
+          `minWidth: 0` is required: a flex item's automatic minimum size is
+          its content's min-content width, so without it a wide artifact (a
+          plotly figure that kept a large pixel width, a wide table) forces
+          the whole row wider than the viewport and the page scrolls
+          sideways permanently. */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <div
           ref={scrollRef}
           data-testid="chat-scroll"

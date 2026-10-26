@@ -20,6 +20,9 @@ interface PlotlyChartProps {
 export default function PlotlyChart({ plotlyJson }: PlotlyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendered = useRef(false);
+  // Last width we re-fitted to: a ResizeObserver re-report at the same width
+  // must not trigger another resize (that would be a feedback loop).
+  const lastWidth = useRef(0);
   // True once the figure is actually plotted: the export button is
   // meaningless (and toImage would reject) before that.
   const [ready, setReady] = useState(false);
@@ -56,6 +59,26 @@ export default function PlotlyChart({ plotlyJson }: PlotlyChartProps) {
       cancelled = true;
     };
   }, [plotlyJson]);
+
+  // Re-fit the figure when the CONTAINER's width changes without a window
+  // resize: a sidebar/panel toggle, or a browser page-zoom excursion. plotly's
+  // own `responsive` listens only to window resizes, so without this the plot
+  // keeps a stale pixel width, overflows its parent forever, and (through the
+  // flex column's automatic minimum size) leaves the whole chat wider than the
+  // viewport with a horizontal scrollbar.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width <= 0 || Math.abs(width - lastWidth.current) < 1) return;
+      lastWidth.current = width;
+      if (!rendered.current || !Plotly) return;
+      Plotly.Plots.resize(el);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   /** Export the current figure as a PNG data URL and trigger a download. */
   async function handleDownloadPng() {
@@ -108,7 +131,7 @@ export default function PlotlyChart({ plotlyJson }: PlotlyChartProps) {
       <div
         ref={containerRef}
         data-testid="plotly-chart"
-        style={{ width: "100%", minHeight: 400 }}
+        style={{ width: "100%", minHeight: 400, overflow: "hidden" }}
       />
     </div>
   );

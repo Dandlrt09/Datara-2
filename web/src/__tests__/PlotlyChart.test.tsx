@@ -8,12 +8,14 @@ vi.mock("plotly.js-dist-min", () => ({
   newPlot: vi.fn().mockResolvedValue(undefined),
   react: vi.fn().mockResolvedValue(undefined),
   toImage: vi.fn().mockResolvedValue("data:image/png;base64,AAAA"),
+  Plots: { resize: vi.fn() },
 }));
 
 const plotly = (await import("plotly.js-dist-min")) as unknown as {
   newPlot: ReturnType<typeof vi.fn>;
   react: ReturnType<typeof vi.fn>;
   toImage: ReturnType<typeof vi.fn>;
+  Plots: { resize: ReturnType<typeof vi.fn> };
 };
 
 const FIGURE = {
@@ -102,5 +104,67 @@ describe("PlotlyChart PNG download", () => {
 
     resolveImage("data:image/png;base64,BBBB");
     await waitFor(() => expect(button.disabled).toBe(false));
+  });
+});
+
+describe("PlotlyChart container refit", () => {
+  interface Observed {
+    callback: ResizeObserverCallback;
+    element: Element;
+  }
+  let observed: Observed[] = [];
+
+  beforeEach(() => {
+    observed = [];
+    plotly.newPlot.mockClear();
+    plotly.Plots.resize.mockClear();
+    class FakeResizeObserver {
+      private callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+      observe(element: Element) {
+        observed.push({ callback: this.callback, element });
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("refits the figure when the container width changes", async () => {
+    render(<PlotlyChart plotlyJson={FIGURE} />);
+
+    await waitFor(() => expect(plotly.newPlot).toHaveBeenCalled());
+    expect(observed.length).toBeGreaterThan(0);
+
+    // A container that changes width without a window resize (sidebar toggle,
+    // page-zoom excursion) must re-fit: plotly's own `responsive` only listens
+    // to window resizes, so the figure would keep a stale pixel width and
+    // overflow its parent forever.
+    observed[0].callback(
+      [{ target: observed[0].element, contentRect: { width: 400 } } as unknown as ResizeObserverEntry],
+      {} as ResizeObserver,
+    );
+
+    await waitFor(() => expect(plotly.Plots.resize).toHaveBeenCalledTimes(1));
+    expect(plotly.Plots.resize).toHaveBeenCalledWith(observed[0].element);
+  });
+
+  it("ignores a re-report of the same width", async () => {
+    render(<PlotlyChart plotlyJson={FIGURE} />);
+    await waitFor(() => expect(plotly.newPlot).toHaveBeenCalled());
+
+    const entry = [
+      { target: observed[0].element, contentRect: { width: 400 } } as unknown as ResizeObserverEntry,
+    ] as ResizeObserverEntry[];
+    observed[0].callback(entry, {} as ResizeObserver);
+    await waitFor(() => expect(plotly.Plots.resize).toHaveBeenCalledTimes(1));
+    observed[0].callback(entry, {} as ResizeObserver);
+    expect(plotly.Plots.resize).toHaveBeenCalledTimes(1);
   });
 });

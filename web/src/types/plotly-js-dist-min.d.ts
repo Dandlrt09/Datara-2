@@ -15,10 +15,16 @@ declare module "plotly.js-dist-min" {
     scale?: number;
   }
 
+  export interface PlotsStatic {
+    /** Re-fit an already-plotted figure to its container's current size. */
+    resize(graphDiv: HTMLElement): void;
+  }
+
   export interface PlotlyStatic {
     react(...args: unknown[]): unknown;
     newPlot(...args: unknown[]): unknown;
     toImage(gd: HTMLElement, options: Partial<ToImageOptions>): Promise<string>;
+    Plots: PlotsStatic;
     [key: string]: unknown;
   }
 
