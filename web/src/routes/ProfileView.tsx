@@ -8,6 +8,7 @@ import {
 import PreferencesCard from "../components/PreferencesCard";
 import ActiveSessionsCard from "../components/ActiveSessionsCard";
 import ActivityLogCard from "../components/ActivityLogCard";
+import UsageCard from "../components/UsageCard";
 import ExportAccountCard from "../components/ExportAccountCard";
 import NewSessionNotice from "../components/NewSessionNotice";
 import {
@@ -198,6 +199,7 @@ export default function ProfileView() {
 
       <ActiveSessionsCard />
       <ActivityLogCard />
+      <UsageCard />
 
       <ExportAccountCard />
 
