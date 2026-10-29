@@ -334,6 +334,69 @@ class SqliteStore:
             "month": dict(counts[0]),
         }
 
+    async def usage_months(
+        self, user_id: int, current_month: str
+    ) -> list[dict[str, Any]]:
+        """Read-only monthly consumption for one user (T4), newest first.
+
+        The series always carries ``current_month`` (``YYYY-MM``) plus every
+        earlier month that has messages or archives, capped at 12 entries.
+        Tokens and analyses come from ``messages`` (an analysis is an assistant
+        message with non-null ``code``, the same criterion as ``activity_summary``);
+        archives count every ``archives`` row of the month. The cost is
+        none-propagating: one message with ``cost_usd IS NULL`` and tokens > 0
+        makes the month ``cost_known=false`` with ``cost_usd=null``, never a
+        partial sum. ``created_at`` is compared lexically on its ``YYYY-MM``
+        prefix, the same format SQLite stores (D7).
+        """
+        rows = await self.conn.execute_fetchall(
+            "WITH per_message AS ("
+            " SELECT substr(created_at, 1, 7) AS month,"
+            "   COALESCE(SUM(tokens_in), 0) AS tokens_in,"
+            "   COALESCE(SUM(tokens_out), 0) AS tokens_out,"
+            "   COALESCE(SUM(cost_usd), 0) AS cost_sum,"
+            "   SUM(CASE WHEN role = 'assistant' AND code IS NOT NULL"
+            "     THEN 1 ELSE 0 END) AS analyses,"
+            "   SUM(CASE WHEN cost_usd IS NULL"
+            "     AND (COALESCE(tokens_in, 0) > 0 OR COALESCE(tokens_out, 0) > 0)"
+            "     THEN 1 ELSE 0 END) AS unpriced"
+            " FROM messages WHERE user_id = :u GROUP BY month"
+            "),"
+            "per_archive AS ("
+            " SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS archives"
+            " FROM archives WHERE user_id = :u GROUP BY month"
+            "),"
+            "months AS ("
+            " SELECT month FROM per_message"
+            " UNION SELECT month FROM per_archive"
+            " UNION SELECT :cur"
+            ")"
+            " SELECT months.month AS month,"
+            "   COALESCE(per_message.tokens_in, 0) AS tokens_in,"
+            "   COALESCE(per_message.tokens_out, 0) AS tokens_out,"
+            "   COALESCE(per_message.cost_sum, 0) AS cost_sum,"
+            "   COALESCE(per_message.analyses, 0) AS analyses,"
+            "   COALESCE(per_archive.archives, 0) AS archives,"
+            "   COALESCE(per_message.unpriced, 0) AS unpriced"
+            " FROM months"
+            " LEFT JOIN per_message ON per_message.month = months.month"
+            " LEFT JOIN per_archive ON per_archive.month = months.month"
+            " ORDER BY months.month DESC LIMIT 12",
+            {"u": user_id, "cur": current_month},
+        )
+        return [
+            {
+                "month": row["month"],
+                "tokens_in": row["tokens_in"],
+                "tokens_out": row["tokens_out"],
+                "cost_usd": None if row["unpriced"] else row["cost_sum"],
+                "cost_known": not row["unpriced"],
+                "analyses": row["analyses"],
+                "archives": row["archives"],
+            }
+            for row in rows
+        ]
+
     async def touch_auth_session(
         self,
         token_hash: str,
