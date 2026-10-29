@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers.auth import router as auth_router
+from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
 
@@ -151,3 +152,129 @@ class TestLogout:
     def test_logout_no_session(self, client):
         resp = client.post("/api/auth/logout")
         assert resp.status_code == 401  # requires auth
+
+
+def _register(client, email: str) -> str:
+    """Register *email* and return its session cookie header (T1)."""
+    resp = client.post(
+        "/api/auth/register", json={"email": email, "password": "password123"}
+    )
+    assert resp.status_code == 200
+    return resp.headers["set-cookie"]
+
+
+class TestEditableName:
+    """T1: the user picks their display name; empty means "derive from email".
+
+    `users.name` is nullable (D1) and NULL is the single "no name chosen"
+    state, so clearing the field is a supported transition, not an error.
+    """
+
+    def test_me_returns_name_null_for_a_new_account(self, client):
+        cookie = _register(client, "name-new@example.com")
+        me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
+        assert me_resp.status_code == 200
+        assert me_resp.json()["name"] is None
+
+    def test_me_payload_has_exactly_the_documented_keys(self, client):
+        """Pin the response contract shared by register, login and /me (D2)."""
+        cookie = _register(client, "name-keys@example.com")
+        payload = client.get("/api/auth/me", headers={"Cookie": cookie}).json()
+        assert set(payload) == {"id", "email", "name", "pending_deletion_at"}
+
+    def test_update_name_persists_and_is_returned_by_me(self, client):
+        cookie = _register(client, "name-set@example.com")
+        resp = client.patch(
+            "/api/auth/me",
+            json={"name": "Daniel"},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Daniel"
+        assert resp.json()["email"] == "name-set@example.com"
+
+        me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
+        assert me_resp.json()["name"] == "Daniel"
+
+    def test_update_name_trims_and_collapses_inner_whitespace(self, client):
+        cookie = _register(client, "name-space@example.com")
+        resp = client.patch(
+            "/api/auth/me",
+            json={"name": "  Daniel   Del\nRio  "},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Daniel Del Rio"
+
+    @pytest.mark.parametrize(
+        ("blank", "email"),
+        [
+            ("", "name-blank-empty@example.com"),
+            ("   ", "name-blank-spaces@example.com"),
+            ("\n\t ", "name-blank-mixed@example.com"),
+        ],
+    )
+    def test_update_name_blank_is_rejected_and_changes_nothing(self, client, blank, email):
+        """D3 (rewritten on 29/10): there is no way back to "no name".
+
+        NULL still means "never chose one" for a new or legacy account, but the
+        edit route refuses to create that state: leaving the field empty warns
+        the user instead of silently falling back to the email.
+        """
+        cookie = _register(client, email)
+        client.patch(
+            "/api/auth/me", json={"name": "Temporal"}, headers={"Cookie": cookie}
+        )
+
+        resp = client.patch(
+            "/api/auth/me", json={"name": blank}, headers={"Cookie": cookie}
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "Name cannot be empty"
+        me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
+        assert me_resp.json()["name"] == "Temporal"
+
+    def test_update_name_at_the_limit_is_accepted(self, client):
+        """D4: the limit itself is a valid name, not an off-by-one."""
+        cookie = _register(client, "name-at-limit@example.com")
+        name = "N" * MAX_DISPLAY_NAME_LENGTH
+
+        resp = client.patch(
+            "/api/auth/me", json={"name": name}, headers={"Cookie": cookie}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["name"] == name
+
+    def test_update_name_over_the_limit_is_rejected_and_changes_nothing(self, client):
+        cookie = _register(client, "name-long@example.com")
+        client.patch(
+            "/api/auth/me", json={"name": "Corto"}, headers={"Cookie": cookie}
+        )
+        resp = client.patch(
+            "/api/auth/me",
+            json={"name": "x" * (MAX_DISPLAY_NAME_LENGTH + 1)},
+            headers={"Cookie": cookie},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == (
+            f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters"
+        )
+        me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
+        assert me_resp.json()["name"] == "Corto"
+
+    def test_update_name_requires_a_session(self, client):
+        resp = client.patch("/api/auth/me", json={"name": "Anonimo"})
+        assert resp.status_code == 401
+
+    def test_update_name_never_touches_another_user(self, client):
+        cookie_a = _register(client, "name-a@example.com")
+        cookie_b = _register(client, "name-b@example.com")
+
+        client.patch(
+            "/api/auth/me", json={"name": "Alice"}, headers={"Cookie": cookie_a}
+        )
+
+        me_b = client.get("/api/auth/me", headers={"Cookie": cookie_b})
+        assert me_b.json()["name"] is None

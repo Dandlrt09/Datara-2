@@ -115,8 +115,8 @@ class SqliteStore:
             await self.conn.commit()
             row_id = cursor.lastrowid
             row = await self.conn.execute_fetchall(
-                "SELECT id, email, password_hash, created_at, pending_deletion_at "
-                "FROM users WHERE id = ?",
+                "SELECT id, email, name, password_hash, created_at, "
+                "pending_deletion_at FROM users WHERE id = ?",
                 (row_id,),
             )
             return dict(row[0])
@@ -126,19 +126,33 @@ class SqliteStore:
     async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Look up a user by email. Returns None if not found."""
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, password_hash, created_at, pending_deletion_at "
-            "FROM users WHERE email = ?",
+            "SELECT id, email, name, password_hash, created_at, "
+            "pending_deletion_at FROM users WHERE email = ?",
             (email,),
         )
         return dict(rows[0]) if rows else None
 
     async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, password_hash, created_at, pending_deletion_at "
-            "FROM users WHERE id = ?",
+            "SELECT id, email, name, password_hash, created_at, "
+            "pending_deletion_at FROM users WHERE id = ?",
             (user_id,),
         )
         return dict(rows[0]) if rows else None
+
+    async def update_user_name(self, user_id: int, name: str | None) -> bool:
+        """Write the user-chosen display name (T1/D3).
+
+        ``name`` is already normalized by the caller and is ``None`` when the
+        user cleared it, which restores the email-derived fallback. Returns
+        True if the user existed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET name = ? WHERE id = ?",
+            (name, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
 
     async def update_user_password(self, user_id: int, password_hash: str) -> bool:
         """Replace a user's stored password hash.

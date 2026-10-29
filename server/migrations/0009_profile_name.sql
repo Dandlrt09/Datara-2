@@ -1,0 +1,14 @@
+-- 0009_profile_name.sql: the user-chosen display name (T1).
+--
+-- ``users.name`` is the name the person picked in Perfil. It is NULLABLE and
+-- has no default on purpose: NULL is the only "no name chosen" state, so the
+-- readers fall back to the name derived from the email
+-- (``web/src/lib/displayName.ts``). Clearing the field writes NULL again
+-- instead of an empty string, which keeps one representation of "unnamed".
+--
+-- The name is display only: the email remains the login identity, so there is
+-- no uniqueness constraint and nothing looks a user up by name (S8).
+--
+-- ALTER TABLE ADD COLUMN is a metadata-only change in SQLite (no table
+-- rewrite), and existing rows keep NULL, so nobody's current screen changes.
+ALTER TABLE users ADD COLUMN name TEXT;

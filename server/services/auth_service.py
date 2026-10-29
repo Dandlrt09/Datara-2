@@ -18,6 +18,25 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 
 
+# Longest accepted display name, measured after normalization (T1/D4).
+MAX_DISPLAY_NAME_LENGTH = 50
+
+
+def normalize_display_name(raw: str) -> str | None:
+    """Collapse a raw display name into the shape the app stores (T1/D3).
+
+    Leading and trailing whitespace is dropped and any inner whitespace run --
+    newlines included -- becomes a single space, because the name is rendered on
+    one line in the profile card and in the sidebar user block. A name that ends
+    up empty returns ``None``. ``None`` (stored as SQL NULL) is only the initial
+    state of an account that never chose a name; since T1/D3 was rewritten the
+    profile edit route refuses blank input, so it is no longer reachable from
+    the profile. Readers fall back to the name derived from the email.
+    """
+    collapsed = " ".join(raw.split())
+    return collapsed or None
+
+
 def hash_password(password: str) -> str:
     """Return a bcrypt hash for *password*."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")

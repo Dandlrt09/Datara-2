@@ -11,11 +11,13 @@ from pydantic import BaseModel
 from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
 from server.services.auth_service import (
+    MAX_DISPLAY_NAME_LENGTH,
     build_expire_cookie_header,
     build_set_cookie_header,
     generate_raw_token,
     hash_password,
     hash_token,
+    normalize_display_name,
     verify_password,
 )
 from server.services.sqlite_store import SqliteStore
@@ -46,9 +48,23 @@ class DeleteAccountRequest(BaseModel):
     current_password: str
 
 
+class NameUpdateRequest(BaseModel):
+    """Body of ``PATCH /api/auth/me`` (T1/D2).
+
+    ``name`` is required: an empty string is the documented way to clear the
+    name, so a missing field is a malformed request (422 from FastAPI), not a
+    second spelling of "clear" (D3).
+    """
+
+    name: str
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
+    # The user-chosen display name, or None when they never set one (T1/D1).
+    # The frontend resolves None to the email-derived name (D6).
+    name: str | None = None
     # Scheduled purge deadline, or None. Exposed so login and /me can render the
     # grace-period interstitial (S7) without a second request.
     pending_deletion_at: str | None = None
@@ -148,6 +164,7 @@ async def register(
     return UserResponse(
         id=user["id"],
         email=user["email"],
+        name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
     )
 
@@ -180,6 +197,7 @@ async def login(
     return UserResponse(
         id=user["id"],
         email=user["email"],
+        name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
     )
 
@@ -212,6 +230,47 @@ async def me(
     return UserResponse(
         id=user["id"],
         email=user["email"],
+        name=user.get("name"),
+        pending_deletion_at=user.get("pending_deletion_at"),
+    )
+
+
+@router.patch("/me", status_code=200)
+async def update_me(
+    body: NameUpdateRequest,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Change the authenticated user's display name (T1).
+
+    No password gate: unlike ``/password`` or ``/account/delete``, this neither
+    grants nor exposes anything (D5), so requiring a session is the whole
+    authorization. The name is normalized first (D3) -- trimmed, inner
+    whitespace collapsed -- and a blank result is a 422: NULL still means "never
+    chose a name" for a new or legacy account, but the edit route refuses to
+    create that state (D3 rewritten). Anything longer than
+    ``MAX_DISPLAY_NAME_LENGTH`` after normalization is a 422 (D4) and leaves the
+    stored name untouched. The user id always comes from the session, never from
+    the body, so one user can never rename another (D5).
+    """
+    name = normalize_display_name(body.name)
+    if name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Name cannot be empty",
+        )
+
+    if len(name) > MAX_DISPLAY_NAME_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters",
+        )
+
+    await store.update_user_name(user["id"], name)
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        name=name,
         pending_deletion_at=user.get("pending_deletion_at"),
     )
 
