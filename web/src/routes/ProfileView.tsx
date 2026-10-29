@@ -7,6 +7,7 @@ import {
 } from "../components/ChangePasswordDialog";
 import PreferencesCard from "../components/PreferencesCard";
 import ActiveSessionsCard from "../components/ActiveSessionsCard";
+import ActivityLogCard from "../components/ActivityLogCard";
 import NewSessionNotice from "../components/NewSessionNotice";
 import {
   DeleteAccountDialog,
@@ -195,6 +196,7 @@ export default function ProfileView() {
       </section>
 
       <ActiveSessionsCard />
+      <ActivityLogCard />
 
       <PreferencesCard />
 

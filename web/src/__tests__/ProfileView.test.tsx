@@ -25,6 +25,17 @@ vi.mock("../queries/useAuth", () => ({
   useAcknowledgeNewSession: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+vi.mock("../queries/useActivity", () => ({
+  useActivity: () => ({
+    data: {
+      events: [],
+      month: { chats: 0, analyses: 0, files: 0, rows: 0, archives: 0 },
+    },
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock("react-router-dom", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router-dom")>();
   return { ...actual, useNavigate: () => navigateMock };
