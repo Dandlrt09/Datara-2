@@ -294,6 +294,46 @@ class SqliteStore:
         )
         return [{**dict(row), "is_current": bool(row["is_current"])} for row in rows]
 
+    async def activity_summary(
+        self, user_id: int, month_start: str, feed_limit: int = 10
+    ) -> dict[str, Any]:
+        """Read-only activity log for one user (T6): a mixed feed + month counts.
+
+        Computed live from existing tables, so rows deleted with their chat
+        disappear from it (S6). ``month_start`` is a ``YYYY-MM-DD HH:MM:SS`` UTC
+        string compared lexically, the same format SQLite stores.
+        """
+        feed = await self.conn.execute_fetchall(
+            "SELECT kind, title, at FROM ("
+            " SELECT 'chat' AS kind, title, created_at AS at"
+            "   FROM chat_sessions WHERE user_id = ?"
+            " UNION ALL"
+            " SELECT 'file', filename, created_at FROM files WHERE user_id = ?"
+            " UNION ALL"
+            " SELECT 'archive', name, created_at FROM archives WHERE user_id = ?"
+            ") ORDER BY at DESC, kind LIMIT ?",
+            (user_id, user_id, user_id, feed_limit),
+        )
+        counts = await self.conn.execute_fetchall(
+            "SELECT"
+            " (SELECT COUNT(*) FROM chat_sessions"
+            "   WHERE user_id = :u AND created_at >= :m) AS chats,"
+            " (SELECT COUNT(*) FROM messages"
+            "   WHERE user_id = :u AND role = 'assistant' AND code IS NOT NULL"
+            "   AND created_at >= :m) AS analyses,"
+            " (SELECT COUNT(*) FROM files"
+            "   WHERE user_id = :u AND created_at >= :m) AS files,"
+            " (SELECT COALESCE(SUM(row_count), 0) FROM files"
+            "   WHERE user_id = :u AND created_at >= :m) AS rows,"
+            " (SELECT COUNT(*) FROM archives"
+            "   WHERE user_id = :u AND created_at >= :m) AS archives",
+            {"u": user_id, "m": month_start},
+        )
+        return {
+            "events": [dict(r) for r in feed],
+            "month": dict(counts[0]),
+        }
+
     async def touch_auth_session(
         self,
         token_hash: str,

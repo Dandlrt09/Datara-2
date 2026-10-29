@@ -18,7 +18,7 @@ from starlette.exceptions import HTTPException
 
 from server.api import store as api_store
 from server.api import event_bus as api_event_bus
-from server.api.routers import auth, chat, files, sessions, settings, archive
+from server.api.routers import auth, chat, files, sessions, settings, archive, activity
 from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
 from server.migrate import apply_migrations
@@ -208,6 +208,7 @@ app.include_router(settings.router)
 app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(archive.router)
+app.include_router(activity.router)
 
 # Mount static files (for production, serve built frontend here)
 static_dir = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
