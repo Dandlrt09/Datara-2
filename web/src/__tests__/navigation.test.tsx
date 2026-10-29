@@ -26,20 +26,42 @@ vi.mock("../queries/useSettings", () => ({
   useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
+const { useMeMock } = vi.hoisted(() => ({ useMeMock: vi.fn() }));
+
 vi.mock("../queries/useAuth", () => ({
-  useMe: () => ({
-    data: { id: 1, email: "test@test.com" },
-    isLoading: false,
-    error: null,
-  }),
+  useMe: () => useMeMock(),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useChangePassword: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
+  useUpdateName: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // Import AppShell AFTER mocks are hoisted
 import AppShell from "../routes/AppShell";
 
 describe("Navigation smoke (R-TestWall-3)", () => {
+  beforeEach(() => {
+    useMeMock.mockReturnValue({
+      data: { id: 1, email: "test@test.com", name: null },
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  // T1/D6: the sidebar and Perfil share one resolver, so a chosen name shows up
+  // in the user block instead of the email local part.
+  it("shows the chosen name in the sidebar user block", () => {
+    useMeMock.mockReturnValue({
+      data: { id: 1, email: "test@test.com", name: "Daniel" },
+      isLoading: false,
+      error: null,
+    });
+
+    renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
+
+    expect(screen.getByText("Daniel")).toBeTruthy();
+    expect(screen.queryByText("test")).toBeNull();
+  });
+
   // `path: "/app/*"` is load-bearing: AppShell's own <Routes> hang off the
   // /app/* parent in App.tsx, and its child paths only resolve against it.
   // Rendered bare at "/app/archives", every child route misses and the 404

@@ -14,7 +14,7 @@ import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
 import { PreferencesProvider, usePreferences } from "../lib/preferences";
 import { PendingDeletionScreen } from "../components/PendingDeletionScreen";
 import { landingDestination } from "../lib/landing";
-import { displayNameFromEmail } from "../lib/displayName";
+import { resolveDisplayName } from "../lib/displayName";
 import type { ChatSession } from "../queries/useSessions";
 
 const ChatView = lazy(() => import("./ChatView"));
@@ -253,7 +253,9 @@ function AppShellContent({ user }: { user: User }) {
 
   useSessionEvents({ onEvent, onReconnected });
 
-  const displayName = displayNameFromEmail(user.email);
+  // The same resolver Perfil uses (T1/D6): a chosen name wins, and an account
+  // with no name keeps showing the email-derived one.
+  const displayName = resolveDisplayName(user.name, user.email);
 
   return (
     <>

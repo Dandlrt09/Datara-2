@@ -4,6 +4,8 @@ import { api } from "../lib/api";
 export interface User {
   id: number;
   email: string;
+  /** The name the user chose in Perfil, or null to fall back to the email (T1). */
+  name: string | null;
   /** Scheduled purge deadline in the grace period, or null (S3). */
   pending_deletion_at: string | null;
 }
@@ -67,6 +69,25 @@ export function useRequestAccountDeletion() {
       api.post<undefined>("/api/auth/account/delete", data),
     onSuccess: () => {
       qc.clear();
+    },
+  });
+}
+
+/**
+ * Save the display name the user picked in Perfil (T1).
+ *
+ * The response is the updated user, so it is written straight into the `me`
+ * cache instead of invalidating it: the profile and the sidebar re-render with
+ * the new name on the same tick. An empty name is a valid value — the server
+ * stores NULL and the display goes back to the email-derived name (D3).
+ */
+export function useUpdateName() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string }) =>
+      api.patch<User>("/api/auth/me", data),
+    onSuccess: (user) => {
+      qc.setQueryData(["auth", "me"], user);
     },
   });
 }

@@ -15,7 +15,8 @@ import {
   DeleteAccountDialog,
   DELETION_SCHEDULED_NOTICE,
 } from "../components/DeleteAccountDialog";
-import { displayNameFromEmail } from "../lib/displayName";
+import { NameDialog, NAME_UPDATED_NOTICE } from "../components/NameDialog";
+import { resolveDisplayName } from "../lib/displayName";
 import { colors, typography } from "../design/tokens";
 
 // The mockup (Pantallas/settings/perfil.txt) is the structural reference; the
@@ -59,15 +60,16 @@ const secondaryButtonStyle = {
  * The Perfil screen: account data (read-only), password change and the current
  * session's logout.
  *
- * Reached from the sidebar user block (S6). The name is derived from the email
- * (S2); the email itself is read-only (S3); logout lives here rather than in
- * the sidebar (D1).
+ * Reached from the sidebar user block (S6). The name is editable here (T1) and
+ * the email itself is read-only (S3); logout lives here rather than in the
+ * sidebar (D1).
  */
 export default function ProfileView() {
   const navigate = useNavigate();
   const { data: user, isLoading } = useMe();
   const logout = useLogout();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [nameDialogOpen, setNameDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -91,7 +93,8 @@ export default function ProfileView() {
   }
   if (!user) return null;
 
-  const name = displayNameFromEmail(user.email);
+  // One resolver feeds Perfil and the sidebar, so they cannot disagree (T1/D6).
+  const name = resolveDisplayName(user.name, user.email);
   const initial = name.charAt(0).toUpperCase();
 
   return (
@@ -130,8 +133,19 @@ export default function ProfileView() {
           >
             {initial}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <h2 style={{ margin: 0, color: colors.textPrimary }}>{name}</h2>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+              minWidth: 0,
+            }}
+          >
+            <h2
+              style={{ margin: 0, color: colors.textPrimary, overflowWrap: "anywhere" }}
+            >
+              {name}
+            </h2>
             <span
               style={{
                 fontFamily: typography.fontMono,
@@ -149,6 +163,27 @@ export default function ProfileView() {
         />
 
         <div style={rowStyle}>
+          <div>
+            <span style={rowLabelStyle}>Nombre</span>
+            <span style={rowSublabelStyle}>
+              Así te mostramos en la app.
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ color: colors.textPrimary, overflowWrap: "anywhere" }}>
+              {name}
+            </span>
+            <button
+              type="button"
+              onClick={() => setNameDialogOpen(true)}
+              style={secondaryButtonStyle}
+            >
+              Editar
+            </button>
+          </div>
+        </div>
+
+        <div style={{ ...rowStyle, marginTop: 20 }}>
           <div>
             <span style={rowLabelStyle}>Correo electrónico</span>
             <span style={rowSublabelStyle}>Se usa para iniciar sesión.</span>
@@ -226,6 +261,16 @@ export default function ProfileView() {
           </button>
         </div>
       </section>
+
+      <NameDialog
+        open={nameDialogOpen}
+        initialName={user.name}
+        onSuccess={() => {
+          setNameDialogOpen(false);
+          setNotice(NAME_UPDATED_NOTICE);
+        }}
+        onCancel={() => setNameDialogOpen(false)}
+      />
 
       <DeleteAccountDialog
         open={deleteDialogOpen}
