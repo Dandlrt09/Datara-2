@@ -549,6 +549,23 @@ class SqliteStore:
         )
         return self._decrypt_settings_row(dict(rows[0])) if rows else None
 
+    async def get_export_settings(self, user_id: int) -> dict[str, Any] | None:
+        """Return the caller's *non-secret* settings for the account export (T5).
+
+        Deliberately narrower than :meth:`get_user_settings`: the encrypted API
+        key and the configurable ``base_url`` are never selected, so a future
+        refactor cannot accidentally stream credentials into the export zip.
+        The stored preferences come back raw (NULL = not chosen); callers
+        resolve them with ``effective_preferences``.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT default_model, provider_type, number_format, date_format, "
+            "currency_symbol, open_behavior "
+            "FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        )
+        return dict(rows[0]) if rows else None
+
     def _decrypt_settings_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """Return a settings row with ``api_key_enc`` decrypted in place.
 
