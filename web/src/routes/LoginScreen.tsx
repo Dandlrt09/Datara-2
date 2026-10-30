@@ -8,6 +8,23 @@ interface LoginForm {
   password: string;
 }
 
+/**
+ * Turn the login error into the line the person reads.
+ *
+ * 429 is the attempt brake (S3); without it the user would read "Login failed"
+ * and keep retrying a door the server is holding shut on purpose.
+ */
+function loginErrorMessage(error: unknown): string {
+  switch ((error as ApiError).status) {
+    case 401:
+      return "Invalid credentials";
+    case 429:
+      return "Demasiados intentos, probá más tarde";
+    default:
+      return "Login failed";
+  }
+}
+
 export default function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -68,11 +85,7 @@ export default function LoginScreen() {
           {errors.password && <p style={{ color: "red" }}>{errors.password.message}</p>}
         </div>
         {login.error && (
-          <p style={{ color: "red" }}>
-            {(login.error as ApiError).status === 401
-              ? "Invalid credentials"
-              : "Login failed"}
-          </p>
+          <p style={{ color: "red" }}>{loginErrorMessage(login.error)}</p>
         )}
         <button type="submit" disabled={login.isPending} style={{ width: "100%", padding: 10 }}>
           {login.isPending ? "Logging in..." : "Log in"}

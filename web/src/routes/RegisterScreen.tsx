@@ -8,6 +8,26 @@ interface RegisterForm {
   password: string;
 }
 
+/**
+ * Turn the register error into the line the person reads.
+ *
+ * 409 and 422 are states the server actually distinguishes, and 429 is the new
+ * attempt brake (S3): without a case here the user would see "Registration
+ * failed" while the account is fine and they merely have to wait.
+ */
+function registerErrorMessage(error: unknown): string {
+  switch ((error as ApiError).status) {
+    case 409:
+      return "Email already registered";
+    case 422:
+      return "Revisá los datos ingresados";
+    case 429:
+      return "Demasiados intentos, probá más tarde";
+    default:
+      return "Registration failed";
+  }
+}
+
 export default function RegisterScreen() {
   const navigate = useNavigate();
   const registerMut = useRegister();
@@ -51,11 +71,7 @@ export default function RegisterScreen() {
           {errors.password && <p style={{ color: "red" }}>{errors.password.message}</p>}
         </div>
         {registerMut.error && (
-          <p style={{ color: "red" }}>
-            {(registerMut.error as ApiError).status === 409
-              ? "Email already registered"
-              : "Registration failed"}
-          </p>
+          <p style={{ color: "red" }}>{registerErrorMessage(registerMut.error)}</p>
         )}
         <button type="submit" disabled={registerMut.isPending} style={{ width: "100%", padding: 10 }}>
           {registerMut.isPending ? "Registering..." : "Register"}

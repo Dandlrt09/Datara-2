@@ -39,6 +39,26 @@ describe("RegisterScreen", () => {
     expect(screen.getByText("Email already registered")).toBeTruthy();
   });
 
+  it("shows the rate-limit message on 429", () => {
+    useRegisterMock.mockReturnValue({
+      mutateAsync: vi.fn().mockRejectedValue(new Error("Too many attempts")),
+      isPending: false,
+      error: { status: 429, message: "Too many attempts" },
+    });
+    renderWithProviders(<RegisterScreen />);
+    expect(screen.getByText("Demasiados intentos, probá más tarde")).toBeTruthy();
+  });
+
+  it("shows a data-check message on 422", () => {
+    useRegisterMock.mockReturnValue({
+      mutateAsync: vi.fn().mockRejectedValue(new Error("Invalid email address")),
+      isPending: false,
+      error: { status: 422, message: "Invalid email address" },
+    });
+    renderWithProviders(<RegisterScreen />);
+    expect(screen.getByText("Revisá los datos ingresados")).toBeTruthy();
+  });
+
   it("shows generic error on non-409 failure", () => {
     useRegisterMock.mockReturnValue({
       mutateAsync: vi.fn().mockRejectedValue(new Error("Server error")),

@@ -74,4 +74,14 @@ describe("LoginScreen", () => {
     renderWithProviders(<LoginScreen />);
     expect(screen.getByText("Login failed")).toBeTruthy();
   });
+
+  it("shows the rate-limit message on 429", () => {
+    useLoginMock.mockReturnValue({
+      mutateAsync: vi.fn().mockRejectedValue(new Error("Too many attempts")),
+      isPending: false,
+      error: { status: 429, message: "Too many attempts" },
+    });
+    renderWithProviders(<LoginScreen />);
+    expect(screen.getByText("Demasiados intentos, probá más tarde")).toBeTruthy();
+  });
 });
