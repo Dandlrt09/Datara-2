@@ -37,8 +37,17 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class RegisterRequest(BaseModel):
+    """Body of ``POST /api/auth/register``.
+
+    ``name`` is optional on purpose (register-experience S2): the signup form
+    asks for a name but lets it empty, and an empty name means the same as no
+    name at all -- the display falls back to the email-derived one, exactly as
+    for an account that never chose one.
+    """
+
     email: str
     password: str
+    name: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -229,9 +238,20 @@ async def register(
     for key in keys:
         auth_attempt_limiter.record(key)
 
+    # The optional name shares the profile's normalization and ceiling (D4):
+    # trimmed, inner whitespace collapsed, blank -> None. It is validated here,
+    # before the attempt brake, so a malformed name does not spend an attempt
+    # (the same rule as the email shape above).
+    name = normalize_display_name(body.name) if body.name else None
+    if name is not None and len(name) > MAX_DISPLAY_NAME_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters",
+        )
+
     pw_hash = hash_password(body.password)
     try:
-        user = await store.create_user(email, pw_hash)
+        user = await store.create_user(email, pw_hash, name=name)
     except DuplicateError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

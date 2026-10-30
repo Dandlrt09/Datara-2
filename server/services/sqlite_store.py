@@ -103,18 +103,23 @@ class SqliteStore:
 
     # ── Users ────────────────────────────────────────────────────────────────────
 
-    async def create_user(self, email: str, password_hash: str) -> dict[str, Any]:
+    async def create_user(
+        self, email: str, password_hash: str, name: str | None = None
+    ) -> dict[str, Any]:
         """Insert a new user and return the full row.
 
         The email is normalized first (S4/S5), so the stored identity never
-        depends on capitalization or surrounding spaces. Raises
-        ``DuplicateError`` if the email already exists.
+        depends on capitalization or surrounding spaces. ``name`` is the
+        optional display name chosen at signup (register-experience S2),
+        already normalized by the caller; ``None`` stores SQL NULL, which reads
+        back as the email-derived fallback. Raises ``DuplicateError`` if the
+        email already exists.
         """
         email = normalize_email(email)
         try:
             cursor = await self.conn.execute(
-                "INSERT INTO users (email, password_hash) VALUES (?, ?)",
-                (email, password_hash),
+                "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
+                (email, password_hash, name),
             )
             await self.conn.commit()
             row_id = cursor.lastrowid
