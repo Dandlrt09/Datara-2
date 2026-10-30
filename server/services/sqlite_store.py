@@ -17,6 +17,7 @@ import aiosqlite
 
 from core.errors import DuplicateError, NotFoundError
 from server.db_path import resolve_db_path
+from server.services.auth_service import normalize_email
 from server.services.crypto import SecretBox
 
 logger = logging.getLogger(__name__)
@@ -105,8 +106,11 @@ class SqliteStore:
     async def create_user(self, email: str, password_hash: str) -> dict[str, Any]:
         """Insert a new user and return the full row.
 
-        Raises ``DuplicateError`` if the email already exists.
+        The email is normalized first (S4/S5), so the stored identity never
+        depends on capitalization or surrounding spaces. Raises
+        ``DuplicateError`` if the email already exists.
         """
+        email = normalize_email(email)
         try:
             cursor = await self.conn.execute(
                 "INSERT INTO users (email, password_hash) VALUES (?, ?)",
@@ -124,11 +128,17 @@ class SqliteStore:
             raise DuplicateError(f"email already exists: {email}")
 
     async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
-        """Look up a user by email. Returns None if not found."""
+        """Look up a user by email, case- and space-insensitively (S4/S5).
+
+        Normalizes the input and matches with ``COLLATE NOCASE``: the first
+        guard is the write-side normalization, the second is the query, so a
+        row written outside the router boundary still resolves. Returns None if
+        not found.
+        """
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, created_at, "
-            "pending_deletion_at FROM users WHERE email = ?",
-            (email,),
+            "pending_deletion_at FROM users WHERE email = ? COLLATE NOCASE",
+            (normalize_email(email),),
         )
         return dict(rows[0]) if rows else None
 

@@ -115,12 +115,15 @@ class TestDuplicateEmail:
         assert resp2.status_code == 409
 
     def test_duplicate_email_all_caps(self, client):
-        """Email uniqueness should handle case-sensitive storage (SQLite default)."""
+        """Email uniqueness is case-insensitive (S4/S5).
+
+        Superseded the old expectation: until normalization, ``CaseDup@`` and
+        ``casedup@`` created two accounts because SQLite's default UNIQUE is
+        case-sensitive. That was the bug, so now the second one conflicts.
+        """
         client.post("/api/auth/register", json={"email": "CaseDup@example.com", "password": "password123"})
-        # Same email but different case — this succeeds because SQLite's default
-        # uniqueness is case-sensitive for TEXT values
         resp = client.post("/api/auth/register", json={"email": "casedup@example.com", "password": "password456"})
-        assert resp.status_code == 200
+        assert resp.status_code == 409
 
 
 class TestCrossUserAccess:

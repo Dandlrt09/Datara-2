@@ -15,6 +15,9 @@ import pytest
 from server.migrate import apply_migrations
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
+# Every migration on disk, in order. Derived so a later migration does not
+# break this 0009 probe on an unrelated line.
+ALL_VERSIONS = list(range(1, len(list(MIGRATIONS_DIR.glob("*.sql"))) + 1))
 
 
 @pytest.fixture
@@ -70,7 +73,7 @@ def test_0009_upgrade_is_additive_and_legacy_rows_stay_null(legacy_db):
     versions = [
         r[0] for r in conn.execute("SELECT version FROM migrations ORDER BY version")
     ]
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert versions == ALL_VERSIONS
     conn.close()
 
     # A second startup applies nothing and does not disturb the legacy row (S3).
@@ -79,6 +82,6 @@ def test_0009_upgrade_is_additive_and_legacy_rows_stay_null(legacy_db):
     versions = [
         r[0] for r in conn.execute("SELECT version FROM migrations ORDER BY version")
     ]
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert versions == ALL_VERSIONS
     assert conn.execute("SELECT name FROM users WHERE id = 1").fetchone()[0] is None
     conn.close()

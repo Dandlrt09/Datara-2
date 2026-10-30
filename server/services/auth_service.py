@@ -37,6 +37,19 @@ def normalize_display_name(raw: str) -> str | None:
     return collapsed or None
 
 
+def normalize_email(raw: str) -> str:
+    """Collapse a raw email into the login identity the app stores (S4/S5).
+
+    Lowercased and trimmed, so the account identity does not depend on how the
+    person typed it: ``Alice@Example.COM`` and ``alice@example.com`` are one
+    account, not two. Only outer whitespace is removed; the local part is not
+    otherwise rewritten (a plus-address or a dot stays as typed). The store
+    applies this on write, which is what makes it impossible for a caller to
+    bypass.
+    """
+    return raw.strip().lower()
+
+
 def hash_password(password: str) -> str:
     """Return a bcrypt hash for *password*."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
