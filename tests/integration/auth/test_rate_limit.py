@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api import store as api_store
+from server.api.rate_limit import auth_attempt_limiter
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations
@@ -86,6 +87,27 @@ class TestLoginRateLimit:
 
         # The clear resets the window, so the next mistake is a 401, not a 429.
         assert _login(client, "limit-clear@example.com").status_code == 401
+
+    def test_email_key_alone_blocks_login(self, client):
+        _register(client, "keyed-email@example.com")
+        for _ in range(5):
+            auth_attempt_limiter.record("login:email:keyed-email@example.com")
+        assert _login(client, "keyed-email@example.com").status_code == 429
+
+    def test_ip_key_alone_blocks_login(self, client):
+        _register(client, "keyed-ip@example.com")
+        for _ in range(5):
+            auth_attempt_limiter.record("login:ip:testclient")
+        assert _login(client, "fresh@example.com").status_code == 429
+
+    def test_success_then_five_more_failures_before_lockout(self, client):
+        _register(client, "route-clear@example.com")
+        for _ in range(4):
+            assert _login(client, "route-clear@example.com").status_code == 401
+        assert _login(client, "route-clear@example.com", "password123").status_code == 200
+        for _ in range(5):
+            assert _login(client, "route-clear@example.com").status_code == 401
+        assert _login(client, "route-clear@example.com").status_code == 429
 
 
 class TestRegisterRateLimit:

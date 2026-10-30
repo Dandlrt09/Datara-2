@@ -45,3 +45,11 @@ class TestStoreNormalizesEmail:
         await store.create_user("carol@example.com", "hash1")
         with pytest.raises(DuplicateError):
             await store.create_user("Carol@Example.com", "hash2")
+
+    async def test_lookup_finds_a_row_written_outside_the_store(self, store):
+        await store.conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES ('Hand@Edited.com', 'hash')"
+        )
+        await store.conn.commit()
+        found = await store.get_user_by_email("hand@edited.com")
+        assert found is not None
