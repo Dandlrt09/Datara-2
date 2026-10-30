@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 PASSWORD = "password123"
@@ -59,7 +60,7 @@ def _register(client, email="user@example.com", user_agent=CHROME):
     """Register (first session) and return its cookie."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": PASSWORD},
+        json={"terms_version": TERMS_VERSION, "email": email, "password": PASSWORD},
         headers={"User-Agent": user_agent},
     )
     assert resp.status_code == 200

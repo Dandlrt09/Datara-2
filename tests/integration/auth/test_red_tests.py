@@ -14,6 +14,7 @@ from server.api.routers.sessions import router as sessions_router
 from server.api.routers.settings import router as settings_router
 from server.services.auth_service import generate_raw_token, hash_token, build_set_cookie_header
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -93,7 +94,7 @@ class TestExpiredSession:
         """After logout, the same cookie should return 401."""
         resp = client.post(
             "/api/auth/register",
-            json={"email": "logout@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "logout@example.com", "password": "password123"},
         )
         cookie = resp.headers["set-cookie"]
 
@@ -109,9 +110,9 @@ class TestDuplicateEmail:
     """Task 2.9: Duplicate email → 4xx."""
 
     def test_duplicate_email_returns_409(self, client):
-        resp1 = client.post("/api/auth/register", json={"email": "dup@example.com", "password": "password123"})
+        resp1 = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "dup@example.com", "password": "password123"})
         assert resp1.status_code == 200
-        resp2 = client.post("/api/auth/register", json={"email": "dup@example.com", "password": "otherpass"})
+        resp2 = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "dup@example.com", "password": "otherpass"})
         assert resp2.status_code == 409
 
     def test_duplicate_email_all_caps(self, client):
@@ -121,8 +122,8 @@ class TestDuplicateEmail:
         ``casedup@`` created two accounts because SQLite's default UNIQUE is
         case-sensitive. That was the bug, so now the second one conflicts.
         """
-        client.post("/api/auth/register", json={"email": "CaseDup@example.com", "password": "password123"})
-        resp = client.post("/api/auth/register", json={"email": "casedup@example.com", "password": "password456"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "CaseDup@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "casedup@example.com", "password": "password456"})
         assert resp.status_code == 409
 
 
@@ -132,11 +133,11 @@ class TestCrossUserAccess:
     async def test_cross_user_session_list(self, client, store):
         """User A's cookie should not see User B's sessions."""
         # Register user A
-        resp_a = client.post("/api/auth/register", json={"email": "a@example.com", "password": "password123"})
+        resp_a = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "a@example.com", "password": "password123"})
         cookie_a = resp_a.headers["set-cookie"]
 
         # Register user B
-        resp_b = client.post("/api/auth/register", json={"email": "b@example.com", "password": "password123"})
+        resp_b = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "b@example.com", "password": "password123"})
         cookie_b = resp_b.headers["set-cookie"]
 
         # User B creates a session
@@ -150,9 +151,9 @@ class TestCrossUserAccess:
 
     async def test_cross_user_settings(self, client, store):
         """User A's settings should not be visible to User B."""
-        resp_a = client.post("/api/auth/register", json={"email": "a2@example.com", "password": "password123"})
+        resp_a = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "a2@example.com", "password": "password123"})
         cookie_a = resp_a.headers["set-cookie"]
-        resp_b = client.post("/api/auth/register", json={"email": "b2@example.com", "password": "password123"})
+        resp_b = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "b2@example.com", "password": "password123"})
         cookie_b = resp_b.headers["set-cookie"]
 
         # User A updates settings
@@ -169,7 +170,7 @@ class TestConsistent401:
     def test_unknown_email_and_wrong_password_same_error(self, client):
         """Both bad email and bad password return identical 401 body."""
         # Register one user
-        client.post("/api/auth/register", json={"email": "target@example.com", "password": "password123"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "target@example.com", "password": "password123"})
 
         # Bad email
         resp_unknown = client.post("/api/auth/login", json={"email": "unknown@example.com", "password": "password123"})

@@ -15,6 +15,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -32,7 +33,11 @@ def client():
 
 
 def _register(client, email: str, name=None):
-    body = {"email": email, "password": "password123"}
+    body = {
+        "email": email,
+        "password": "password123",
+        "terms_version": TERMS_VERSION,
+    }
     if name is not None:
         body["name"] = name
     return client.post("/api/auth/register", json=body)

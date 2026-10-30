@@ -59,7 +59,11 @@ def test_0009_upgrade_is_additive_and_legacy_rows_stay_null(legacy_db):
         (r[1], r[2], r[3], r[4]) for r in conn.execute("PRAGMA table_info(users)")
     ]
     # Every column that existed before is still there, unchanged, in order.
-    assert before == [column for column in after if column[0] != "name"]
+    # The filter is the set seen *before* the upgrade, not the columns this
+    # migration adds: a later migration introducing its own column (0011 did)
+    # must not make this probe fail on an unrelated line.
+    pre_existing = {column[0] for column in before}
+    assert [column for column in after if column[0] in pre_existing] == before
     # ("name", "TEXT", notnull=0, default=None) -> nullable, no default (D1).
     assert [column for column in after if column[0] == "name"] == [
         ("name", "TEXT", 0, None)

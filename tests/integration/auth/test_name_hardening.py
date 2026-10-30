@@ -18,6 +18,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -36,7 +37,7 @@ def client():
 
 def _register(client, email: str) -> str:
     resp = client.post(
-        "/api/auth/register", json={"email": email, "password": "password123"}
+        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]
@@ -47,7 +48,7 @@ class TestNameHardening:
         """S2/D2: all three routes share one UserResponse shape, name null."""
         register = client.post(
             "/api/auth/register",
-            json={"email": "shape@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "shape@example.com", "password": "password123"},
         )
         assert set(register.json()) == {
             "id",

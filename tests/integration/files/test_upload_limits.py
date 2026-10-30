@@ -29,6 +29,7 @@ from server.api.upload_guard import (
     install_upload_guard,
 )
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -71,7 +72,7 @@ def client(app):
 def auth_client(client):
     resp = client.post(
         "/api/auth/register",
-        json={"email": "limits@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "limits@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     client.headers["Cookie"] = resp.headers["set-cookie"]

@@ -25,6 +25,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.api.routers.settings import router as settings_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 # Values the API must reject on write: unknown labels for each preference plus
@@ -74,7 +75,7 @@ def client(app):
 def auth_client(client):
     resp = client.post(
         "/api/auth/register",
-        json={"email": "invariants@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "invariants@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]

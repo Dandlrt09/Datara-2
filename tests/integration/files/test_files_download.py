@@ -20,6 +20,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 _XLSX_MIME = (
@@ -89,7 +90,7 @@ def auth_client(client):
     """Register a user and return a client with valid session cookie."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": "test@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "test@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     cookie = resp.headers["set-cookie"]
@@ -198,7 +199,7 @@ class TestDownload:
 
         resp_b = client.post(
             "/api/auth/register",
-            json={"email": "b_download@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "b_download@example.com", "password": "password123"},
         )
         cookie_b = resp_b.headers["set-cookie"]
 

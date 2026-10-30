@@ -104,7 +104,11 @@ class SqliteStore:
     # ── Users ────────────────────────────────────────────────────────────────────
 
     async def create_user(
-        self, email: str, password_hash: str, name: str | None = None
+        self,
+        email: str,
+        password_hash: str,
+        name: str | None = None,
+        terms_version: str | None = None,
     ) -> dict[str, Any]:
         """Insert a new user and return the full row.
 
@@ -112,14 +116,20 @@ class SqliteStore:
         depends on capitalization or surrounding spaces. ``name`` is the
         optional display name chosen at signup (register-experience S2),
         already normalized by the caller; ``None`` stores SQL NULL, which reads
-        back as the email-derived fallback. Raises ``DuplicateError`` if the
-        email already exists.
+        back as the email-derived fallback. ``terms_version`` is the terms of
+        use version the person accepted (terms-of-use S6): ``None`` records no
+        acceptance, and any other value stamps the same clock the row's
+        ``created_at`` uses, so both dates stay comparable. Raises
+        ``DuplicateError`` if the email already exists.
         """
         email = normalize_email(email)
         try:
             cursor = await self.conn.execute(
-                "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
-                (email, password_hash, name),
+                "INSERT INTO users "
+                "(email, password_hash, name, terms_version, terms_accepted_at) "
+                "VALUES (?, ?, ?, ?, "
+                "CASE WHEN ? IS NULL THEN NULL ELSE datetime('now') END)",
+                (email, password_hash, name, terms_version, terms_version),
             )
             await self.conn.commit()
             row_id = cursor.lastrowid

@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from server.api.main import app
+from server.services.terms import TERMS_VERSION
 
 
 def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
@@ -28,7 +29,7 @@ def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
         # Full auth roundtrip through the lifespan-provided store.
         resp = client.post(
             "/api/auth/register",
-            json={"email": "boot@datara.local", "password": "boot-test-123"},
+            json={"terms_version": TERMS_VERSION, "email": "boot@datara.local", "password": "boot-test-123"},
         )
         assert resp.status_code == 200
         assert "session_id" in resp.headers.get("set-cookie", "")

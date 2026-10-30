@@ -28,6 +28,7 @@ from server.services.auth_service import (
 )
 from server.services.session_cleanup import sweep_expired
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -70,7 +71,7 @@ class TestCookieFlags:
     def test_set_cookie_contains_httponly(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "cookie@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "cookie@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie = resp.headers["set-cookie"]
@@ -79,7 +80,7 @@ class TestCookieFlags:
     def test_set_cookie_contains_samesite_lax(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "samesite@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "samesite@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie = resp.headers["set-cookie"]
@@ -88,7 +89,7 @@ class TestCookieFlags:
     def test_set_cookie_contains_path_root(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "path@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "path@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie = resp.headers["set-cookie"]
@@ -97,7 +98,7 @@ class TestCookieFlags:
     def test_set_cookie_contains_max_age_28800(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "maxage@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "maxage@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie = resp.headers["set-cookie"]
@@ -107,7 +108,7 @@ class TestCookieFlags:
         """Verify all required flags are present in a single Set-Cookie header."""
         resp = client.post(
             "/api/auth/register",
-            json={"email": "allflags@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "allflags@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie = resp.headers["set-cookie"]
@@ -123,7 +124,7 @@ class TestCookieFlags:
         # Register first
         client.post(
             "/api/auth/register",
-            json={"email": "loginflags@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "loginflags@example.com", "password": "password123"},
         )
         # Login
         resp = client.post(
@@ -146,7 +147,7 @@ class TestTokenHashStorage:
         # Register a user
         resp = client.post(
             "/api/auth/register",
-            json={"email": "tokenhash@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "tokenhash@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
 
@@ -175,7 +176,7 @@ class TestTokenHashStorage:
         """Verify the DB never stores the raw token, only its hash."""
         resp = client.post(
             "/api/auth/register",
-            json={"email": "norawness@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "norawness@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
 
@@ -200,7 +201,7 @@ class TestTokenHashStorage:
         # Register a user
         resp = client.post(
             "/api/auth/register",
-            json={"email": "uniquehash@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "uniquehash@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         cookie1 = resp.headers["set-cookie"]

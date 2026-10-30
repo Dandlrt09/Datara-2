@@ -18,6 +18,7 @@ from server.api import store as api_store
 from server.api.rate_limit import auth_attempt_limiter
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -53,7 +54,7 @@ def store():
 
 def _register(client, email: str):
     return client.post(
-        "/api/auth/register", json={"email": email, "password": "password123"}
+        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
     )
 
 

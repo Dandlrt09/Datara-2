@@ -23,6 +23,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.routers import settings as settings_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations, upload_csv
 
 
@@ -73,7 +74,7 @@ def store():
 def auth_cookie(client):
     resp = client.post(
         "/api/auth/register",
-        json={"email": "whitelist@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "whitelist@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]

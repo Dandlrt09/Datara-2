@@ -27,6 +27,7 @@ from server.services.auth_service import (
     verify_password,
 )
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +44,16 @@ class RegisterRequest(BaseModel):
     asks for a name but lets it empty, and an empty name means the same as no
     name at all -- the display falls back to the email-derived one, exactly as
     for an account that never chose one.
+
+    ``terms_version`` is the terms of use version the person read before
+    ticking the box (terms-of-use D5). The route refuses anything that is not
+    the version in force, so what an account records is the text accepted.
     """
 
     email: str
     password: str
     name: str | None = None
+    terms_version: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -212,7 +218,8 @@ async def register(
     cookie, and returns the user payload.
 
     On duplicate email: returns 409 Conflict.
-    On invalid data: returns 422.
+    On invalid data: returns 422, including a missing or stale terms of use
+    acceptance.
     """
     if len(body.password) < 8:
         raise HTTPException(
@@ -229,6 +236,21 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Invalid email address",
+        )
+
+    # The terms check sits with the other body checks and before the attempt
+    # brake (S1): a request that is going to be refused must not spend one of
+    # the account's attempts, and must not pay for a password hash either. A
+    # stale version gets its own answer (D5): the person accepted a text that
+    # is no longer in force, which is not the same as not accepting at all.
+    if body.terms_version != TERMS_VERSION:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Terms of use version has changed"
+                if body.terms_version
+                else "Terms of use must be accepted"
+            ),
         )
 
     # Every register call counts, not just the failed ones: there is no
@@ -251,7 +273,9 @@ async def register(
 
     pw_hash = hash_password(body.password)
     try:
-        user = await store.create_user(email, pw_hash, name=name)
+        user = await store.create_user(
+            email, pw_hash, name=name, terms_version=body.terms_version
+        )
     except DuplicateError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

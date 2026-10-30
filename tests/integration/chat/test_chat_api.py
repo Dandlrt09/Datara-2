@@ -21,6 +21,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations, upload_csv
 
 
@@ -72,7 +73,7 @@ def auth_cookie(client):
     """Register a user and return the session cookie string."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": "chat@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "chat@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]
@@ -101,7 +102,7 @@ def other_cookie(client):
     """Register a second user and return the session cookie."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": "other@example.com", "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": "other@example.com", "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]
@@ -964,7 +965,7 @@ class TestChatBusEvents:
         # Dedicated user + dataset so the route's ownership/dataset guards pass.
         reg = client.post(
             "/api/auth/register",
-            json={"email": "abandon@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "abandon@example.com", "password": "password123"},
         )
         assert reg.status_code == 200
         cookie = reg.headers["set-cookie"]

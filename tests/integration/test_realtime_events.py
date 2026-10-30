@@ -30,6 +30,7 @@ from server.api.routers.sessions import (
 )
 from server.services.events import EventBus, SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -39,7 +40,7 @@ def _register_user(
     """Register a test user and return the session cookie header value."""
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "password123"},
+        json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"},
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]

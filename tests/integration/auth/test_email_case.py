@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -47,7 +48,7 @@ class TestRegisterNormalizes:
     def test_register_stores_and_returns_lowercased_email(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "  Alice@Example.COM  ", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "  Alice@Example.COM  ", "password": "password123"},
         )
         assert resp.status_code == 200
         assert resp.json()["email"] == "alice@example.com"
@@ -55,11 +56,11 @@ class TestRegisterNormalizes:
     def test_duplicate_email_different_case_is_a_conflict(self, client):
         client.post(
             "/api/auth/register",
-            json={"email": "CaseDup@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "CaseDup@example.com", "password": "password123"},
         )
         resp = client.post(
             "/api/auth/register",
-            json={"email": "casedup@example.com", "password": "password456"},
+            json={"terms_version": TERMS_VERSION, "email": "casedup@example.com", "password": "password456"},
         )
         assert resp.status_code == 409
 
@@ -68,7 +69,7 @@ class TestLoginIsCaseInsensitive:
     def test_login_with_different_case_succeeds(self, client):
         client.post(
             "/api/auth/register",
-            json={"email": "bob@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password123"},
         )
         resp = client.post(
             "/api/auth/login",
@@ -80,7 +81,7 @@ class TestLoginIsCaseInsensitive:
     def test_login_with_surrounding_whitespace_succeeds(self, client):
         client.post(
             "/api/auth/register",
-            json={"email": "dave@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "dave@example.com", "password": "password123"},
         )
         resp = client.post(
             "/api/auth/login",

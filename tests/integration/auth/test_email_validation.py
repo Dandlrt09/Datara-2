@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -55,13 +56,13 @@ class TestRegisterValidatesEmailShape:
     )
     def test_malformed_email_is_rejected(self, client, email):
         resp = client.post(
-            "/api/auth/register", json={"email": email, "password": "password123"}
+            "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
         )
         assert resp.status_code == 422
 
     def test_rejection_creates_no_account(self, client, store):
         client.post(
-            "/api/auth/register", json={"email": "notanemail", "password": "password123"}
+            "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "notanemail", "password": "password123"}
         )
 
         async def _count():
@@ -73,7 +74,7 @@ class TestRegisterValidatesEmailShape:
     def test_well_formed_email_still_registers(self, client):
         resp = client.post(
             "/api/auth/register",
-            json={"email": "user+tag@example.com", "password": "password123"},
+            json={"terms_version": TERMS_VERSION, "email": "user+tag@example.com", "password": "password123"},
         )
         assert resp.status_code == 200
         assert resp.json()["email"] == "user+tag@example.com"

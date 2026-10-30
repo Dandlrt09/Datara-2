@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -53,7 +54,7 @@ def client(app):
 
 class TestRegister:
     def test_register_success(self, client):
-        resp = client.post("/api/auth/register", json={"email": "alice@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "alice@example.com", "password": "password123"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "alice@example.com"
@@ -64,19 +65,19 @@ class TestRegister:
         assert set_cookie.startswith("session_id=")
 
     def test_register_duplicate_email(self, client):
-        client.post("/api/auth/register", json={"email": "bob@example.com", "password": "password123"})
-        resp = client.post("/api/auth/register", json={"email": "bob@example.com", "password": "password456"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password456"})
         assert resp.status_code == 409
         assert "already registered" in resp.json()["detail"].lower()
 
     def test_register_short_password(self, client):
-        resp = client.post("/api/auth/register", json={"email": "short@example.com", "password": "1234567"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "short@example.com", "password": "1234567"})
         assert resp.status_code == 422
 
 
 class TestLogin:
     def test_login_success(self, client):
-        client.post("/api/auth/register", json={"email": "carol@example.com", "password": "password123"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "carol@example.com", "password": "password123"})
         resp = client.post("/api/auth/login", json={"email": "carol@example.com", "password": "password123"})
         assert resp.status_code == 200
         data = resp.json()
@@ -86,7 +87,7 @@ class TestLogin:
         assert set_cookie is not None
 
     def test_login_wrong_password(self, client):
-        client.post("/api/auth/register", json={"email": "dave@example.com", "password": "password123"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "dave@example.com", "password": "password123"})
         resp = client.post("/api/auth/login", json={"email": "dave@example.com", "password": "wrongpass"})
         assert resp.status_code == 401
         assert "invalid email or password" in resp.json()["detail"].lower()
@@ -99,7 +100,7 @@ class TestLogin:
     def test_login_same_error_for_unknown_and_wrong(self, client):
         """Both bad email and bad password return identical 401 body."""
         resp_unknown = client.post("/api/auth/login", json={"email": "x@x.com", "password": "test12345"})
-        client.post("/api/auth/register", json={"email": "eve@example.com", "password": "password123"})
+        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "eve@example.com", "password": "password123"})
         resp_wrong = client.post("/api/auth/login", json={"email": "eve@example.com", "password": "wrongpass"})
         assert resp_unknown.status_code == 401
         assert resp_wrong.status_code == 401
@@ -108,7 +109,7 @@ class TestLogin:
 
 class TestMe:
     def test_me_authenticated(self, client):
-        resp = client.post("/api/auth/register", json={"email": "frank@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "frank@example.com", "password": "password123"})
         cookie = resp.headers["set-cookie"]
         me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
         assert me_resp.status_code == 200
@@ -120,7 +121,7 @@ class TestMe:
 
     def test_me_expired_cookie(self, client):
         """Register, then simulate expired session by sweeping."""
-        resp = client.post("/api/auth/register", json={"email": "grace@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "grace@example.com", "password": "password123"})
         cookie = resp.headers["set-cookie"]
 
         # Sweep all sessions (they're all valid, so this won't remove them)
@@ -136,7 +137,7 @@ class TestMe:
 
 class TestLogout:
     def test_logout_clears_session(self, client):
-        resp = client.post("/api/auth/register", json={"email": "heidi@example.com", "password": "password123"})
+        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "heidi@example.com", "password": "password123"})
         cookie = resp.headers["set-cookie"]
 
         # First verify me works
@@ -157,7 +158,7 @@ class TestLogout:
 def _register(client, email: str) -> str:
     """Register *email* and return its session cookie header (T1)."""
     resp = client.post(
-        "/api/auth/register", json={"email": email, "password": "password123"}
+        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
     )
     assert resp.status_code == 200
     return resp.headers["set-cookie"]
