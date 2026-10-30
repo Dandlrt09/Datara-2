@@ -17,7 +17,9 @@ from server.services.auth_service import (
     generate_raw_token,
     hash_password,
     hash_token,
+    is_valid_email,
     normalize_display_name,
+    normalize_email,
     verify_password,
 )
 from server.services.sqlite_store import SqliteStore
@@ -148,9 +150,20 @@ async def register(
             detail="Password must be at least 8 characters",
         )
 
+    # The email becomes the login identity, so its shape is checked before the
+    # account exists (S5): an address nobody could log into is refused here, not
+    # discovered later. The browser's ``type="email"`` is convenience, not a
+    # defense.
+    email = normalize_email(body.email)
+    if not is_valid_email(email):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid email address",
+        )
+
     pw_hash = hash_password(body.password)
     try:
-        user = await store.create_user(body.email, pw_hash)
+        user = await store.create_user(email, pw_hash)
     except DuplicateError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

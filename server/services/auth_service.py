@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -20,6 +21,17 @@ import bcrypt
 
 # Longest accepted display name, measured after normalization (T1/D4).
 MAX_DISPLAY_NAME_LENGTH = 50
+
+# Email shape limits (S5). RFC 5322 caps a full address at 254 chars and a
+# local part at 64; we keep the same ceilings rather than inventing our own.
+MAX_EMAIL_LENGTH = 254
+MAX_EMAIL_LOCAL_LENGTH = 64
+
+# Conservative shape rule for a login identity (S5): one "@", a non-empty local
+# part and a dotted domain, no whitespace. Deliberately not RFC 5322 -- the goal
+# is to reject obvious garbage ("hola", "a@b", "a b@c.com") without becoming a
+# false authority on which exotic-but-legal addresses must be refused.
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def normalize_display_name(raw: str) -> str | None:
@@ -48,6 +60,21 @@ def normalize_email(raw: str) -> str:
     bypass.
     """
     return raw.strip().lower()
+
+
+def is_valid_email(raw: str) -> bool:
+    """Return True when *raw* has the shape of an email address (S5).
+
+    The caller passes the normalized value (``normalize_email``), so this only
+    judges shape: length ceilings, a non-empty local part, and a dotted domain
+    with no whitespace anywhere.
+    """
+    if len(raw) > MAX_EMAIL_LENGTH:
+        return False
+    local, separator, _domain = raw.partition("@")
+    if not separator or len(local) > MAX_EMAIL_LOCAL_LENGTH:
+        return False
+    return _EMAIL_PATTERN.match(raw) is not None
 
 
 def hash_password(password: str) -> str:
