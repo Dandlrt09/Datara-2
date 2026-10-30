@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
+from server.api.rate_limit import auth_attempt_limiter
 from server.services.auth_service import (
     MAX_DISPLAY_NAME_LENGTH,
     build_expire_cookie_header,
@@ -126,6 +127,39 @@ def _current_token_hash(request: Request) -> str:
     return hash_token(request.cookies["session_id"])
 
 
+def _client_ip(request: Request) -> str:
+    """The caller's source address, used only to key the limiter (S2).
+
+    It is never written anywhere: it lives in the in-process counter and
+    disappears with the process, keeping the app's promise of storing no IP.
+    """
+    return request.client.host if request.client else "unknown"
+
+
+def _attempt_keys(scope: str, request: Request, email: str) -> list[str]:
+    """The two keys one attempt is counted against (S2).
+
+    The IP brakes an attacker from a single origin; the email brakes an attack
+    aimed at one account. Both must be free for the attempt to go through.
+    """
+    return [
+        f"{scope}:ip:{_client_ip(request)}",
+        f"{scope}:email:{normalize_email(email)}",
+    ]
+
+
+def _enforce_attempt_limit(keys: list[str]) -> None:
+    """Refuse with 429 while any key is over its limit (S3)."""
+    for key in keys:
+        retry_after = auth_attempt_limiter.retry_after(key)
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many attempts, try again later",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 
@@ -161,6 +195,13 @@ async def register(
             detail="Invalid email address",
         )
 
+    # Every register call counts, not just the failed ones: there is no
+    # credential to fail here, and account creation is the abuse (S1).
+    keys = _attempt_keys("register", request, email)
+    _enforce_attempt_limit(keys)
+    for key in keys:
+        auth_attempt_limiter.record(key)
+
     pw_hash = hash_password(body.password)
     try:
         user = await store.create_user(email, pw_hash)
@@ -195,13 +236,24 @@ async def login(
 
     On failure: returns consistent 401 (same response for unknown email
     and wrong password).
+    On too many failed attempts: returns 429.
     """
+    keys = _attempt_keys("login", request, body.email)
+    _enforce_attempt_limit(keys)
+
     user = await store.get_user_by_email(body.email)
     if user is None or not verify_password(body.password, user["password_hash"]):
+        for key in keys:
+            auth_attempt_limiter.record(key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+    # A real sign-in clears the brake (S3): the person proved they own the
+    # account, so the failures before it were mistyped passwords, not an attack.
+    for key in keys:
+        auth_attempt_limiter.clear(key)
 
     raw_token, cookie = await _mint_session(
         store, user["id"], request.headers.get("user-agent")
