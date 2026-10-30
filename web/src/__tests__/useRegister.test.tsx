@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api } from "../lib/api";
 import { useRegister } from "../queries/useAuth";
+import { TERMS_VERSION } from "../lib/terms";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -44,12 +45,14 @@ describe("useRegister", () => {
       email: "dan@example.com",
       password: "password123",
       name: "Daniel",
+      terms_version: TERMS_VERSION,
     });
 
     expect(api.post).toHaveBeenCalledWith("/api/auth/register", {
       email: "dan@example.com",
       password: "password123",
       name: "Daniel",
+      terms_version: TERMS_VERSION,
     });
   });
 
@@ -64,6 +67,7 @@ describe("useRegister", () => {
     await result.current.mutateAsync({
       email: "dan@example.com",
       password: "password123",
+      terms_version: TERMS_VERSION,
     });
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["sessions"] });

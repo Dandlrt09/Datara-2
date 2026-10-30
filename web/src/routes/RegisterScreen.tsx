@@ -3,12 +3,14 @@ import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
 import { useRegister } from "../queries/useAuth";
 import { ApiError } from "../lib/api";
+import { TERMS_VERSION } from "../lib/terms";
 
 interface RegisterForm {
   name: string;
   email: string;
   password: string;
   confirmPassword: string;
+  terms: boolean;
 }
 
 type Strength = "weak" | "medium" | "strong";
@@ -66,8 +68,17 @@ function registerErrorMessage(error: unknown): string {
   switch ((error as ApiError).status) {
     case 409:
       return "Ese email ya tiene una cuenta";
-    case 422:
-      return "Revisá los datos ingresados";
+    case 422: {
+      // The server answers 422 both for malformed data and for a terms text
+      // that changed while the tab was open (terms-of-use D5). Only the
+      // second has an action the person can take, and reloading is it: the
+      // literal is pinned by the server's own test, so a rename on that side
+      // fails there instead of silently degrading this message.
+      const body = (error as ApiError).body as { detail?: string } | undefined;
+      return body?.detail === "Terms of use version has changed"
+        ? "Los términos cambiaron, recargá la página"
+        : "Revisá los datos ingresados";
+    }
     case 429:
       return "Demasiados intentos, probá más tarde";
     default:
@@ -102,6 +113,9 @@ export default function RegisterScreen() {
       await registerMut.mutateAsync({
         email: data.email,
         password: data.password,
+        // The version the person read, not a bare boolean: the account then
+        // records which text was accepted (D5).
+        terms_version: TERMS_VERSION,
         // An empty name is not sent at all: the server reads a missing name as
         // "use the email-derived one" (S2), so there is nothing to spell twice.
         ...(name ? { name } : {}),
@@ -237,6 +251,26 @@ export default function RegisterScreen() {
           >
             {showPasswords ? "Ocultar contraseñas" : "Mostrar contraseñas"}
           </button>
+        </div>
+
+        <div style={fieldStyle}>
+          <label
+            htmlFor="register-terms"
+            style={{ ...labelStyle, display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}
+          >
+            <input
+              {...register("terms", {
+                required: "Tenés que aceptar los términos para crear la cuenta",
+              })}
+              id="register-terms"
+              type="checkbox"
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              He leído y acepto los <Link to="/terminos">términos de uso</Link>.
+            </span>
+          </label>
+          {errors.terms && <p style={errorStyle}>{errors.terms.message}</p>}
         </div>
 
         {registerMut.error && (

@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 const LoginScreen = lazy(() => import("./routes/LoginScreen"));
 const RegisterScreen = lazy(() => import("./routes/RegisterScreen"));
 const AppShell = lazy(() => import("./routes/AppShell"));
+const TermsScreen = lazy(() => import("./routes/TermsScreen"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -15,6 +16,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/register" element={<RegisterScreen />} />
+        <Route path="/terminos" element={<TermsScreen />} />
         <Route path="/app/*" element={<AppShell />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

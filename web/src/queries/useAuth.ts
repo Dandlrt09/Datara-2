@@ -50,6 +50,8 @@ export function useLogin() {
  *
  * `name` is optional (register-experience S2): the signup form lets it empty and
  * omits the key, and the server then falls back to the email-derived name.
+ * `terms_version` is required (terms-of-use D5): it is the version the person
+ * read, and the server records it as the text that was accepted.
  *
  * The chat-session list is invalidated exactly like `useLogin` does (D5): a
  * brand-new account starts with an empty list, but a browser that still holds a
@@ -58,8 +60,12 @@ export function useLogin() {
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { email: string; password: string; name?: string }) =>
-      api.post<User>("/api/auth/register", data),
+    mutationFn: (data: {
+      email: string;
+      password: string;
+      name?: string;
+      terms_version: string;
+    }) => api.post<User>("/api/auth/register", data),
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
       qc.invalidateQueries({ queryKey: ["sessions"] });

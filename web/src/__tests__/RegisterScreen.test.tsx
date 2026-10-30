@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import RegisterScreen from "../routes/RegisterScreen";
+import { TERMS_VERSION } from "../lib/terms";
 
 const { useRegisterMock } = vi.hoisted(() => ({
   useRegisterMock: vi.fn(),
@@ -17,16 +18,21 @@ function fillForm({
   email = "dan@example.com",
   password = "password123",
   confirm = password,
+  terms = true,
 }: Partial<{
   name: string;
   email: string;
   password: string;
   confirm: string;
+  terms: boolean;
 }> = {}) {
   if (name) fireEvent.change(screen.getByLabelText("Nombre (opcional)"), { target: { value: name } });
   fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
   fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: password } });
   fireEvent.change(screen.getByLabelText("Repetir contraseña"), { target: { value: confirm } });
+  // Accepting the terms is part of filling the form, not a separate step:
+  // the box is mandatory (S1), so only the tests about it opt out.
+  if (terms) fireEvent.click(screen.getByLabelText(/acepto los términos/i));
 }
 
 function submit() {
@@ -131,6 +137,7 @@ describe("RegisterScreen", () => {
         email: "dan@example.com",
         password: "password123",
         name: "Daniel",
+        terms_version: TERMS_VERSION,
       }),
     );
   });
@@ -147,6 +154,7 @@ describe("RegisterScreen", () => {
       expect(mutateAsync).toHaveBeenCalledWith({
         email: "dan@example.com",
         password: "password123",
+        terms_version: TERMS_VERSION,
       }),
     );
   });
@@ -198,6 +206,17 @@ describe("RegisterScreen", () => {
     expect(screen.getByText("Revisá los datos ingresados")).toBeTruthy();
   });
 
+  it("tells the person to reload when the terms changed under the tab (D5)", () => {
+    useRegisterMock.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      error: { status: 422, body: { detail: "Terms of use version has changed" } },
+    });
+    renderWithProviders(<RegisterScreen />);
+
+    expect(screen.getByText("Los términos cambiaron, recargá la página")).toBeTruthy();
+  });
+
   it("shows a Spanish generic message on an unexpected failure", () => {
     useRegisterMock.mockReturnValue({
       mutateAsync: vi.fn(),
@@ -209,5 +228,46 @@ describe("RegisterScreen", () => {
     expect(
       screen.getByText("No pudimos crear la cuenta. Vuelve a intentarlo."),
     ).toBeTruthy();
+  });
+
+  it("blocks the submit until the terms are accepted (S1)", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    useRegisterMock.mockReturnValue({ mutateAsync, isPending: false, error: null });
+    renderWithProviders(<RegisterScreen />);
+
+    fillForm({ terms: false });
+    submit();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Tenés que aceptar los términos para crear la cuenta"),
+      ).toBeTruthy(),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("sends the version in force, so the server records what was accepted (D5)", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    useRegisterMock.mockReturnValue({ mutateAsync, isPending: false, error: null });
+    renderWithProviders(<RegisterScreen />);
+
+    fillForm();
+    submit();
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        email: "dan@example.com",
+        password: "password123",
+        terms_version: TERMS_VERSION,
+      }),
+    );
+  });
+
+  it("links the checkbox to the terms text", () => {
+    renderWithProviders(<RegisterScreen />);
+
+    expect(
+      screen.getByRole("link", { name: "términos de uso" }).getAttribute("href"),
+    ).toBe("/terminos");
   });
 });
