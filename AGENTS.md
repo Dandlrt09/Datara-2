@@ -31,7 +31,7 @@ work, not an extra: an unexplained change counts as an unfinished change.
 
 ```bash
 # Backend tests — NEVER bare `pytest`: system python lacks the deps
-.venv/bin/python -m pytest            # full suite ~10 min
+.venv/bin/python -m pytest            # full suite: minutes, not seconds (~10-15 min on WSL)
 .venv/bin/python -m pytest tests/integration/chat/test_hardening.py -q   # focused first
 
 # Frontend
@@ -65,7 +65,9 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), message in English, **no** AI attribution or `Co-Authored-By`.
 - Identifiers/comments in English; user-facing chat copy in natural professional Spanish; docs/specs in English.
-- Full test suite must stay green before pushing: backend ~891, web ~615.
+- Full test suite must stay green before pushing. The counts are deliberately not
+  written here -- they drift with every change: `.venv/bin/python -m pytest -q` and
+  `cd web && npm test` print the real numbers at the end of the run.
 
 ## Architecture rules (earned, do not break)
 
