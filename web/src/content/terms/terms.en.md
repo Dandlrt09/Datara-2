@@ -114,4 +114,4 @@ Electronic acceptance of these Terms is governed by Law 527 of 1999.
 
 ## 17. Contact
 
-For questions about these Terms: [CONTACT EMAIL].
+For questions about these Terms: danieldelosriost@gmail.com.

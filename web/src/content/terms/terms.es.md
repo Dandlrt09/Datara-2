@@ -114,4 +114,4 @@ La aceptación electrónica de estos Términos se rige por la Ley 527 de 1999.
 
 ## 17. Contacto
 
-Para consultas sobre estos Términos: [CORREO DE CONTACTO].
+Para consultas sobre estos Términos: danieldelosriost@gmail.com.
