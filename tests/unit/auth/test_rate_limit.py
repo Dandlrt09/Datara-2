@@ -61,3 +61,46 @@ class TestAttemptLimiter:
 
         assert limiter.retry_after("ip:1") is not None
         assert limiter.retry_after("ip:2") is None
+
+
+class TestTrackedKeyCap:
+    """The map is bounded so distinct keys cannot grow memory forever."""
+
+    def test_map_stays_at_the_cap_when_new_keys_arrive(self):
+        _now, clock = _clock_starting_at()
+        limiter = AttemptLimiter(clock=clock, max_tracked_keys=2)
+
+        limiter.record("k1")
+        limiter.record("k2")
+        limiter.record("k3")
+
+        assert len(limiter._events) == 2
+
+    def test_expired_keys_are_swept_instead_of_evicting_live_ones(self):
+        now, clock = _clock_starting_at()
+        limiter = AttemptLimiter(clock=clock, max_tracked_keys=2)
+
+        limiter.record("old")
+        now[0] = 15 * 60 + 1  # "old" left the window
+        limiter.record("live1")
+        limiter.record("live2")
+
+        assert "old" not in limiter._events
+        assert "live1" in limiter._events
+        assert "live2" in limiter._events
+        assert len(limiter._events) == 2
+
+    def test_oldest_live_key_is_evicted_when_all_are_live(self):
+        now, clock = _clock_starting_at()
+        limiter = AttemptLimiter(clock=clock, max_tracked_keys=2)
+
+        limiter.record("first")
+        now[0] = 1
+        limiter.record("second")
+        now[0] = 2
+        limiter.record("third")
+
+        assert "first" not in limiter._events
+        assert "second" in limiter._events
+        assert "third" in limiter._events
+        assert len(limiter._events) == 2

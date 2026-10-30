@@ -1,12 +1,14 @@
 """Attempt limiting on register and login (S1-S3).
 
 Five attempts inside fifteen minutes per IP and per email; the sixth answers 429
-with a ``Retry-After`` header. A successful login clears the counter.
+with a ``Retry-After`` header. A successful login clears the account's counter
+(the email key), never the shared IP key (F4).
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from fastapi import FastAPI
@@ -100,14 +102,58 @@ class TestLoginRateLimit:
             auth_attempt_limiter.record("login:ip:testclient")
         assert _login(client, "fresh@example.com").status_code == 429
 
-    def test_success_then_five_more_failures_before_lockout(self, client):
+    def test_ip_failures_survive_a_successful_login(self, client):
+        """F4: success clears the email key, never the shared IP key."""
         _register(client, "route-clear@example.com")
         for _ in range(4):
             assert _login(client, "route-clear@example.com").status_code == 401
+
+        # The success resets only the account's key, so the 4 IP failures stay.
         assert _login(client, "route-clear@example.com", "password123").status_code == 200
-        for _ in range(5):
-            assert _login(client, "route-clear@example.com").status_code == 401
+
+        # This mistake is the 5th from this IP: still a 401, not yet a 429.
+        assert _login(client, "route-clear@example.com").status_code == 401
+        # And now the IP brake is tripped.
         assert _login(client, "route-clear@example.com").status_code == 429
+
+    def test_success_clears_the_account_email_key(self, client):
+        """F4: the authenticated account's own key is cleared on success.
+
+        The account key is pre-loaded to 4 (not 5) because
+        ``_enforce_attempt_limit`` refuses before the credentials are checked;
+        at 5 the success could never run. Only the account key is touched, so
+        the shared IP key stays at zero.
+        """
+        _register(client, "clear-email-key@example.com")
+        for _ in range(4):
+            auth_attempt_limiter.record("login:email:clear-email-key@example.com")
+
+        assert (
+            _login(client, "clear-email-key@example.com", "password123").status_code
+            == 200
+        )
+
+        # The success cleared the account key, so these are fresh failures. If
+        # it had not, the second one would hit the account limit and answer 429.
+        assert _login(client, "clear-email-key@example.com").status_code == 401
+        assert _login(client, "clear-email-key@example.com").status_code == 401
+
+    def test_rate_limited_login_logs_scope_without_identifiers(self, client, caplog):
+        """F2: the 429 warning names the scope and stores no email or IP."""
+        email = "log-leak-check@example.com"
+        _register(client, email)
+        for _ in range(5):
+            _login(client, email)
+
+        with caplog.at_level(logging.WARNING):
+            resp = _login(client, email)
+
+        assert resp.status_code == 429
+        messages = "\n".join(record.getMessage() for record in caplog.records)
+        assert "login" in messages
+        assert resp.headers["Retry-After"] in messages
+        assert email not in messages
+        assert "testclient" not in messages
 
 
 class TestRegisterRateLimit:

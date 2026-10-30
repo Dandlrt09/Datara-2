@@ -6,6 +6,7 @@ from server.services.auth_service import (
     generate_raw_token,
     hash_password,
     hash_token,
+    verify_credentials,
     verify_password,
 )
 
@@ -36,6 +37,21 @@ class TestPasswordHashing:
         assert verify_password("real-password", h) is True
         # Long string should not crash (timing-safe)
         assert verify_password("a" * 1000, h) is False
+
+
+class TestVerifyCredentials:
+    """F3: a missing account still spends one bcrypt comparison."""
+
+    def test_missing_hash_is_false_and_does_not_raise(self):
+        assert verify_credentials("whatever-password", None) is False
+
+    def test_correct_password_against_a_real_hash(self):
+        h = hash_password("real-password")
+        assert verify_credentials("real-password", h) is True
+
+    def test_wrong_password_against_a_real_hash(self):
+        h = hash_password("real-password")
+        assert verify_credentials("wrong-password", h) is False
 
 
 class TestTokenGeneration:

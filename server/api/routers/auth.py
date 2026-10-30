@@ -5,6 +5,8 @@ All endpoints are unauthenticated except ``/logout`` and ``/me``.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
@@ -21,9 +23,12 @@ from server.services.auth_service import (
     is_valid_email,
     normalize_display_name,
     normalize_email,
+    verify_credentials,
     verify_password,
 )
 from server.services.sqlite_store import SqliteStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -136,6 +141,16 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _email_attempt_key(scope: str, email: str) -> str:
+    """The account-scoped key for one email (F4).
+
+    Built here once so the login route clears exactly the key that
+    ``_attempt_keys`` recorded; a second format string would be a silent
+    mismatch waiting to happen.
+    """
+    return f"{scope}:email:{normalize_email(email)}"
+
+
 def _attempt_keys(scope: str, request: Request, email: str) -> list[str]:
     """The two keys one attempt is counted against (S2).
 
@@ -144,8 +159,13 @@ def _attempt_keys(scope: str, request: Request, email: str) -> list[str]:
     """
     return [
         f"{scope}:ip:{_client_ip(request)}",
-        f"{scope}:email:{normalize_email(email)}",
+        _email_attempt_key(scope, email),
     ]
+
+
+def _attempt_scope(key: str) -> str:
+    """The scope of a limiter key (``login`` / ``register``), for logs (F2)."""
+    return key.split(":", 1)[0]
 
 
 def _enforce_attempt_limit(keys: list[str]) -> None:
@@ -153,6 +173,13 @@ def _enforce_attempt_limit(keys: list[str]) -> None:
     for key in keys:
         retry_after = auth_attempt_limiter.retry_after(key)
         if retry_after is not None:
+            # A log is storage, so never write the email or the IP (F2): the
+            # scope and the wait are all an operator needs.
+            logger.warning(
+                "Auth attempt limit refused: scope=%s retry_after=%s",
+                _attempt_scope(key),
+                retry_after,
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many attempts, try again later",
@@ -242,7 +269,9 @@ async def login(
     _enforce_attempt_limit(keys)
 
     user = await store.get_user_by_email(body.email)
-    if user is None or not verify_password(body.password, user["password_hash"]):
+    if not verify_credentials(
+        body.password, user["password_hash"] if user else None
+    ):
         for key in keys:
             auth_attempt_limiter.record(key)
         raise HTTPException(
@@ -250,10 +279,11 @@ async def login(
             detail="Invalid email or password",
         )
 
-    # A real sign-in clears the brake (S3): the person proved they own the
-    # account, so the failures before it were mistyped passwords, not an attack.
-    for key in keys:
-        auth_attempt_limiter.clear(key)
+    # A real sign-in clears the brake on the account, not on the shared origin
+    # (F4/S3): the person proved they own this account, so its failures were
+    # mistyped passwords -- but one valid account must not let an attacker reset
+    # the IP brake at will. The IP key survives a successful login.
+    auth_attempt_limiter.clear(_email_attempt_key("login", body.email))
 
     raw_token, cookie = await _mint_session(
         store, user["id"], request.headers.get("user-agent")

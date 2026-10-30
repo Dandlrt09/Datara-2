@@ -82,6 +82,13 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+# Throwaway hash used when the account does not exist (F3). Comparing against it
+# spends the same bcrypt work as a real check, so login latency no longer leaks
+# whether an email is registered. The plaintext is irrelevant: nothing is ever
+# verified against it except to burn the comparison.
+_DUMMY_PASSWORD_HASH = hash_password("datara-untracked-dummy")
+
+
 def verify_password(password: str, password_hash: str) -> bool:
     """Constant-time comparison of *password* against *password_hash*.
 
@@ -95,6 +102,20 @@ def verify_password(password: str, password_hash: str) -> bool:
         )
     except (ValueError, TypeError):
         return False
+
+
+def verify_credentials(password: str, password_hash: str | None) -> bool:
+    """Verify a login attempt, spending one bcrypt comparison either way (F3).
+
+    When *password_hash* is ``None`` -- the account does not exist -- the
+    comparison runs against ``_DUMMY_PASSWORD_HASH`` and the result is always
+    False, so a caller cannot distinguish an unknown email from a wrong
+    password by response time.
+    """
+    if password_hash is None:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(password, password_hash)
 
 
 def generate_raw_token() -> str:
