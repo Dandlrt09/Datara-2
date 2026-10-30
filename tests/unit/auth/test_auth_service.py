@@ -1,5 +1,6 @@
 """Tests for auth service (hashing, token generation, cookie building)."""
 
+import server.services.auth_service as auth_service
 from server.services.auth_service import (
     build_expire_cookie_header,
     build_set_cookie_header,
@@ -52,6 +53,18 @@ class TestVerifyCredentials:
     def test_wrong_password_against_a_real_hash(self):
         h = hash_password("real-password")
         assert verify_credentials("wrong-password", h) is False
+
+    def test_missing_hash_still_spends_one_bcrypt_comparison(self, monkeypatch):
+        """F3: the dummy path must burn the comparison, not short-circuit."""
+        calls = []
+        real = auth_service.verify_password
+        monkeypatch.setattr(
+            auth_service,
+            "verify_password",
+            lambda p, h: (calls.append(h), real(p, h))[1],
+        )
+        assert auth_service.verify_credentials("pw", None) is False
+        assert calls == [auth_service._DUMMY_PASSWORD_HASH]
 
 
 class TestTokenGeneration:
