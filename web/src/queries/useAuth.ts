@@ -45,13 +45,24 @@ export function useLogin() {
   });
 }
 
+/**
+ * Create the account and sign in.
+ *
+ * `name` is optional (register-experience S2): the signup form lets it empty and
+ * omits the key, and the server then falls back to the email-derived name.
+ *
+ * The chat-session list is invalidated exactly like `useLogin` does (D5): a
+ * brand-new account starts with an empty list, but a browser that still holds a
+ * previous account's cache would otherwise list sessions that are not its own.
+ */
 export function useRegister() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { email: string; password: string }) =>
+    mutationFn: (data: { email: string; password: string; name?: string }) =>
       api.post<User>("/api/auth/register", data),
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 }
