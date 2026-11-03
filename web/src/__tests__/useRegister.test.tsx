@@ -56,9 +56,10 @@ describe("useRegister", () => {
     });
   });
 
-  it("drops the stale chat-session list, like login does (D5)", async () => {
+  it("does not open a session: no me-cache write, no session invalidation (D4)", async () => {
     (api.post as Mock).mockResolvedValue(USER);
     const client = makeClient();
+    const setData = vi.spyOn(client, "setQueryData");
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useRegister(), {
       wrapper: wrapperFor(client),
@@ -70,6 +71,9 @@ describe("useRegister", () => {
       terms_version: TERMS_VERSION,
     });
 
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["sessions"] });
+    // Register no longer authenticates (D4): there is no session to cache and
+    // nothing to invalidate, so the mutation stays side-effect free.
+    expect(setData).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

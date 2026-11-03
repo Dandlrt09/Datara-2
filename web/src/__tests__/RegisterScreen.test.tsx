@@ -4,13 +4,19 @@ import { renderWithProviders } from "./test-utils";
 import RegisterScreen from "../routes/RegisterScreen";
 import { TERMS_VERSION } from "../lib/terms";
 
-const { useRegisterMock } = vi.hoisted(() => ({
+const { useRegisterMock, navigateMock } = vi.hoisted(() => ({
   useRegisterMock: vi.fn(),
+  navigateMock: vi.fn(),
 }));
 
 vi.mock("../queries/useAuth", () => ({
   useRegister: () => useRegisterMock(),
 }));
+
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return { ...actual, useNavigate: () => navigateMock };
+});
 
 /** Fill the form the way a person would; each call starts from a fresh render. */
 function fillForm({
@@ -269,5 +275,20 @@ describe("RegisterScreen", () => {
     expect(
       screen.getByRole("link", { name: "términos de uso" }).getAttribute("href"),
     ).toBe("/terminos");
+  });
+
+  it("sends the person to /check-email instead of logging them in (D4)", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    useRegisterMock.mockReturnValue({ mutateAsync, isPending: false, error: null });
+    renderWithProviders(<RegisterScreen />);
+
+    fillForm({ email: "dan@example.com" });
+    submit();
+
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/check-email?email=dan%40example.com",
+      ),
+    );
   });
 });

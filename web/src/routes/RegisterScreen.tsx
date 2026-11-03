@@ -120,9 +120,9 @@ export default function RegisterScreen() {
         // "use the email-derived one" (S2), so there is nothing to spell twice.
         ...(name ? { name } : {}),
       });
-      // /app decides where to land (guided setup when nothing is configured,
-      // chat otherwise): one decision point, not one per entry screen.
-      navigate("/app");
+      // Register no longer opens a session (D4): the person goes to the
+      // "check your email" screen, which carries the address for a resend.
+      navigate(`/check-email?email=${encodeURIComponent(data.email)}`);
     } catch (err) {
       // handled by UI state
     }

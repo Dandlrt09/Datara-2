@@ -1,6 +1,6 @@
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useLogin } from "../queries/useAuth";
+import { useLogin, useResendVerification } from "../queries/useAuth";
 import { ApiError } from "../lib/api";
 
 interface LoginForm {
@@ -18,6 +18,10 @@ function loginErrorMessage(error: unknown): string {
   switch ((error as ApiError).status) {
     case 401:
       return "Invalid credentials";
+    case 403:
+      // Correct password, unverified address (D5): the gate the person can
+      // open from here by resending the verification mail.
+      return "Your email is not verified yet";
     case 429:
       return "Demasiados intentos, probá más tarde";
     default:
@@ -29,7 +33,18 @@ export default function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const login = useLogin();
-  const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>();
+  const resend = useResendVerification();
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm<LoginForm>();
+
+  // The resend needs the address the person just typed, so watch the field
+  // instead of asking for it twice.
+  const email = watch("email");
+  const emailNotVerified = (login.error as ApiError | null)?.status === 403;
 
   // A deletion request lands here with a one-shot notice (S5); the exact purge
   // date is shown on the interstitial after signing in (S7).
@@ -87,10 +102,30 @@ export default function LoginScreen() {
         {login.error && (
           <p style={{ color: "red" }}>{loginErrorMessage(login.error)}</p>
         )}
+        {emailNotVerified && (
+          <div style={{ marginBottom: 16 }}>
+            <button
+              type="button"
+              onClick={() => resend.mutate({ email: email ?? "" })}
+              disabled={resend.isPending}
+              style={{ padding: 8 }}
+            >
+              Reenviar correo
+            </button>
+            {resend.isSuccess && (
+              <p role="status" style={{ color: "#2e7d32", marginTop: 8 }}>
+                Verification email sent
+              </p>
+            )}
+          </div>
+        )}
         <button type="submit" disabled={login.isPending} style={{ width: "100%", padding: 10 }}>
           {login.isPending ? "Logging in..." : "Log in"}
         </button>
       </form>
+      <p style={{ marginTop: 16 }}>
+        <Link to="/forgot-password">Forgot your password?</Link>
+      </p>
       <p style={{ marginTop: 16 }}>
         Don't have an account? <Link to="/register">Register</Link>
       </p>

@@ -1,17 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithProviders } from "./test-utils";
 import LoginScreen from "../routes/LoginScreen";
 import { DELETION_SCHEDULED_NOTICE } from "../components/DeleteAccountDialog";
 
-const { useLoginMock } = vi.hoisted(() => ({
+const { useLoginMock, useResendVerificationMock } = vi.hoisted(() => ({
   useLoginMock: vi.fn(),
+  useResendVerificationMock: vi.fn(),
 }));
 
 vi.mock("../queries/useAuth", () => ({
   useLogin: () => useLoginMock(),
+  useResendVerification: () => useResendVerificationMock(),
 }));
 
 describe("LoginScreen", () => {
@@ -21,6 +23,11 @@ describe("LoginScreen", () => {
       mutateAsync: vi.fn(),
       isPending: false,
       error: null,
+    });
+    useResendVerificationMock.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isSuccess: false,
     });
   });
 
@@ -83,5 +90,47 @@ describe("LoginScreen", () => {
     });
     renderWithProviders(<LoginScreen />);
     expect(screen.getByText("Demasiados intentos, probá más tarde")).toBeTruthy();
+  });
+
+  it("links to the password recovery screen", () => {
+    renderWithProviders(<LoginScreen />);
+
+    expect(
+      screen.getByRole("link", { name: /forgot your password/i }).getAttribute("href"),
+    ).toBe("/forgot-password");
+  });
+
+  it("offers a resend action on 403 Email not verified (D5)", () => {
+    const resend = vi.fn();
+    useLoginMock.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      error: { status: 403, body: { detail: "Email not verified" } },
+    });
+    useResendVerificationMock.mockReturnValue({
+      mutate: resend,
+      isPending: false,
+      isSuccess: false,
+    });
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.getByText(/email is not verified/i)).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("Email"), {
+      target: { value: "dan@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reenviar correo" }));
+
+    expect(resend).toHaveBeenCalledWith({ email: "dan@example.com" });
+  });
+
+  it("does not offer the resend action on a plain 401", () => {
+    useLoginMock.mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+      error: { status: 401, message: "Invalid credentials" },
+    });
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.queryByRole("button", { name: "Reenviar correo" })).toBeNull();
   });
 });
