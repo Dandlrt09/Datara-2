@@ -19,6 +19,7 @@ from server.api.rate_limit import auth_attempt_limiter
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -62,6 +63,11 @@ def _login(client, email: str, password: str = "wrongpass"):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+def _register_verified(client, email: str):
+    """Create and prove an account so a later login can actually succeed (T3)."""
+    return register_verified(client, email)
+
+
 class TestLoginRateLimit:
     def test_sixth_failed_login_is_rate_limited(self, client):
         _register(client, "limit-login@example.com")
@@ -82,7 +88,7 @@ class TestLoginRateLimit:
         assert int(resp.headers["Retry-After"]) > 0
 
     def test_successful_login_clears_the_counter(self, client):
-        _register(client, "limit-clear@example.com")
+        _register_verified(client, "limit-clear@example.com")
         for _ in range(4):
             _login(client, "limit-clear@example.com")
 
@@ -105,7 +111,7 @@ class TestLoginRateLimit:
 
     def test_ip_failures_survive_a_successful_login(self, client):
         """F4: success clears the email key, never the shared IP key."""
-        _register(client, "route-clear@example.com")
+        _register_verified(client, "route-clear@example.com")
         for _ in range(4):
             assert _login(client, "route-clear@example.com").status_code == 401
 
@@ -125,7 +131,7 @@ class TestLoginRateLimit:
         at 5 the success could never run. Only the account key is touched, so
         the shared IP key stays at zero.
         """
-        _register(client, "clear-email-key@example.com")
+        _register_verified(client, "clear-email-key@example.com")
         for _ in range(4):
             auth_attempt_limiter.record("login:email:clear-email-key@example.com")
 

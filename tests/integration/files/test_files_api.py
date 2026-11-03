@@ -21,8 +21,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
 _XLSX_MIME = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -120,13 +119,8 @@ def _seed_files(store, user_id, session_id, count, prefix="seed"):
 
 @pytest.fixture
 def auth_client(client):
-    """Register a user and return a client with valid session cookie."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "test@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    cookie = resp.headers["set-cookie"]
+    """Register a verified user and return a client with a valid session cookie."""
+    cookie = register_verified(client, "test@example.com").headers["set-cookie"]
     client.headers["Cookie"] = cookie
     return client
 
@@ -301,11 +295,9 @@ class TestSessionFilesPagination:
     ):
         # User B owns a different session; user A must not list its files,
         # cursor or not.
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "b_files@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "b_files@example.com").headers[
+            "set-cookie"
+        ]
         b_session = client.post(
             "/api/sessions",
             json={"title": "B session"},
@@ -393,11 +385,7 @@ class TestFileProfile:
         file_id = upload_resp.json()["id"]
 
         # Register user B
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "b@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "b@example.com").headers["set-cookie"]
 
         # User B tries to get A's profile → 404 (ownership enforced via JOIN)
         resp = client.get(
@@ -439,11 +427,7 @@ class TestFileDelete:
         )
         file_id = upload_resp.json()["id"]
 
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "bdel@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "bdel@example.com").headers["set-cookie"]
 
         resp = client.delete(
             f"/api/files/{file_id}",
@@ -826,11 +810,9 @@ class TestFileSheets:
         data = self._upload_two_sheet(
             auth_client, session_id, filename="cross_sheets.xlsx"
         )
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "sheets_b@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "sheets_b@example.com").headers[
+            "set-cookie"
+        ]
 
         resp = client.get(
             f"/api/files/{data['id']}/sheets", headers={"Cookie": cookie_b}
@@ -926,11 +908,9 @@ class TestFileSheets:
         data = self._upload_two_sheet(
             auth_client, session_id, filename="cross_switch.xlsx"
         )
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "switch_b@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "switch_b@example.com").headers[
+            "set-cookie"
+        ]
 
         resp = client.post(
             f"/api/files/{data['id']}/sheet",

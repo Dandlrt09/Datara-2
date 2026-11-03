@@ -20,8 +20,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
 _XLSX_MIME = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -87,13 +86,8 @@ def user_id(auth_client):
 
 @pytest.fixture
 def auth_client(client):
-    """Register a user and return a client with valid session cookie."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "test@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    cookie = resp.headers["set-cookie"]
+    """Register a verified user and return a client with a valid session cookie."""
+    cookie = register_verified(client, "test@example.com").headers["set-cookie"]
     client.headers["Cookie"] = cookie
     return client
 
@@ -197,11 +191,9 @@ class TestDownload:
         )
         file_id = upload.json()["id"]
 
-        resp_b = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "b_download@example.com", "password": "password123"},
-        )
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_b = register_verified(client, "b_download@example.com").headers[
+            "set-cookie"
+        ]
 
         resp = client.get(
             f"/api/files/{file_id}/download", headers={"Cookie": cookie_b}

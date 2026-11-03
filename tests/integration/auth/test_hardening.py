@@ -29,6 +29,7 @@ from server.services.auth_service import (
 from server.services.session_cleanup import sweep_expired
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -65,53 +66,37 @@ def store():
     return api_store._store
 
 
+def _verified_cookie(client, email: str) -> str:
+    """Register, verify through the mail and log in, returning the cookie.
+
+    Register no longer sets the session cookie (T3/D4), so the flag probes ask
+    login for one on an account whose address is already proven.
+    """
+    return register_verified(client, email).headers["set-cookie"]
+
+
 class TestCookieFlags:
     """Task 5.5: Set-Cookie flags verification."""
 
     def test_set_cookie_contains_httponly(self, client):
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "cookie@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "cookie@example.com")
         assert "HttpOnly" in cookie, f"Missing HttpOnly flag in cookie: {cookie}"
 
     def test_set_cookie_contains_samesite_lax(self, client):
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "samesite@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "samesite@example.com")
         assert "SameSite=Lax" in cookie, f"Missing SameSite=Lax in cookie: {cookie}"
 
     def test_set_cookie_contains_path_root(self, client):
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "path@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "path@example.com")
         assert "Path=/" in cookie, f"Missing Path=/ in cookie: {cookie}"
 
     def test_set_cookie_contains_max_age_28800(self, client):
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "maxage@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "maxage@example.com")
         assert "Max-Age=28800" in cookie, f"Missing Max-Age=28800 in cookie: {cookie}"
 
     def test_set_cookie_has_all_flags(self, client):
         """Verify all required flags are present in a single Set-Cookie header."""
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "allflags@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "allflags@example.com")
         assert "HttpOnly" in cookie
         assert "SameSite=Lax" in cookie
         assert "Path=/" in cookie
@@ -121,17 +106,7 @@ class TestCookieFlags:
 
     def test_login_also_sets_correct_flags(self, client):
         """Login should also set the same cookie flags."""
-        # Register first
-        client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "loginflags@example.com", "password": "password123"},
-        )
-        # Login
-        resp = client.post(
-            "/api/auth/login",
-            json={"email": "loginflags@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
+        resp = register_verified(client, "loginflags@example.com")
         cookie = resp.headers["set-cookie"]
         assert "HttpOnly" in cookie
         assert "SameSite=Lax" in cookie
@@ -144,15 +119,8 @@ class TestTokenHashStorage:
 
     async def test_token_hash_is_64_char_hex(self, client, store):
         """Verify the stored token_hash is a 64-char SHA-256 hex string."""
-        # Register a user
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "tokenhash@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-
-        # The raw token from the cookie
-        cookie = resp.headers["set-cookie"]
+        # A session cookie only exists after verification + login (T3/D4).
+        cookie = _verified_cookie(client, "tokenhash@example.com")
         raw_token = cookie.split(";")[0].split("=", 1)[1]
 
         # Compute expected hash
@@ -174,13 +142,7 @@ class TestTokenHashStorage:
 
     async def test_stored_hash_is_not_raw_token(self, client, store):
         """Verify the DB never stores the raw token, only its hash."""
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "norawness@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "norawness@example.com")
         raw_token = cookie.split(";")[0].split("=", 1)[1]
 
         # Query the stored token_hash
@@ -198,13 +160,7 @@ class TestTokenHashStorage:
 
     async def test_each_session_has_unique_hash(self, client, store):
         """Multiple sessions for the same user have different hashes."""
-        # Register a user
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "uniquehash@example.com", "password": "password123"},
-        )
-        assert resp.status_code == 200
-        cookie1 = resp.headers["set-cookie"]
+        cookie1 = _verified_cookie(client, "uniquehash@example.com")
         raw1 = cookie1.split(";")[0].split("=", 1)[1]
 
         # Login again to get a second session

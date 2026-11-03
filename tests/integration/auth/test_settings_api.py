@@ -9,6 +9,7 @@ from server.api.routers.auth import router as auth_router
 from server.api.routers.settings import router as settings_router
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -42,9 +43,10 @@ def client(app):
 
 @pytest.fixture
 def auth_client(client):
-    resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "alice@example.com", "password": "password123"})
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, verify and log in; return the session cookie (T3/D4)."""
+    return register_verified(client, "alice@example.com").headers[
+        "set-cookie"
+    ]
 
 
 class TestGetSettings:
@@ -138,10 +140,12 @@ class TestUpdateSettings:
 
     def test_multiple_users_isolated(self, client):
         """Settings for user A should not affect user B."""
-        resp_a = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "a@example.com", "password": "password123"})
-        cookie_a = resp_a.headers["set-cookie"]
-        resp_b = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "b@example.com", "password": "password123"})
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_a = register_verified(client, "a@example.com").headers[
+            "set-cookie"
+        ]
+        cookie_b = register_verified(client, "b@example.com").headers[
+            "set-cookie"
+        ]
 
         client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie_a})
         client.put("/api/settings", json={"default_model": "gpt-4o-mini"}, headers={"Cookie": cookie_b})

@@ -24,6 +24,7 @@ from server.api.routers.auth import router as auth_router
 from server.services.session_cleanup import purge_due_deletions
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -57,11 +58,8 @@ PASSWORD = "password123"
 
 
 def _register(client, email="user@example.com"):
-    resp = client.post(
-        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": PASSWORD}
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, verify and log in; return the first session cookie (T3/D4)."""
+    return register_verified(client, email).headers["set-cookie"]
 
 
 def _login(client, email="user@example.com"):

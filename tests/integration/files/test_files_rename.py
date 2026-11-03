@@ -21,8 +21,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.api.upload_guard import install_upload_guard
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
 
 @pytest.fixture
@@ -61,13 +60,10 @@ def client(app):
 
 @pytest.fixture
 def auth_client(client):
-    """Register a user and return a client with valid session cookie."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "test@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    client.headers["Cookie"] = resp.headers["set-cookie"]
+    """Register a verified user and return a client with a valid session cookie."""
+    client.headers["Cookie"] = register_verified(
+        client, "test@example.com"
+    ).headers["set-cookie"]
     return client
 
 
@@ -75,12 +71,9 @@ def auth_client(client):
 def other_client(app):
     """A second, unrelated authenticated user (foreign-file 404 checks)."""
     client = TestClient(app)
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "other@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    client.headers["Cookie"] = resp.headers["set-cookie"]
+    client.headers["Cookie"] = register_verified(
+        client, "other@example.com"
+    ).headers["set-cookie"]
     return client
 
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from server.api.main import app
-from server.services.terms import TERMS_VERSION
+from tests.test_helpers import verify_email
 
 
 def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
@@ -26,13 +26,18 @@ def test_lifespan_boots_and_creates_fresh_db_dir(tmp_path, monkeypatch):
         # App is up: protected endpoint answers 401 without credentials.
         assert client.get("/api/auth/me").status_code == 401
 
-        # Full auth roundtrip through the lifespan-provided store.
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "boot@datara.local", "password": "boot-test-123"},
+        # Full auth roundtrip through the lifespan-provided store. Register
+        # opens no session (D4); the cookie only appears after the address is
+        # verified and login succeeds.
+        registered = verify_email(client, "boot@datara.local", "boot-test-123")
+        assert "set-cookie" not in registered.headers
+
+        login = client.post(
+            "/api/auth/login",
+            json={"email": "boot@datara.local", "password": "boot-test-123"},
         )
-        assert resp.status_code == 200
-        assert "session_id" in resp.headers.get("set-cookie", "")
+        assert login.status_code == 200
+        assert "session_id" in login.headers.get("set-cookie", "")
 
         assert client.get("/api/auth/me").status_code == 200
 

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 PASSWORD = "password123"
@@ -57,14 +58,15 @@ def client(store):
 
 
 def _register(client, email="user@example.com", user_agent=CHROME):
-    """Register (first session) and return its cookie."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": email, "password": PASSWORD},
-        headers={"User-Agent": user_agent},
+    """Register, verify, log in (first session) and return its cookie (T3).
+
+    The user-agent is applied at login, because that is now the request that
+    creates the session the list reports.
+    """
+    login = register_verified(
+        client, email, user_agent=user_agent
     )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return login.headers["set-cookie"]
 
 
 def _login(client, email="user@example.com", user_agent=FIREFOX):

@@ -25,8 +25,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.api.routers.settings import router as settings_router
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
 # Values the API must reject on write: unknown labels for each preference plus
 # a wrong type and an empty string.
@@ -73,12 +72,7 @@ def client(app):
 
 @pytest.fixture
 def auth_client(client):
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "invariants@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return register_verified(client, "invariants@example.com").headers["set-cookie"]
 
 
 def _row_fingerprint(db_path: str) -> str:

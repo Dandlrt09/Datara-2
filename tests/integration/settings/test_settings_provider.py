@@ -8,8 +8,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.api.routers.settings import router as settings_router
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
 
 @pytest.fixture
@@ -42,9 +41,7 @@ def client(app):
 
 @pytest.fixture
 def auth_client(client):
-    resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "alice@example.com", "password": "password123"})
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return register_verified(client, "alice@example.com").headers["set-cookie"]
 
 
 class TestFetchModels:

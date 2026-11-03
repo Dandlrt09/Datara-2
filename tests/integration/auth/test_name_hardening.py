@@ -19,6 +19,7 @@ from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -36,15 +37,12 @@ def client():
 
 
 def _register(client, email: str) -> str:
-    resp = client.post(
-        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, verify and log in; return the cookie (T3/D4)."""
+    return register_verified(client, email).headers["set-cookie"]
 
 
 class TestNameHardening:
-    def test_register_and_login_payloads_carry_name(self, client):
+    def test_register_and_login_payloads_carry_name(self, client, recorder):
         """S2/D2: all three routes share one UserResponse shape, name null."""
         register = client.post(
             "/api/auth/register",
@@ -58,6 +56,12 @@ class TestNameHardening:
         }
         assert register.json()["name"] is None
 
+        # The address must be proven before login can succeed (T3/D4).
+        token = recorder.last_token("shape@example.com")
+        assert (
+            client.post("/api/auth/verify-email", json={"token": token}).status_code
+            == 204
+        )
         login = client.post(
             "/api/auth/login",
             json={"email": "shape@example.com", "password": "password123"},

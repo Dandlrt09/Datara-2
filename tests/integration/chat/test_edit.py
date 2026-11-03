@@ -24,8 +24,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEventType
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations, upload_csv
+from tests.test_helpers import apply_all_migrations, register_verified, upload_csv
 
 
 @pytest.fixture
@@ -70,12 +69,7 @@ def store():
 
 @pytest.fixture
 def auth_cookie(client):
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "edit@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return register_verified(client, "edit@example.com").headers["set-cookie"]
 
 
 @pytest.fixture
