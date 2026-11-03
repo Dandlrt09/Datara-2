@@ -11,6 +11,7 @@ from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -59,10 +60,9 @@ class TestRegister:
         data = resp.json()
         assert data["email"] == "alice@example.com"
         assert "id" in data
-        # Should have Set-Cookie header
-        set_cookie = resp.headers.get("set-cookie")
-        assert set_cookie is not None
-        assert set_cookie.startswith("session_id=")
+        # D4/S3: registration no longer opens a session, so it must not set a
+        # cookie -- the hard gate is that an unproven account is not usable.
+        assert resp.headers.get("set-cookie") is None
 
     def test_register_duplicate_email(self, client):
         client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password123"})
@@ -77,8 +77,7 @@ class TestRegister:
 
 class TestLogin:
     def test_login_success(self, client):
-        client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "carol@example.com", "password": "password123"})
-        resp = client.post("/api/auth/login", json={"email": "carol@example.com", "password": "password123"})
+        resp = register_verified(client, "carol@example.com")
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "carol@example.com"
@@ -109,8 +108,7 @@ class TestLogin:
 
 class TestMe:
     def test_me_authenticated(self, client):
-        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "frank@example.com", "password": "password123"})
-        cookie = resp.headers["set-cookie"]
+        cookie = _register(client, "frank@example.com")
         me_resp = client.get("/api/auth/me", headers={"Cookie": cookie})
         assert me_resp.status_code == 200
         assert me_resp.json()["email"] == "frank@example.com"
@@ -121,8 +119,7 @@ class TestMe:
 
     def test_me_expired_cookie(self, client):
         """Register, then simulate expired session by sweeping."""
-        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "grace@example.com", "password": "password123"})
-        cookie = resp.headers["set-cookie"]
+        cookie = _register(client, "grace@example.com")
 
         # Sweep all sessions (they're all valid, so this won't remove them)
         # Instead, let's verify the cookie works first, then note that
@@ -137,8 +134,7 @@ class TestMe:
 
 class TestLogout:
     def test_logout_clears_session(self, client):
-        resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "heidi@example.com", "password": "password123"})
-        cookie = resp.headers["set-cookie"]
+        cookie = _register(client, "heidi@example.com")
 
         # First verify me works
         assert client.get("/api/auth/me", headers={"Cookie": cookie}).status_code == 200
@@ -156,12 +152,14 @@ class TestLogout:
 
 
 def _register(client, email: str) -> str:
-    """Register *email* and return its session cookie header (T1)."""
-    resp = client.post(
-        "/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": "password123"}
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, prove the address, log in and return the cookie (T3).
+
+    The old helper returned the cookie registration used to set; under the
+    hard gate the cookie only exists after verification, so the helper walks
+    the new contract and keeps every call site's intent.
+    """
+    login = register_verified(client, email)
+    return login.headers["set-cookie"]
 
 
 class TestEditableName:

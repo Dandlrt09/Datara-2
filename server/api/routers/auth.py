@@ -15,6 +15,10 @@ from server.api.deps import current_user, get_store
 from server.api.rate_limit import auth_attempt_limiter
 from server.services.auth_service import (
     MAX_DISPLAY_NAME_LENGTH,
+    RESET_TOKEN_TTL_SECONDS,
+    TOKEN_PURPOSE_RESET_PASSWORD,
+    TOKEN_PURPOSE_VERIFY_EMAIL,
+    VERIFICATION_TOKEN_TTL_SECONDS,
     build_expire_cookie_header,
     build_set_cookie_header,
     generate_raw_token,
@@ -25,6 +29,15 @@ from server.services.auth_service import (
     normalize_email,
     verify_credentials,
     verify_password,
+)
+from server.services.mailer import (
+    Mailer,
+    get_mailer,
+    render_reset_email,
+    render_verification_email,
+    reset_link,
+    resolve_app_url,
+    verification_link,
 )
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
@@ -59,6 +72,39 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class VerifyEmailRequest(BaseModel):
+    """Body of ``POST /api/auth/verify-email`` (D9).
+
+    The raw token travels in the body, not the URL: the mailed link points at
+    the frontend route, and the screen is what POSTs the token here.
+    """
+
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    """Body of ``POST /api/auth/resend-verification`` (D6)."""
+
+    email: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Body of ``POST /api/auth/forgot-password`` (D6)."""
+
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body of ``POST /api/auth/reset-password`` (D8).
+
+    ``token`` is the raw token from the mailed link; ``new_password`` is only
+    shaped (length) after the token has proven to belong to a live request.
+    """
+
+    token: str
+    new_password: str
 
 
 class ChangePasswordRequest(BaseModel):
@@ -137,6 +183,73 @@ async def _mint_session(
     return raw_token, cookie
 
 
+async def _issue_and_send_verification(
+    store: SqliteStore,
+    user: dict,
+    mailer: Mailer,
+) -> None:
+    """Mint a fresh verification token for *user* and mail the link.
+
+    The raw token exists only in the mailed link; the store keeps its hash,
+    the purpose and the address the proof belongs to. Issuing a new token
+    retires the previous one (D1), so "reenviar" leaves exactly one redeemable
+    link. A delivery failure is logged and swallowed: the account already
+    exists, and the resend button is the recovery path -- a broken mailbox must
+    not undo a signup (S3).
+    """
+    raw_token = generate_raw_token()
+    await store.create_auth_token(
+        user["id"],
+        hash_token(raw_token),
+        TOKEN_PURPOSE_VERIFY_EMAIL,
+        VERIFICATION_TOKEN_TTL_SECONDS,
+        email=user["email"],
+    )
+    link = verification_link(resolve_app_url(), raw_token)
+    subject, body = render_verification_email(
+        link, ttl_hours=VERIFICATION_TOKEN_TTL_SECONDS // 3600
+    )
+    try:
+        await mailer.send(to=user["email"], subject=subject, body=body)
+    except Exception:
+        logger.exception(
+            "Failed to send verification email to user_id=%s", user["id"]
+        )
+
+
+async def _issue_and_send_reset(
+    store: SqliteStore,
+    user: dict,
+    mailer: Mailer,
+) -> None:
+    """Mint a fresh reset token for *user* and mail the link.
+
+    Mirrors ``_issue_and_send_verification``: the store keeps only the hash,
+    purpose and address; issuing a new token retires the previous live reset
+    link (D1), so a second request leaves exactly one redeemable link. A
+    delivery failure is logged and swallowed -- the route must answer 202
+    regardless (D6), and a broken mailbox cannot leak that the account exists.
+    """
+    raw_token = generate_raw_token()
+    await store.create_auth_token(
+        user["id"],
+        hash_token(raw_token),
+        TOKEN_PURPOSE_RESET_PASSWORD,
+        RESET_TOKEN_TTL_SECONDS,
+        email=user["email"],
+    )
+    link = reset_link(resolve_app_url(), raw_token)
+    subject, body = render_reset_email(
+        link, ttl_hours=RESET_TOKEN_TTL_SECONDS // 3600
+    )
+    try:
+        await mailer.send(to=user["email"], subject=subject, body=body)
+    except Exception:
+        logger.exception(
+            "Failed to send password reset email to user_id=%s", user["id"]
+        )
+
+
 def _current_token_hash(request: Request) -> str:
     """Hash of the caller's own session cookie.
 
@@ -209,13 +322,16 @@ def _enforce_attempt_limit(keys: list[str]) -> None:
 async def register(
     body: RegisterRequest,
     request: Request,
-    response: Response,
     store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
 ):
     """Register a new user.
 
-    On success: creates user row, mints an auth session, sets the session
-    cookie, and returns the user payload.
+    On success: creates the user row, sends the verification email, and
+    returns the user payload. It deliberately does NOT open a session or set a
+    cookie (D4/S3): the hard gate is that an account is not usable until its
+    address is proven, so registration cannot be a way around login. The person
+    proves the address through the mailed link, then logs in.
 
     On duplicate email: returns 409 Conflict.
     On invalid data: returns 422, including a missing or stale terms of use
@@ -282,10 +398,7 @@ async def register(
             detail="Email already registered",
         )
 
-    raw_token, cookie = await _mint_session(
-        store, user["id"], request.headers.get("user-agent")
-    )
-    response.headers["Set-Cookie"] = cookie
+    await _issue_and_send_verification(store, user, mailer)
     return UserResponse(
         id=user["id"],
         email=user["email"],
@@ -323,6 +436,18 @@ async def login(
             detail="Invalid email or password",
         )
 
+    # Hard gate (S3/D5): correct credentials are not enough while the address
+    # is unproven. Nothing is minted and no cookie is set, so the caller cannot
+    # acquire a session through login either. This is not enumeration: it is
+    # only reachable after the password checked out, and whoever knows the
+    # password already knows the account exists. The attempt brake is NOT
+    # cleared here -- only a fully successful login clears it.
+    if user["email_verified_at"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not verified",
+        )
+
     # A real sign-in clears the brake on the account, not on the shared origin
     # (F4/S3): the person proved they own this account, so its failures were
     # mistyped passwords -- but one valid account must not let an attacker reset
@@ -339,6 +464,143 @@ async def login(
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
     )
+
+
+@router.post("/verify-email", status_code=204)
+async def verify_email(
+    body: VerifyEmailRequest,
+    store: SqliteStore = Depends(get_store),
+):
+    """Prove the address behind a mailed verification token (D10).
+
+    The token is redeemed atomically exactly once (D2/D12): an unknown, expired
+    or already-used token is indistinguishable and answers the same 400. The
+    proof must belong to the address we mailed (defensive): if the account's
+    email changed since the token was issued, the token is refused even though
+    it was genuine. On success the address is stamped verified and every
+    sibling verification token is dropped. Verifying does NOT log the person in
+    (D10): the screen confirms and sends them to login.
+    """
+    token = await store.consume_auth_token(
+        hash_token(body.token), TOKEN_PURPOSE_VERIFY_EMAIL
+    )
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token",
+        )
+
+    user = await store.get_user_by_id(token["user_id"])
+    if user is None or token["email"] != user["email"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token",
+        )
+
+    await store.mark_email_verified(user["id"])
+    await store.invalidate_user_tokens(user["id"], TOKEN_PURPOSE_VERIFY_EMAIL)
+    return None
+
+
+@router.post("/resend-verification", status_code=202)
+async def resend_verification(
+    body: ResendVerificationRequest,
+    request: Request,
+    store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
+):
+    """Re-send the verification link, never confirming who exists (D6).
+
+    Always answers 202, whether the address is unknown, already verified, or
+    real and unverified (D6): a forked answer would turn this into an
+    enumeration oracle. Only a real, unverified account gets a new token and a
+    mail. Every attempt is counted against the IP and the email (S2) so the
+    endpoint cannot be used to bomb a mailbox.
+    """
+    email = normalize_email(body.email)
+    keys = _attempt_keys("resend", request, email)
+    _enforce_attempt_limit(keys)
+    for key in keys:
+        auth_attempt_limiter.record(key)
+
+    user = await store.get_user_by_email(email)
+    if user is not None and user["email_verified_at"] is None:
+        await _issue_and_send_verification(store, user, mailer)
+    return None
+
+
+@router.post("/forgot-password", status_code=202)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
+):
+    """Start password recovery without confirming who exists (D6).
+
+    Always answers 202 with an empty body, whether the address is unknown,
+    verified, or real and unverified: a forked answer would turn this into an
+    enumeration oracle. The email shape is deliberately NOT validated here --
+    a 422 would leak which inputs the server considers real, and this route has
+    no use for the address beyond looking it up. Only a real account gets a
+    token and a mail. Every attempt is counted against the IP and the email
+    (S2) so the endpoint cannot be used to bomb a mailbox.
+    """
+    email = normalize_email(body.email)
+    keys = _attempt_keys("forgot", request, email)
+    _enforce_attempt_limit(keys)
+    for key in keys:
+        auth_attempt_limiter.record(key)
+
+    user = await store.get_user_by_email(email)
+    if user is not None:
+        await _issue_and_send_reset(store, user, mailer)
+    return None
+
+
+@router.post("/reset-password", status_code=204)
+async def reset_password(
+    body: ResetPasswordRequest,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+):
+    """Set a new password from a mailed reset token (S4, D7, D8, D12).
+
+    The length check runs BEFORE the token is touched (D12-ish): a short
+    password is a malformed request, not a redemption, so it must not burn the
+    one-shot token and force the person to request another link. The token is
+    then redeemed atomically exactly once; an unknown, expired, or already-used
+    token answers the same 400. On success the password is replaced, the
+    address is marked verified (D7 -- receiving the link at that mailbox proves
+    the same thing as the verification link), every session of the user is
+    closed (D8 -- a reset is the "my account was stolen" act, so no session may
+    survive it), and any sibling reset token is dropped.
+    """
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+
+    token = await store.consume_auth_token(
+        hash_token(body.token), TOKEN_PURPOSE_RESET_PASSWORD
+    )
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token",
+        )
+
+    await store.update_user_password(
+        token["user_id"], hash_password(body.new_password)
+    )
+    await store.mark_email_verified(token["user_id"])
+    await store.delete_all_auth_sessions(token["user_id"])
+    await store.invalidate_user_tokens(
+        token["user_id"], TOKEN_PURPOSE_RESET_PASSWORD
+    )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return None
 
 
 @router.post("/logout", status_code=204)

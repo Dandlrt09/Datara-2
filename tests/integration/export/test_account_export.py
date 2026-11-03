@@ -24,10 +24,8 @@ from server.api.routers import auth as auth_router
 from server.api.routers import export as export_router
 from server.api.routers import files as files_router
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations
+from tests.test_helpers import apply_all_migrations, register_verified
 
-PASSWORD = "password123"
 RAW_BYTES = b"name,age\nAlice,30\nBob,25\n"
 
 
@@ -59,9 +57,8 @@ def client(store, tmp_path, monkeypatch):
 
 
 def _register(client, email):
-    resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": email, "password": PASSWORD})
-    assert resp.status_code == 200
-    return resp.json()["id"], resp.headers["set-cookie"]
+    login = register_verified(client, email)
+    return login.json()["id"], login.headers["set-cookie"]
 
 
 def _run(store, sql, params=()):

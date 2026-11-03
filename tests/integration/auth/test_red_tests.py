@@ -15,6 +15,7 @@ from server.api.routers.settings import router as settings_router
 from server.services.auth_service import generate_raw_token, hash_token, build_set_cookie_header
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -50,6 +51,11 @@ def client(app):
 @pytest.fixture
 def store():
     return api_store._store
+
+
+def _verified_cookie(client, email: str) -> str:
+    """Register, verify and log in; return the session cookie (T3/D4)."""
+    return register_verified(client, email).headers["set-cookie"]
 
 
 class TestMissingCookie:
@@ -92,11 +98,7 @@ class TestExpiredSession:
 
     async def test_logout_invalidates_session(self, client, store):
         """After logout, the same cookie should return 401."""
-        resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "logout@example.com", "password": "password123"},
-        )
-        cookie = resp.headers["set-cookie"]
+        cookie = _verified_cookie(client, "logout@example.com")
 
         # Logout
         client.post("/api/auth/logout", headers={"Cookie": cookie})
@@ -132,13 +134,8 @@ class TestCrossUserAccess:
 
     async def test_cross_user_session_list(self, client, store):
         """User A's cookie should not see User B's sessions."""
-        # Register user A
-        resp_a = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "a@example.com", "password": "password123"})
-        cookie_a = resp_a.headers["set-cookie"]
-
-        # Register user B
-        resp_b = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "b@example.com", "password": "password123"})
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_a = _verified_cookie(client, "a@example.com")
+        cookie_b = _verified_cookie(client, "b@example.com")
 
         # User B creates a session
         client.post("/api/sessions", json={"title": "B's session"}, headers={"Cookie": cookie_b})
@@ -151,10 +148,8 @@ class TestCrossUserAccess:
 
     async def test_cross_user_settings(self, client, store):
         """User A's settings should not be visible to User B."""
-        resp_a = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "a2@example.com", "password": "password123"})
-        cookie_a = resp_a.headers["set-cookie"]
-        resp_b = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "b2@example.com", "password": "password123"})
-        cookie_b = resp_b.headers["set-cookie"]
+        cookie_a = _verified_cookie(client, "a2@example.com")
+        cookie_b = _verified_cookie(client, "b2@example.com")
 
         # User A updates settings
         client.put("/api/settings", json={"default_model": "gpt-4o"}, headers={"Cookie": cookie_a})

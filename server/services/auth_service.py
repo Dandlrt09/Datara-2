@@ -118,6 +118,19 @@ def verify_credentials(password: str, password_hash: str | None) -> bool:
     return verify_password(password, password_hash)
 
 
+# The two things a mailed token can be for (D1). The store's CHECK constraint
+# lists exactly these, so a typo cannot create a third, unredeemable purpose.
+TOKEN_PURPOSE_VERIFY_EMAIL = "verify_email"
+TOKEN_PURPOSE_RESET_PASSWORD = "reset_password"
+
+# How long each mailed link stays redeemable (D3). Verification can wait a full
+# day: it lands in a mailbox the person may not open right away. A password
+# reset is the opposite -- it is the one link whose theft is directly harmful,
+# so its window is short.
+VERIFICATION_TOKEN_TTL_SECONDS = 24 * 60 * 60
+RESET_TOKEN_TTL_SECONDS = 60 * 60
+
+
 def generate_raw_token() -> str:
     """Return a 32-byte URL-safe random token (43 chars base64-encoded)."""
     return secrets.token_urlsafe(32)

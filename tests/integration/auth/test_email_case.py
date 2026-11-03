@@ -16,6 +16,7 @@ from server.api import store as api_store
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -67,10 +68,8 @@ class TestRegisterNormalizes:
 
 class TestLoginIsCaseInsensitive:
     def test_login_with_different_case_succeeds(self, client):
-        client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password123"},
-        )
+        # Prove the address first: login only succeeds once verified (T3/D4).
+        register_verified(client, "bob@example.com")
         resp = client.post(
             "/api/auth/login",
             json={"email": "BOB@EXAMPLE.COM", "password": "password123"},
@@ -79,10 +78,7 @@ class TestLoginIsCaseInsensitive:
         assert resp.json()["email"] == "bob@example.com"
 
     def test_login_with_surrounding_whitespace_succeeds(self, client):
-        client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "dave@example.com", "password": "password123"},
-        )
+        register_verified(client, "dave@example.com")
         resp = client.post(
             "/api/auth/login",
             json={"email": "  dave@example.com  ", "password": "password123"},

@@ -5,8 +5,11 @@ This module provides helpers to apply the full migration set in test fixtures.
 
 from pathlib import Path
 import asyncio
+import re
 
+from server.services.auth_service import normalize_email
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "server" / "migrations"
 
@@ -41,6 +44,140 @@ async def create_test_store() -> SqliteStore:
     await s.connect()
     await apply_all_migrations(s)
     return s
+
+
+# ── Outbound-mail seam (T3/T7) ────────────────────────────────────────────────
+#
+# Every auth route resolves its mailer through ``resolve_mailer()`` at call time,
+# so patching that one function swaps the real backend for a recorder in every
+# route without touching a single app fixture. ``install_recording_mailer`` is
+# wired autouse from ``tests/integration/conftest.py`` so the whole integration
+# suite stays off the network and every test can read the token that
+# registration mailed.
+
+_TOKEN_RE = re.compile(r"token=([^&\s]+)")
+
+
+class RecordingMailer:
+    """In-memory mailer: records every message instead of sending it (S5)."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, str]] = []
+
+    async def send(self, *, to: str, subject: str, body: str) -> None:
+        self.messages.append({"to": to, "subject": subject, "body": body})
+
+    def last_token(self, email: str) -> str | None:
+        """Extract ``token=`` from the last body sent to *email*.
+
+        Compares normalized addresses because the account stores the email
+        lowercased while a test may register it in any case.
+        """
+        normalized = normalize_email(email)
+        for message in reversed(self.messages):
+            if normalize_email(message["to"]) == normalized:
+                match = _TOKEN_RE.search(message["body"])
+                if match:
+                    return match.group(1)
+        return None
+
+    def clear(self) -> None:
+        self.messages.clear()
+
+
+_recorder = RecordingMailer()
+
+
+def get_recorder() -> RecordingMailer:
+    """The recorder installed by the autouse mailer fixture."""
+    return _recorder
+
+
+def install_recording_mailer(monkeypatch) -> RecordingMailer:
+    """Swap the mailer factory for the shared recorder (S3/S5/D4).
+
+    The route dependency ``get_mailer`` calls ``resolve_mailer()`` at call
+    time, so patching the module attribute is enough to keep every request in
+    the run off the network. The recorder is cleared first so a test never sees
+    a sibling test's mail.
+    """
+    _recorder.clear()
+    monkeypatch.setattr("server.services.mailer.resolve_mailer", lambda: _recorder)
+    return _recorder
+
+
+def _register_body(
+    email: str,
+    password: str,
+    name: str | None,
+    terms_version: str,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "email": email,
+        "password": password,
+        "terms_version": terms_version,
+    }
+    if name is not None:
+        body["name"] = name
+    return body
+
+
+def verify_email(
+    client,
+    email: str,
+    password: str = "password123",
+    *,
+    name: str | None = None,
+    terms_version: str = TERMS_VERSION,
+):
+    """Register then verify the address, returning the REGISTER response.
+
+    Use this in tests that assert on the register payload (or need the user id
+    before logging in); ``register_verified`` covers the tests that only need a
+    session cookie.
+    """
+    registered = client.post(
+        "/api/auth/register",
+        json=_register_body(email, password, name, terms_version),
+    )
+    assert registered.status_code == 200, registered.text
+
+    token = get_recorder().last_token(registered.json()["email"])
+    assert token is not None, f"no verification mail for {email}"
+
+    verified = client.post("/api/auth/verify-email", json={"token": token})
+    assert verified.status_code == 204, verified.text
+    return registered
+
+
+def register_verified(
+    client,
+    email: str,
+    password: str = "password123",
+    *,
+    name: str | None = None,
+    terms_version: str = TERMS_VERSION,
+    user_agent: str | None = None,
+):
+    """Walk the hard-gate contract and return the successful login response.
+
+    Register creates the account but opens no session (D4); the token printed
+    into the recorded mail proves the address through ``/verify-email``; only
+    then does login succeed. This is the shared replacement for every old
+    ``register and use the cookie`` step across the integration suite.
+    """
+    verify_email(
+        client, email, password, name=name, terms_version=terms_version
+    )
+
+    headers = {"User-Agent": user_agent} if user_agent is not None else {}
+    login = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+        headers=headers,
+    )
+    assert login.status_code == 200, login.text
+    return login
 
 
 def upload_csv(

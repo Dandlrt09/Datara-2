@@ -16,7 +16,7 @@ from server.api.routers import archive as archive_router
 from server.api.routers import auth as auth_router
 from server.api.routers import sessions as sessions_router
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
+from tests.test_helpers import register_verified
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "server" / "migrations"
 
@@ -66,22 +66,12 @@ def client(app):
 
 @pytest.fixture
 def auth_cookie(client):
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "archive@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return register_verified(client, "archive@example.com").headers["set-cookie"]
 
 
 @pytest.fixture
 def other_cookie(client):
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "other@archive.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    return register_verified(client, "other@archive.com").headers["set-cookie"]
 
 
 @pytest.fixture

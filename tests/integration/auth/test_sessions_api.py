@@ -13,6 +13,7 @@ from server.api.routers.sessions import router as sessions_router
 from server.services.events import EventBus, SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
+from tests.integration.auth.conftest import register_verified
 from tests.test_helpers import apply_all_migrations
 
 
@@ -46,11 +47,10 @@ def client(app):
 
 @pytest.fixture
 def auth_client(client):
-    """Register a user and return (client, cookie)."""
-    resp = client.post("/api/auth/register", json={"terms_version": TERMS_VERSION, "email": "alice@example.com", "password": "password123"})
-    assert resp.status_code == 200
-    cookie = resp.headers["set-cookie"]
-    return cookie
+    """Register, verify and log in; return the session cookie (T3/D4)."""
+    return register_verified(client, "alice@example.com").headers[
+        "set-cookie"
+    ]
 
 
 class TestListSessions:
@@ -140,12 +140,9 @@ class TestRenameSession:
         alice_cookie = auth_client
         session_id = self._create_session(client, alice_cookie)
 
-        bob_resp = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "bob@example.com", "password": "password123"},
-        )
-        assert bob_resp.status_code == 200
-        bob_cookie = bob_resp.headers["set-cookie"]
+        bob_cookie = register_verified(
+            client, "bob@example.com"
+        ).headers["set-cookie"]
 
         resp = client.patch(
             f"/api/sessions/{session_id}",
@@ -196,11 +193,7 @@ class TestRenameSession:
         # Register a user we can read the id from, then subscribe to the bus
         # BEFORE the PATCH: the event must arrive only after the rename is
         # committed (persist-then-emit).
-        reg = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "carol@example.com", "password": "password123"},
-        )
-        assert reg.status_code == 200
+        reg = register_verified(client, "carol@example.com")
         cookie = reg.headers["set-cookie"]
         user_id = reg.json()["id"]
         session_id = self._create_session(client, cookie)
@@ -227,11 +220,7 @@ class TestListSessionsIsStreaming:
     """``GET /api/sessions`` exposes the bus's streaming registry."""
 
     def test_list_marks_only_the_streaming_session(self, client):
-        reg = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "dave@example.com", "password": "password123"},
-        )
-        assert reg.status_code == 200
+        reg = register_verified(client, "dave@example.com")
         cookie = reg.headers["set-cookie"]
         user_id = reg.json()["id"]
 

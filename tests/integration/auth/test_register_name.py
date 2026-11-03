@@ -44,13 +44,24 @@ def _register(client, email: str, name=None):
 
 
 class TestRegisterName:
-    def test_chosen_name_is_stored_and_returned(self, client):
+    def test_chosen_name_is_stored_and_returned(self, client, recorder):
         """S2: a typed name survives registration and reads back on /me."""
         resp = _register(client, "chosen@example.com", "  Daniel  ")
         assert resp.status_code == 200
         assert resp.json()["name"] == "Daniel"
 
-        cookie = resp.headers["set-cookie"]
+        # No session comes out of register (T3/D4): prove the address, log in,
+        # then read /me with the resulting cookie.
+        token = recorder.last_token("chosen@example.com")
+        assert (
+            client.post("/api/auth/verify-email", json={"token": token}).status_code
+            == 204
+        )
+        login = client.post(
+            "/api/auth/login",
+            json={"email": "chosen@example.com", "password": "password123"},
+        )
+        cookie = login.headers["set-cookie"]
         me = client.get("/api/auth/me", headers={"Cookie": cookie})
         assert me.json()["name"] == "Daniel"
 

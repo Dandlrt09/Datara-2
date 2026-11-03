@@ -46,19 +46,18 @@ export function useLogin() {
 }
 
 /**
- * Create the account and sign in.
+ * Create the account and send the verification email.
  *
  * `name` is optional (register-experience S2): the signup form lets it empty and
  * omits the key, and the server then falls back to the email-derived name.
  * `terms_version` is required (terms-of-use D5): it is the version the person
  * read, and the server records it as the text that was accepted.
  *
- * The chat-session list is invalidated exactly like `useLogin` does (D5): a
- * brand-new account starts with an empty list, but a browser that still holds a
- * previous account's cache would otherwise list sessions that are not its own.
+ * Register no longer authenticates (D4): there is no session cookie and no
+ * `me` payload to cache, so the mutation has no cache side effects. The person
+ * goes to `/check-email` and only gets a session after verifying the address.
  */
 export function useRegister() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
       email: string;
@@ -66,10 +65,48 @@ export function useRegister() {
       name?: string;
       terms_version: string;
     }) => api.post<User>("/api/auth/register", data),
-    onSuccess: (user) => {
-      qc.setQueryData(["auth", "me"], user);
-      qc.invalidateQueries({ queryKey: ["sessions"] });
-    },
+  });
+}
+
+/**
+ * Redeem the emailed verification token (S3/D10).
+ *
+ * The screen POSTs the token; verifying does not open a session, it only
+ * confirms the address and sends the person to login.
+ */
+export function useVerifyEmail() {
+  return useMutation({
+    mutationFn: (data: { token: string }) =>
+      api.post<undefined>("/api/auth/verify-email", data),
+  });
+}
+
+/**
+ * Ask for a fresh verification link (S3/D6).
+ *
+ * Always answers 202, whether the address exists or not, so the UI shows the
+ * same confirmation either way and cannot be used to enumerate accounts.
+ */
+export function useResendVerification() {
+  return useMutation({
+    mutationFn: (data: { email: string }) =>
+      api.post<undefined>("/api/auth/resend-verification", data),
+  });
+}
+
+/** Start password recovery (S4/D6); the server always answers 202. */
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (data: { email: string }) =>
+      api.post<undefined>("/api/auth/forgot-password", data),
+  });
+}
+
+/** Set a new password from the emailed reset token (S4). */
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (data: { token: string; new_password: string }) =>
+      api.post<undefined>("/api/auth/reset-password", data),
   });
 }
 

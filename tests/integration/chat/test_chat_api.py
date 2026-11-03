@@ -21,8 +21,7 @@ from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.events import SessionEvent, SessionEventType
 from server.services.sqlite_store import SqliteStore
-from server.services.terms import TERMS_VERSION
-from tests.test_helpers import apply_all_migrations, upload_csv
+from tests.test_helpers import apply_all_migrations, register_verified, upload_csv
 
 
 @pytest.fixture
@@ -70,13 +69,8 @@ def client(app):
 
 @pytest.fixture
 def auth_cookie(client):
-    """Register a user and return the session cookie string."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "chat@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, verify and log in a user; return the session cookie."""
+    return register_verified(client, "chat@example.com").headers["set-cookie"]
 
 
 @pytest.fixture
@@ -99,13 +93,8 @@ def session_id(client, auth_cookie):
 
 @pytest.fixture
 def other_cookie(client):
-    """Register a second user and return the session cookie."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"terms_version": TERMS_VERSION, "email": "other@example.com", "password": "password123"},
-    )
-    assert resp.status_code == 200
-    return resp.headers["set-cookie"]
+    """Register, verify and log in a second user; return the session cookie."""
+    return register_verified(client, "other@example.com").headers["set-cookie"]
 
 
 @pytest.fixture
@@ -963,13 +952,9 @@ class TestChatBusEvents:
         assert bus is not None
 
         # Dedicated user + dataset so the route's ownership/dataset guards pass.
-        reg = client.post(
-            "/api/auth/register",
-            json={"terms_version": TERMS_VERSION, "email": "abandon@example.com", "password": "password123"},
-        )
-        assert reg.status_code == 200
-        cookie = reg.headers["set-cookie"]
-        user_id = reg.json()["id"]
+        login = register_verified(client, "abandon@example.com")
+        cookie = login.headers["set-cookie"]
+        user_id = login.json()["id"]
         sid = client.post(
             "/api/sessions", json={"title": "Chat test"}, headers={"Cookie": cookie}
         ).json()["id"]

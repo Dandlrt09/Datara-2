@@ -135,7 +135,7 @@ class SqliteStore:
             row_id = cursor.lastrowid
             row = await self.conn.execute_fetchall(
                 "SELECT id, email, name, password_hash, created_at, "
-                "pending_deletion_at FROM users WHERE id = ?",
+                "pending_deletion_at, email_verified_at FROM users WHERE id = ?",
                 (row_id,),
             )
             return dict(row[0])
@@ -152,7 +152,8 @@ class SqliteStore:
         """
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, created_at, "
-            "pending_deletion_at FROM users WHERE email = ? COLLATE NOCASE",
+            "pending_deletion_at, email_verified_at FROM users "
+            "WHERE email = ? COLLATE NOCASE",
             (normalize_email(email),),
         )
         return dict(rows[0]) if rows else None
@@ -160,7 +161,7 @@ class SqliteStore:
     async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, created_at, "
-            "pending_deletion_at FROM users WHERE id = ?",
+            "pending_deletion_at, email_verified_at FROM users WHERE id = ?",
             (user_id,),
         )
         return dict(rows[0]) if rows else None
@@ -187,6 +188,24 @@ class SqliteStore:
         cursor = await self.conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             (password_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def mark_email_verified(self, user_id: int) -> bool:
+        """Stamp the address as proven, and never un-stamp it (D7).
+
+        ``COALESCE`` makes it idempotent: the first proof wins and a second one
+        keeps that date, so redeeming another token cannot rewrite history. It
+        is also how a password reset ends up verifying the address -- receiving
+        the link at that mailbox proves the same thing. Returns True if the user
+        existed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users "
+            "SET email_verified_at = COALESCE(email_verified_at, datetime('now')) "
+            "WHERE id = ?",
+            (user_id,),
         )
         await self.conn.commit()
         return cursor.rowcount > 0
@@ -581,6 +600,101 @@ class SqliteStore:
         """Delete all expired auth sessions. Returns count of deleted rows."""
         cursor = await self.conn.execute(
             "DELETE FROM auth_sessions WHERE expires_at < datetime('now')",
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
+    # ── Auth Tokens ──────────────────────────────────────────────────────────────
+
+    _AUTH_TOKEN_COLUMNS = (
+        "id, user_id, token_hash, purpose, email, created_at, expires_at, used_at"
+    )
+
+    async def create_auth_token(
+        self,
+        user_id: int,
+        token_hash: str,
+        purpose: str,
+        ttl_seconds: int,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        """Issue a one-time token, retiring any live token of the same purpose.
+
+        Asking for a new link must invalidate the previous one (D1): a person
+        who clicks "resend" ends up with exactly one redeemable link, so an
+        older mail cannot still be used. Only ``token_hash`` is stored -- the
+        raw token exists solely in the mailed link. Returns the created row.
+        """
+        await self.conn.execute(
+            "DELETE FROM auth_tokens "
+            "WHERE user_id = ? AND purpose = ? AND used_at IS NULL",
+            (user_id, purpose),
+        )
+        cursor = await self.conn.execute(
+            "INSERT INTO auth_tokens "
+            "(user_id, token_hash, purpose, email, expires_at) "
+            "VALUES (?, ?, ?, ?, datetime('now', ? || ' seconds'))",
+            (user_id, token_hash, purpose, email, str(ttl_seconds)),
+        )
+        await self.conn.commit()
+        rows = await self.conn.execute_fetchall(
+            f"SELECT {self._AUTH_TOKEN_COLUMNS} FROM auth_tokens WHERE id = ?",
+            (cursor.lastrowid,),
+        )
+        return dict(rows[0])
+
+    async def consume_auth_token(
+        self,
+        token_hash: str,
+        purpose: str,
+    ) -> dict[str, Any] | None:
+        """Redeem a token exactly once, atomically (D2, D12).
+
+        A single ``UPDATE`` proves existence, purpose, "not yet used" and "not
+        expired", and stamps ``used_at`` in the same statement. That is what
+        makes it one-shot even under two simultaneous clicks: only one UPDATE
+        can return a row. Expiry is re-checked here rather than trusted to the
+        sweep (D12). Returns the redeemed row, or None when the token is
+        unknown, of another purpose, already used, or expired.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE auth_tokens SET used_at = datetime('now') "
+            "WHERE token_hash = ? AND purpose = ? AND used_at IS NULL "
+            "AND expires_at > datetime('now')",
+            (token_hash, purpose),
+        )
+        await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        rows = await self.conn.execute_fetchall(
+            f"SELECT {self._AUTH_TOKEN_COLUMNS} FROM auth_tokens WHERE token_hash = ?",
+            (token_hash,),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def invalidate_user_tokens(self, user_id: int, purpose: str) -> int:
+        """Drop every still-redeemable token of a purpose. Returns rows deleted.
+
+        Used after a success so no sibling link survives the act it belonged
+        to, and by the sweep for hygiene.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_tokens "
+            "WHERE user_id = ? AND purpose = ? AND used_at IS NULL",
+            (user_id, purpose),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
+    async def sweep_expired_auth_tokens(self) -> int:
+        """Delete tokens that can no longer be redeemed. Returns rows deleted.
+
+        Expired ones are dead weight; used ones already failed the next
+        redemption with the same answer, so keeping them proves nothing.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_tokens "
+            "WHERE expires_at < datetime('now') OR used_at IS NOT NULL",
         )
         await self.conn.commit()
         return cursor.rowcount
