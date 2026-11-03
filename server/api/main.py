@@ -21,6 +21,7 @@ from server.api import event_bus as api_event_bus
 from server.api.routers import auth, chat, files, sessions, settings, archive, activity, usage, export
 from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
+from server.logging_setup import configure_logging
 from server.migrate import apply_migrations
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
 from server.services.session_cleanup import (
@@ -67,6 +68,12 @@ async def lifespan(app: FastAPI):
     2. Close database connection
     """
     global _cleanup_task, _sandbox_sweep_task
+
+    # Step 0: logging. No module configures it, so without this the app's
+    # ``logger.info`` records fall through to a handler-less root logger and
+    # vanish (the console mailer's link was the first casualty). No-op when a
+    # host already owns the root logger.
+    configure_logging()
 
     # Step 1: database setup
     # Design: local DB lives at ~/.datara/datara.db (outside the repo),
