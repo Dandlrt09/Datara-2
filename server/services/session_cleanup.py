@@ -25,6 +25,19 @@ async def sweep_expired(store: SqliteStore) -> int:
     return count
 
 
+async def sweep_expired_tokens(store: SqliteStore) -> int:
+    """Delete unredeemable mailed tokens (D11). Returns rows deleted.
+
+    Hygiene, not correctness: redemption re-checks expiry itself (D12), so a
+    token left in the table is already refused. This only stops the table from
+    growing forever.
+    """
+    count = await store.sweep_expired_auth_tokens()
+    if count > 0:
+        logger.info("Swept %d expired auth token(s)", count)
+    return count
+
+
 async def purge_due_deletions(store: SqliteStore) -> int:
     """Purge every account whose deletion deadline has passed (D1/D4).
 
@@ -70,6 +83,10 @@ async def start_background_sweep(store: SqliteStore) -> asyncio.Task:
                 await purge_due_deletions(store)
             except Exception:
                 logger.exception("Background account purge failed")
+            try:
+                await sweep_expired_tokens(store)
+            except Exception:
+                logger.exception("Background auth token sweep failed")
 
     task = asyncio.create_task(_loop(), name="session-sweep")
     return task
