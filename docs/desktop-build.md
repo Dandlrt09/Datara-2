@@ -53,6 +53,22 @@ libraries beside it. Onedir is the default because it starts immediately;
 `--onefile` unpacks the whole bundle on every launch and is only worth it when a
 single file matters more than launch time.
 
+### Building on a machine that already has the repository
+
+A Windows build must **not** reuse a virtualenv created elsewhere. When the same
+checkout is also used from WSL, `.venv/` holds a Linux interpreter, and syncing
+into it would replace that environment and break the Linux setup. Point the
+build at its own directory instead:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT="$HOME\datara-win-venv"
+uv sync --all-extras
+uv run pyinstaller datara.spec --noconfirm
+```
+
+Keeping it outside the repository also means the build environment never turns
+up as an untracked directory inside the checkout.
+
 To debug a frozen build, build it with a console instead of hunting for a log
 file:
 
