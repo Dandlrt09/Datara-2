@@ -33,6 +33,20 @@ uv sync --group dev
 uv run pytest
 ```
 
+## Desktop application
+
+Datara runs as a desktop application: one executable, its own window, no Python
+on the user's machine. From the source tree the desktop entry point can be run
+directly, without packaging anything:
+
+```bash
+uv sync --all-extras
+uv run datara          # API on a free loopback port + its own window
+```
+
+Frozen builds, where the application writes its data, and the acceptance test a
+release has to pass are documented in [docs/desktop-build.md](docs/desktop-build.md).
+
 ## License
 
 Datara is source-available under the [Functional Source License 1.1, MIT Future
