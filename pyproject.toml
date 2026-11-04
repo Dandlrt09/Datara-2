@@ -19,6 +19,13 @@ server = [
     "openai>=1.55.0",
     "cryptography>=43.0.0",
 ]
+# The desktop application: everything the local server needs, plus the toolkit
+# that gives it its own window instead of a browser tab. Kept separate so a
+# server-only install never drags a GUI toolkit (and its system libraries) in.
+desktop = [
+    "datara[hosted]",
+    "pywebview>=5.0",
+]
 hosted = [
     "datara[server]",
     "plotly>=5.24.0",
@@ -26,6 +33,10 @@ hosted = [
     "openpyxl>=3.1.0",
     "numpy>=2.0.0",
 ]
+
+[project.scripts]
+# `uv run datara` opens the desktop app from the source tree, without packaging.
+datara = "server.desktop:main"
 
 [dependency-groups]
 dev = [
@@ -35,6 +46,9 @@ dev = [
     "numpy>=2.0.0",
     "openpyxl>=3.1.0",
     "plotly>=5.24.0",
+    # Build-only: turns the app into a frozen binary. 6.21 is the first release
+    # that supports Python 3.14, which is what this project's venv runs.
+    "pyinstaller>=6.21",
 ]
 
 [tool.pytest.ini_options]
