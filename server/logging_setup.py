@@ -15,15 +15,42 @@ than no fallback at all.
 
 The guard is deliberate: when a host already installed handlers (pytest, an
 embedder), the host owns the log stream and this becomes a no-op.
+
+The desktop build adds a second destination. A frozen windowed executable has no
+console at all -- PyInstaller leaves ``sys.stderr`` as ``None`` -- so a stream
+handler would raise on the first record and the app's own logs would be lost
+again, in the one build where nobody can attach a debugger. Frozen, the log goes
+to ``<data_dir>/datara.log`` instead.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
+
+from server.resources import data_dir, is_frozen
 
 #: Readable and greppable: the console mailer's body arrives as extra lines.
 LOG_FORMAT = "%(levelname)s %(name)s: %(message)s"
 LOG_LEVEL = logging.INFO
+
+#: Name of the log file the frozen desktop build writes, inside the data dir
+#: (next to the database, so it follows ``DATARA_DB_PATH``).
+LOG_FILENAME = "datara.log"
+
+
+def _build_handler() -> logging.Handler:
+    """Pick where records go, given whether a console exists at all.
+
+    Frozen, or any interpreter without a usable stderr, writes to the data
+    directory: there is no console to write to, and a file is the only way the
+    user -- or whoever supports them -- can see why something failed.
+    """
+    if is_frozen() or sys.stderr is None:
+        log_path = data_dir() / LOG_FILENAME
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        return logging.FileHandler(log_path, encoding="utf-8")
+    return logging.StreamHandler()
 
 
 def configure_logging() -> None:
@@ -35,7 +62,7 @@ def configure_logging() -> None:
     root = logging.getLogger()
     if root.handlers:
         return
-    handler = logging.StreamHandler()
+    handler = _build_handler()
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root.addHandler(handler)
     root.setLevel(LOG_LEVEL)
