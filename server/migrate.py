@@ -9,10 +9,14 @@ import sqlite3
 from pathlib import Path
 
 from server.db_path import resolve_db_path
+from server.resources import resource_path
 
 logger = logging.getLogger(__name__)
 
-MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# Resolved through server.resources: a frozen build ships the .sql files inside
+# the bundle, and an empty directory here boots a schema-less database that
+# looks like a fresh install rather than a packaging error.
+MIGRATIONS_DIR = resource_path("server", "migrations")
 
 
 def get_applied_versions(conn: sqlite3.Connection) -> set[int]:

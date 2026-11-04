@@ -23,6 +23,7 @@ from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
 from server.logging_setup import configure_logging
 from server.migrate import apply_migrations
+from server.resources import resource_path
 from server.services.sandbox_local import sweep_orphan_sandbox_dirs
 from server.services.session_cleanup import (
     purge_due_deletions,
@@ -219,8 +220,10 @@ app.include_router(activity.router)
 app.include_router(usage.router)
 app.include_router(export.router)
 
-# Mount static files (for production, serve built frontend here)
-static_dir = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+# Mount static files (for production, serve built frontend here). Resolved
+# through server.resources so the frozen desktop build serves the frontend
+# PyInstaller unpacked instead of a path relative to this module.
+static_dir = resource_path("web", "dist")
 
 
 class SPAStaticFiles(StaticFiles):
