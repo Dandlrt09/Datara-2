@@ -6,6 +6,8 @@ __pycache__/
 .codegraph/
 *.db
 dist/
+# PyInstaller's work directory: analysis output, never an input to anything.
+/build/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/

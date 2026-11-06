@@ -24,6 +24,7 @@ from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
 from server.api.upload_guard import CONTENT_LENGTH_MARGIN, oversize_upload_detail
 from server.limits import get_limits
+from server.resources import default_uploads_dir
 from server.services.profile_cache import get_profile, serialize_profile
 from server.services.sqlite_store import SqliteStore
 
@@ -31,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["files"])
 
-_DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+# Resolved through server.resources: a frozen build cannot write beside its own
+# executable, so its default lives in the per-user data directory instead.
+_DEFAULT_UPLOADS_DIR = default_uploads_dir()
 
 # Streaming read chunk for the bounded copy to disk. The multipart
 # Content-Length slack lives in server.api.upload_guard.CONTENT_LENGTH_MARGIN,
