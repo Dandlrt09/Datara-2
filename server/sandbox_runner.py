@@ -29,10 +29,14 @@ import io as _IO_MODULE
 import json
 import math
 import os
-import resource
 import sys
 import traceback
 import io
+
+try:
+    import resource
+except ImportError:  # Windows has no ``resource`` module
+    resource = None  # type: ignore[assignment]
 
 
 # ── Resource limits ─────────────────────────────────────────────────────────
@@ -44,6 +48,14 @@ def _set_rlimits(limits: dict) -> None:
     Applies RLIMIT_AS (virtual memory), RLIMIT_CPU (CPU seconds),
     RLIMIT_NPROC (no fork bombs), and RLIMIT_FSIZE (max file write).
     """
+    if resource is None:
+        # Windows: the limits are imposed by the parent as a Windows Job Object
+        # (see ``server/services/sandbox_win_job.py``) because the child cannot
+        # handicap itself from the inside. The only cap with no Windows
+        # equivalent is RLIMIT_FSIZE (file-write size); the Python-level
+        # ``open`` jail in this module remains the only write-size guard there.
+        return
+
     memory_mb = limits.get("memory_mb", 512)
     cpu_seconds = limits.get("cpu_seconds", 30)
 
