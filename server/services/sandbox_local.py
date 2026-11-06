@@ -1,8 +1,12 @@
 """Parent-side sandbox runner: asyncio subprocess management.
 
-Spawns ``sandbox_runner.py`` as a subprocess with JSON stdin/stdout protocol.
+Spawns the sandbox child as a subprocess with JSON stdin/stdout protocol.
 Handles timeout, memory limit normalization, and hard-OOM fallback.
 Also provides an orphan temp-dir sweep for the lifespan background task.
+
+The child is ``server/sandbox_runner.py`` run by an interpreter when Datara runs
+from source, and the executable itself wearing its worker hat when it runs
+frozen -- see :func:`sandbox_child_command`.
 """
 
 from __future__ import annotations
@@ -16,14 +20,33 @@ import shutil
 import sys
 import tempfile
 import time
-from pathlib import Path
+
+from server.desktop import SANDBOX_RUNNER_FLAG
+from server.resources import is_frozen, resource_path
+from server.services import sandbox_win_job
 
 logger = logging.getLogger(__name__)
 
-# Path to the sandbox runner script
-SANDBOX_RUNNER_PATH = str(
-    Path(__file__).resolve().parent.parent / "sandbox_runner.py"
-)
+# Path to the sandbox runner script. Resolved through server.resources so a
+# frozen bundle finds the copy PyInstaller unpacked.
+SANDBOX_RUNNER_PATH = str(resource_path("server", "sandbox_runner.py"))
+
+
+def sandbox_child_command() -> list[str]:
+    """The argv that starts the sandbox child.
+
+    From source: a real interpreter, in isolated mode (``-I`` ignores PYTHONPATH
+    and keeps the working directory off ``sys.path``), with bytecode writing off.
+
+    Frozen: the executable itself. Inside a bundle ``sys.executable`` *is* the
+    application, so there is no interpreter left to spawn; without the flag the
+    child would start a second copy of the server instead of running code. The
+    isolation is not lost in exchange: a frozen bundle carries its own standard
+    library and ignores PYTHONPATH and user site-packages by construction.
+    """
+    if is_frozen():
+        return [sys.executable, SANDBOX_RUNNER_FLAG]
+    return [sys.executable, "-I", "-B", SANDBOX_RUNNER_PATH]
 
 
 async def run_code(
@@ -59,7 +82,7 @@ async def run_code(
     Raises:
         RuntimeError: If the sandbox runner script is not found.
     """
-    if not os.path.exists(SANDBOX_RUNNER_PATH):
+    if not is_frozen() and not os.path.exists(SANDBOX_RUNNER_PATH):
         raise RuntimeError(f"Sandbox runner not found: {SANDBOX_RUNNER_PATH}")
 
     resolved_limits = limits or {}
@@ -77,6 +100,8 @@ async def run_code(
     }
 
     tmpdir = tempfile.mkdtemp(prefix="datara-sandbox-")
+    # Windows Job Object handle; stays None on POSIX (no job, nothing to close).
+    job: int | None = None
     try:
         # Stage session files into the sandbox cwd under their original
         # basename so generated code can read them by plain filename.
@@ -85,16 +110,61 @@ async def run_code(
             if safe_name and os.path.isfile(src):
                 shutil.copy2(src, os.path.join(tmpdir, safe_name))
 
+        # Windows has no in-child equivalent of resource.setrlimit, so the
+        # parent enforces the caps through a Job Object. The job must exist
+        # BEFORE the child is spawned: the child is created suspended and
+        # assigned while it cannot yet run, closing the race where it would
+        # spawn a grandchild outside the job.
+        spawn_kwargs: dict = {}
+        if sandbox_win_job.limits_supported():
+            job = sandbox_win_job.create_job(resolved_limits.get("memory_mb", 512))
+            if job is None:
+                # No job handle means nothing to assign or resume: a suspended
+                # child would hang until the timeout, so spawn it normally.
+                logger.warning(
+                    "Windows Job Object creation failed; sandbox runs without "
+                    "parent-imposed limits"
+                )
+            else:
+                # Only set on Windows -- POSIX subprocess rejects this kwarg.
+                spawn_kwargs["creationflags"] = sandbox_win_job.CREATE_SUSPENDED
+
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-I",
-            "-B",
-            SANDBOX_RUNNER_PATH,
+            *sandbox_child_command(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=tmpdir,
+            **spawn_kwargs,
         )
+
+        if job is not None:
+            if not sandbox_win_job.assign(job, proc.pid):
+                logger.warning("Failed to assign sandbox child %s to job", proc.pid)
+            # The child was spawned suspended, so it MUST be resumed on every
+            # path once that happened -- even if assign failed. Skipping the
+            # resume would leave the child frozen and the user would see a
+            # mysterious timeout instead of an error.
+            if not sandbox_win_job.resume(proc.pid):
+                # It is still frozen, so waiting on it would burn the whole
+                # timeout budget and then report "execution exceeded Ns" -- a
+                # cause that names the wrong thing. End the run now instead.
+                logger.error("Failed to resume sandbox child %s", proc.pid)
+                proc.kill()
+                await proc.wait()
+                return {
+                    "status": "error",
+                    "error": {
+                        "type": "runtime_error",
+                        "message": (
+                            "The sandbox process could not be started: resume "
+                            "failed after the Windows job assignment."
+                        ),
+                    },
+                    "figures": [],
+                    "tables": [],
+                    "text": "",
+                }
 
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -175,6 +245,13 @@ async def run_code(
 
         return result
     finally:
+        # Closing the job handle is what guarantees a sandbox child cannot
+        # outlive the app: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (see
+        # sandbox_win_job.close) kills everything still in the job when the
+        # last handle closes. The tmpdir is removed right after, once no child
+        # can still hold files open in it.
+        if job is not None:
+            sandbox_win_job.close(job)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
