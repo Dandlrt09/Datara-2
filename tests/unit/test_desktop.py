@@ -19,6 +19,7 @@ import pytest
 
 from server import desktop
 from server import sandbox_runner
+from server.services.mailer import resolve_app_url
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -112,6 +113,43 @@ class TestWindowOwnsTheProcess:
         # The exception leaves run_desktop, but the server must not survive it:
         # otherwise the user's next launch collides with a zombie on the port.
         assert _port_is_free(ports[0])
+
+
+class TestMailedLinksUseTheRealPort:
+    """A desktop build picks its port at runtime, so the links it mails must follow it.
+
+    The mailer builds every verification and reset link from DATARA_APP_URL. When
+    that is left at its placeholder the packaged app mails links to
+    ``http://localhost:8000`` while it is actually serving somewhere else, and a
+    new user can never prove their address. Found in the T7 acceptance run on
+    Windows (06/11/2026): the link only worked after editing the port by hand.
+    """
+
+    def test_the_mailed_link_uses_the_port_the_app_serves_on(self, isolated_env, monkeypatch):
+        isolated_env()
+        monkeypatch.delenv("DATARA_APP_URL", raising=False)
+        seen: dict[str, str] = {}
+
+        def fake_window(url: str) -> None:
+            seen["served"] = url
+            # Exactly what the mailer would put in the verification mail.
+            seen["mailed"] = resolve_app_url()
+
+        assert desktop.run_desktop(open_window=fake_window) is True
+        assert seen["mailed"] == seen["served"]
+
+    def test_a_configured_app_url_is_not_overwritten(self, isolated_env, monkeypatch):
+        # A hosted deployment behind a proxy knows its public URL; the loopback
+        # bind must not talk it out of that.
+        isolated_env()
+        monkeypatch.setenv("DATARA_APP_URL", "https://datara.app/")
+        seen: dict[str, str] = {}
+
+        def fake_window(url: str) -> None:
+            seen["mailed"] = resolve_app_url()
+
+        desktop.run_desktop(open_window=fake_window)
+        assert seen["mailed"] == "https://datara.app"
 
 
 class TestArgumentDispatch:

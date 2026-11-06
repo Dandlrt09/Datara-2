@@ -64,6 +64,26 @@ def local_url(sock: socket.socket) -> str:
     return f"http://{HOST}:{sock.getsockname()[1]}"
 
 
+def publish_app_url(url: str) -> str:
+    """Point the links this process mails at the port it actually serves on.
+
+    The mailer builds every verification and password-reset link from
+    ``DATARA_APP_URL`` (``server/services/mailer.py``), and a desktop build only
+    learns its port at runtime. Left alone, a packaged app mails links to the
+    placeholder ``http://localhost:8000`` while it is serving somewhere else, so
+    nobody who registers can prove their address.
+
+    An explicitly configured ``DATARA_APP_URL`` always wins: a hosted deployment
+    behind a proxy knows its public URL, and this loopback bind does not get to
+    talk it out of that. Returns the URL that will be used.
+    """
+    configured = os.environ.get("DATARA_APP_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    os.environ["DATARA_APP_URL"] = url
+    return url
+
+
 def _open_webview_window(url: str) -> None:
     """Show the app in its own window and block until the user closes it.
 
@@ -124,6 +144,9 @@ def run_desktop(*, open_window: Callable[[str], None] | None = None) -> bool:
 
     sock = bind_loopback_socket()
     url = local_url(sock)
+    # Before the server takes a single request: the mail sent to prove an address
+    # has to point back at the port this process just bound.
+    publish_app_url(url)
     config = uvicorn.Config(app, log_config=None)
     server = uvicorn.Server(config)
     thread = threading.Thread(
