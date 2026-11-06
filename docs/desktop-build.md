@@ -69,6 +69,35 @@ uv run pyinstaller datara.spec --noconfirm
 Keeping it outside the repository also means the build environment never turns
 up as an untracked directory inside the checkout.
 
+### When `uv sync` fails while building on Windows
+
+Two different failures appear on a machine whose profile is watched by cloud
+storage (OneDrive "files on demand") or by an antivirus scanning new files, and
+the second one survives every retry:
+
+- `os error 396` — *the cloud operation is not supported on a file with
+  incompatible hard links*: `uv` installs by **hardlinking** from its cache,
+  which the Cloud Files filter refuses.
+- `os error 32` — *the file is being used by another process*: a run interrupted
+  by the first failure leaves hardlinked files behind, and every later attempt
+  then dies on the **same** file however many times it is retried.
+
+The fix is both halves, in this order:
+
+```powershell
+$env:UV_LINK_MODE="copy"                                # copy instead of hardlinking
+Remove-Item -Recurse -Force "$HOME\datara-win-venv"     # discard the dirty environment
+uv sync --all-extras                                    # rebuild it from scratch
+```
+
+Re-running the sync alone does **not** clear the second failure: the environment
+has to be recreated. To confirm the result, `uv sync --check --all-extras` must
+report no changes — `uv` audits its own install records, so files that sit on
+disk but are unregistered (which is what an interrupted run leaves) still count
+as missing, and a build made from such an environment is not reproducible.
+
+
+
 To debug a frozen build, build it with a console instead of hunting for a log
 file:
 
