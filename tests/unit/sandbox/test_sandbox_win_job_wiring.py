@@ -247,7 +247,13 @@ class _FakeResource:
 
 
 def test_set_rlimits_applies_the_four_caps(monkeypatch):
-    """With the module present, every documented cap is handed to setrlimit."""
+    """With the module present, every documented cap is handed to setrlimit.
+
+    ``RLIMIT_CPU`` is pinned to ``(cpu_seconds, cpu_seconds + 1)``: the soft
+    value is the real cap and the hard value is one second higher so the kernel
+    delivers SIGXCPU instead of the simultaneous SIGKILL that "soft == hard"
+    produces on this machine (measured, decision D7).
+    """
     fake = _FakeResource()
     monkeypatch.setattr(sandbox_runner, "resource", fake)
 
@@ -255,7 +261,7 @@ def test_set_rlimits_applies_the_four_caps(monkeypatch):
 
     assert fake.calls == [
         (fake.RLIMIT_AS, (128 * 1024 * 1024,) * 2),
-        (fake.RLIMIT_CPU, (5, 5)),
+        (fake.RLIMIT_CPU, (5, 6)),
         (fake.RLIMIT_NPROC, (1, 1)),
         (fake.RLIMIT_FSIZE, (50 * 1024 * 1024,) * 2),
     ]
@@ -569,6 +575,62 @@ async def test_other_exit_code_keeps_the_produced_no_output_message(monkeypatch)
     events: list = []
     _install_windows_job(monkeypatch, events)
     _install_spawn_spy(monkeypatch, events, stdout=b"", returncode=1)
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]
+
+
+# ── POSIX CPU kill: SIGXCPU is named, SIGKILL is not ──────────────────────
+
+# Measured on this machine (WSL/Linux, Python 3.14, 2026-11-10): with
+# ``RLIMIT_CPU`` soft < hard the child dies with ``rc = -24`` (SIGXCPU); with
+# soft == hard it dies with ``rc = -9`` (SIGKILL), indistinguishable from an
+# OOM. D7 fixed the runner to soft < hard and taught the parent to name -24.
+_POSIX_CPU_KILL_EXIT_CODE = -24
+
+
+@pytest.mark.asyncio
+async def test_posix_cpu_kill_reports_the_cpu_limit(monkeypatch):
+    """A SIGXCPU kill with a cap set must be named as the CPU limit."""
+    events: list = []
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_POSIX_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "timeout"
+    assert result["error"]["message"] == "Execution exceeded the CPU limit (4s)"
+
+
+@pytest.mark.asyncio
+async def test_posix_cpu_kill_without_a_cap_keeps_the_generic_message(monkeypatch):
+    """The SIGXCPU signature alone is not enough: no cap means no claim."""
+    events: list = []
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_POSIX_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code("print('hi')", limits={"memory_mb": 256})
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_posix_sigkill_is_never_reported_as_a_cpu_kill(monkeypatch):
+    """SIGKILL is indistinguishable from an OOM; never claim it was the CPU."""
+    events: list = []
+    _install_spawn_spy(monkeypatch, events, stdout=b"", returncode=-9)
 
     result = await sandbox_local.run_code(
         "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
