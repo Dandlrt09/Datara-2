@@ -147,3 +147,51 @@ class TestUnavailableKeyring:
         box = SecretBox.for_store(":memory:")
         assert box.decrypt(box.encrypt("sk-mem")) == "sk-mem"
         assert fake_keyring.store == {}
+
+
+class TestSlotRepair:
+    """The slot can be damaged; the store must still boot (F9/S11)."""
+
+    def test_garbage_keyring_slot_falls_back_and_repairs(
+        self, monkeypatch, tmp_path, fake_keyring
+    ):
+        """A garbage keyring value must not wedge the store.
+
+        The file fallback wins and the slot is repaired with the valid file
+        key, so the next boot finds a usable keyring entry.
+        """
+        monkeypatch.delenv("DATARA_SECRET_KEY", raising=False)
+        fake_keyring.store[_KEY] = "garbage-not-a-fernet-key"
+        db_path = str(tmp_path / "datara.db")
+
+        box = SecretBox.for_store(db_path)
+        token = box.encrypt("sk-repair")
+
+        assert box.decrypt(token) == "sk-repair"
+        file_key = (tmp_path / ".secret_key").read_bytes().strip()
+        assert fake_keyring.store[_KEY] == file_key.decode("ascii")
+
+    def test_divergent_keyring_key_leaves_file_ciphertext_unreadable(
+        self, monkeypatch, tmp_path, fake_keyring
+    ):
+        """Pins the documented single-slot trade-off (follow-up (b)).
+
+        When the keyring already holds a usable key that differs from a
+        pre-existing key file, the keyring wins (S11's order) and the file's
+        ciphertext becomes undecryptable. Reachable only with a second DB under
+        the same OS user or a hand-replaced file -- never in a single-DB
+        install. Pinned so a future per-DB-namespaced slot has to break it on
+        purpose.
+        """
+        monkeypatch.delenv("DATARA_SECRET_KEY", raising=False)
+        keyring_key = Fernet.generate_key()
+        fake_keyring.store[_KEY] = keyring_key.decode("ascii")
+        file_key = Fernet.generate_key()
+        key_path = tmp_path / ".secret_key"
+        key_path.write_bytes(file_key)
+
+        box = SecretBox.for_store(str(tmp_path / "datara.db"))
+        token = SecretBox(file_key).encrypt("sk-file-era")
+
+        assert box.decrypt(token) is None
+        assert key_path.read_bytes() == file_key
