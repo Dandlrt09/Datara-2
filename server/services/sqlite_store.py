@@ -715,8 +715,8 @@ class SqliteStore:
     ) -> None:
         """Append one attempt for a hashed limiter key (S4).
 
-        ``key_hash`` is the SHA-256 of the limiter key, never the raw IP or
-        email (privacy promise, ``rate_limit.hash_attempt_key``).
+        ``key_hash`` is an HMAC-SHA256 digest of the limiter key (secret keyed),
+        never the raw IP or email (privacy promise, ``rate_limit.hash_attempt_key``).
         ``attempted_at`` is wall-clock epoch seconds, so the window survives a
         restart.
         """

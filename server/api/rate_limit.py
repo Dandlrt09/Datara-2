@@ -5,8 +5,8 @@ Two limiters share the same window (five attempts inside fifteen minutes):
 - ``AttemptLimiter`` is the pure in-memory sliding window. It is the tested
   algorithm and the test seam, but a restart clears every counter -- acceptable
   only for a best-effort brake.
-- ``PersistentAttemptLimiter`` stores the counters in SQLite keyed by a SHA-256
-  hash of the limiter key (S4). A restart no longer resets the brake, and no IP
+- ``PersistentAttemptLimiter`` stores the counters in SQLite keyed by an
+  HMAC-SHA256 digest of the limiter key, keyed by a server secret (S4). A restart no longer resets the brake, and no IP
   or email is ever written in clear: only the hash reaches disk.
 
 Both keep the app's promise of never storing an IP or an email. Only the
