@@ -28,6 +28,11 @@ _OK_OUTPUT = json.dumps(
     {"status": "ok", "figures": [], "tables": [], "text": "", "error": None}
 ).encode("utf-8")
 
+#: Sentinel for "the caller did not pass this keyword argument". A plain ``1``
+#: default would make "omitted" indistinguishable from "passed 1", which is the
+#: loose pin the T3 verifier flagged (advisory of T7).
+_UNSET = object()
+
 
 class _FakeProcess:
     """Minimal stand-in for the asyncio subprocess used by ``run_code``."""
@@ -96,7 +101,10 @@ def _install_windows_job(
     """Make the parent take the Windows Job Object path and record its calls.
 
     Returns the list of ``max_processes`` values the parent asked for, in a
-    separate record so the 2-tuple ``events`` stream keeps its shape. Pass
+    separate record so the 2-tuple ``events`` stream keeps its shape. The
+    fake's default is ``_UNSET``, not ``1``: the real ``create_job`` defaults to
+    1, but recording that value would make "omitted the kwarg" look identical
+    to "passed 1" and leave the native cap pinned loosely (T7). Pass
     ``requested_cpu`` to also collect the ``cpu_seconds`` values, in their own
     list so existing callers keep their ``requested_caps`` shape.
     """
@@ -105,7 +113,9 @@ def _install_windows_job(
     requested_caps: list = []
 
     def fake_create_job(
-        memory_mb: int, max_processes: int = 1, cpu_seconds: int | None = None
+        memory_mb: int,
+        max_processes: int | object = _UNSET,
+        cpu_seconds: int | None = None,
     ):
         requested_caps.append(max_processes)
         if requested_cpu is not None:
@@ -214,18 +224,52 @@ async def test_posix_spawn_passes_no_creationflags(monkeypatch):
 # ── The child no longer requires the POSIX ``resource`` module ──────────────
 
 
-def test_set_rlimits_is_noop_without_resource(monkeypatch):
-    """On Windows ``import resource`` fails; the limits come from the parent."""
-    import resource as resource_mod  # noqa: PLC0415
+class _FakeResource:
+    """Stand-in for the POSIX ``resource`` module, usable on every platform.
 
-    calls: list = []
-    monkeypatch.setattr(sandbox_runner, "resource", None)
-    monkeypatch.setattr(resource_mod, "setrlimit", lambda *a: calls.append(a))
+    The real module does not exist on Windows, so a test that imported it
+    unconditionally errored there instead of running (advisory
+    ``R3-test-imports-resource-unconditionally``). This fake carries the four
+    constants and a recording ``setrlimit``, so both the positive and the
+    negative path run on any OS.
+    """
 
-    # Must return early without raising and without touching setrlimit.
+    RLIMIT_AS = 0
+    RLIMIT_CPU = 1
+    RLIMIT_NPROC = 2
+    RLIMIT_FSIZE = 3
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def setrlimit(self, which: int, value: tuple) -> None:
+        self.calls.append((which, value))
+
+
+def test_set_rlimits_applies_the_four_caps(monkeypatch):
+    """With the module present, every documented cap is handed to setrlimit."""
+    fake = _FakeResource()
+    monkeypatch.setattr(sandbox_runner, "resource", fake)
+
     sandbox_runner._set_rlimits({"memory_mb": 128, "cpu_seconds": 5})
 
-    assert calls == []
+    assert fake.calls == [
+        (fake.RLIMIT_AS, (128 * 1024 * 1024,) * 2),
+        (fake.RLIMIT_CPU, (5, 5)),
+        (fake.RLIMIT_NPROC, (1, 1)),
+        (fake.RLIMIT_FSIZE, (50 * 1024 * 1024,) * 2),
+    ]
+
+
+def test_set_rlimits_is_noop_without_resource(monkeypatch):
+    """On Windows ``import resource`` fails; the limits come from the parent.
+
+    The proof is that the call returns without raising: a version that did not
+    guard ``resource is None`` would blow up on the attribute access.
+    """
+    monkeypatch.setattr(sandbox_runner, "resource", None)
+
+    assert sandbox_runner._set_rlimits({"memory_mb": 128, "cpu_seconds": 5}) is None
 
 
 # ── Windows Job Object ordering (no Windows runtime available here) ─────────
@@ -406,7 +450,11 @@ async def test_redirector_child_gets_a_second_process_slot(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_native_child_keeps_the_strict_process_cap(monkeypatch):
-    """Wiring: a native interpreter still asks ``create_job`` for exactly 1."""
+    """Wiring: a native interpreter still asks ``create_job`` for exactly 1.
+
+    The fake records ``_UNSET`` when the kwarg is omitted, so this now fails
+    both on "passed the wrong cap" and on "did not pass the cap at all".
+    """
     events: list = []
     requested_caps = _install_windows_job(monkeypatch, events)
     _install_spawn_spy(monkeypatch, events)
