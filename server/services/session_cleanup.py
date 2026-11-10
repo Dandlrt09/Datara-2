@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
+from server.api.rate_limit import WINDOW_SECONDS
 from server.api.routers.files import remove_user_uploads
 from server.services.sqlite_store import SqliteStore
 
@@ -35,6 +37,19 @@ async def sweep_expired_tokens(store: SqliteStore) -> int:
     count = await store.sweep_expired_auth_tokens()
     if count > 0:
         logger.info("Swept %d expired auth token(s)", count)
+    return count
+
+
+async def sweep_expired_attempts(store: SqliteStore) -> int:
+    """Delete auth attempt counters older than the rate-limit window (S4).
+
+    Hygiene, not correctness: the persistent limiter already ignores events
+    outside its window, so a stale row only wastes space. Purging stops the
+    table from growing forever, mirroring ``sweep_expired_tokens``.
+    """
+    count = await store.purge_auth_attempts(time.time() - WINDOW_SECONDS)
+    if count > 0:
+        logger.info("Swept %d expired auth attempt(s)", count)
     return count
 
 
@@ -87,6 +102,10 @@ async def start_background_sweep(store: SqliteStore) -> asyncio.Task:
                 await sweep_expired_tokens(store)
             except Exception:
                 logger.exception("Background auth token sweep failed")
+            try:
+                await sweep_expired_attempts(store)
+            except Exception:
+                logger.exception("Background auth attempt sweep failed")
 
     task = asyncio.create_task(_loop(), name="session-sweep")
     return task

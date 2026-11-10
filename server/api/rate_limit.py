@@ -1,9 +1,17 @@
-"""In-memory attempt limiter for the auth endpoints (S1-S3).
+"""Attempt limiter for the auth endpoints (S1-S4).
 
-The server runs as a single process, so a dict is enough: no table, no
-migration, and no personal data written to disk. Nothing here is persisted, so a
-restart clears every counter -- acceptable for a brute-force brake, and it keeps
-the app's promise of never storing an IP.
+Two limiters share the same window (five attempts inside fifteen minutes):
+
+- ``AttemptLimiter`` is the pure in-memory sliding window. It is the tested
+  algorithm and the test seam, but a restart clears every counter -- acceptable
+  only for a best-effort brake.
+- ``PersistentAttemptLimiter`` stores the counters in SQLite keyed by a SHA-256
+  hash of the limiter key (S4). A restart no longer resets the brake, and no IP
+  or email is ever written in clear: only the hash reaches disk.
+
+Both keep the app's promise of never storing an IP or an email. Only the
+persisted limiter uses wall-clock time, because its window must survive the
+process (``time.monotonic`` resets with it).
 
 Sliding window: each key keeps the timestamps of its attempts inside the
 window, and the sixth attempt is refused until the oldest one falls out.
@@ -11,6 +19,7 @@ window, and the sixth attempt is refused until the oldest one falls out.
 
 from __future__ import annotations
 
+import hashlib
 import time
 
 # Five attempts inside fifteen minutes, then wait (S3).
@@ -99,4 +108,65 @@ class AttemptLimiter:
 
 
 # One limiter for the process, shared by the login and register routes.
+#
+# It is the in-memory seam only: the routes themselves go through
+# ``PersistentAttemptLimiter`` so the counters survive a restart (S4). Kept for
+# tests that drive the sliding-window algorithm directly and for conftest's
+# per-test reset.
 auth_attempt_limiter = AttemptLimiter()
+
+
+def hash_attempt_key(key: str) -> str:
+    """SHA-256 hex of a limiter key, the only form written to disk (S4).
+
+    ``hash_token`` in ``auth_service`` would be an import cycle and is about
+    session/token secrets, not limiter keys; ``hashlib`` directly keeps this
+    boundary independent. Hashing is what lets a leaked database yield no IP and
+    no email while the counter still works.
+    """
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+class PersistentAttemptLimiter:
+    """Store-backed sliding-window limiter that survives a restart (S4).
+
+    Uses the same ``MAX_ATTEMPTS`` / ``WINDOW_SECONDS`` constants as
+    ``AttemptLimiter``; the only difference is where the timestamps live. The
+    window math mirrors the in-memory limiter (strict ``>`` cutoff, refuse at
+    ``>= max``) so the two stay behaviourally identical.
+
+    ``clock`` defaults to ``time.time`` (wall clock) because a monotonic clock
+    would restart with the process and defeat the point of persisting.
+    """
+
+    def __init__(
+        self,
+        store,
+        *,
+        max_attempts: int = MAX_ATTEMPTS,
+        window_seconds: int = WINDOW_SECONDS,
+        clock=time.time,
+    ) -> None:
+        self._store = store
+        self._max_attempts = max_attempts
+        self._window_seconds = window_seconds
+        self._clock = clock
+
+    async def retry_after(self, key: str) -> int | None:
+        """Seconds to wait before *key* may try again, or None if it may now."""
+        now = self._clock()
+        events = await self._store.list_auth_attempts(
+            hash_attempt_key(key), now - self._window_seconds
+        )
+        if len(events) < self._max_attempts:
+            return None
+        remaining = self._window_seconds - (now - events[0])
+        return max(1, int(remaining))
+
+    async def record(self, key: str) -> None:
+        """Register one attempt for *key*."""
+        await self._store.record_auth_attempt(hash_attempt_key(key), self._clock())
+
+    async def clear(self, key: str) -> None:
+        """Forget every attempt for *key* (a successful authentication)."""
+        await self._store.clear_auth_attempts(hash_attempt_key(key))

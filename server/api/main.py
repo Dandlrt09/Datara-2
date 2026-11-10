@@ -30,6 +30,7 @@ from server.services.session_cleanup import (
     purge_due_deletions,
     start_background_sweep,
     sweep_expired,
+    sweep_expired_attempts,
 )
 from server.services.sqlite_store import SqliteStore
 
@@ -125,6 +126,16 @@ async def lifespan(app: FastAPI):
             logger.info("Purged %d due account(s) on startup", purged)
     except Exception:
         logger.exception("Startup account purge failed")
+
+    # Step 2c: drop auth attempt counters past the rate-limit window (F9/S4)
+    try:
+        swept_attempts = await sweep_expired_attempts(store)
+        if swept_attempts:
+            logger.info(
+                "Swept %d expired auth attempt(s) on startup", swept_attempts
+            )
+    except Exception:
+        logger.exception("Startup auth attempt sweep failed")
 
     # Step 3: sweep orphan sandbox temp dirs
     try:

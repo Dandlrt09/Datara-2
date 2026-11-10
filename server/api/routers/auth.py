@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
-from server.api.rate_limit import auth_attempt_limiter
+from server.api.rate_limit import PersistentAttemptLimiter
 from server.services.auth_service import (
     MAX_DISPLAY_NAME_LENGTH,
     RESET_TOKEN_TTL_SECONDS,
@@ -273,8 +273,9 @@ def _current_token_hash(request: Request) -> str:
 def _client_ip(request: Request) -> str:
     """The caller's source address, used only to key the limiter (S2).
 
-    It is never written anywhere: it lives in the in-process counter and
-    disappears with the process, keeping the app's promise of storing no IP.
+    It is never written anywhere in clear: it goes into the limiter key, and
+    the persisted counter stores only ``hash_attempt_key`` of that key (S4),
+    keeping the app's promise of storing no IP.
     """
     return request.client.host if request.client else "unknown"
 
@@ -306,10 +307,12 @@ def _attempt_scope(key: str) -> str:
     return key.split(":", 1)[0]
 
 
-def _enforce_attempt_limit(keys: list[str]) -> None:
-    """Refuse with 429 while any key is over its limit (S3)."""
+async def _enforce_attempt_limit(
+    limiter: PersistentAttemptLimiter, keys: list[str]
+) -> None:
+    """Refuse with 429 while any key is over its limit (S3/S4)."""
     for key in keys:
-        retry_after = auth_attempt_limiter.retry_after(key)
+        retry_after = await limiter.retry_after(key)
         if retry_after is not None:
             # A log is storage, so never write the email or the IP (F2): the
             # scope and the wait are all an operator needs.
@@ -382,9 +385,10 @@ async def register(
     # Every register call counts, not just the failed ones: there is no
     # credential to fail here, and account creation is the abuse (S1).
     keys = _attempt_keys("register", request, email)
-    _enforce_attempt_limit(keys)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, keys)
     for key in keys:
-        auth_attempt_limiter.record(key)
+        await limiter.record(key)
 
     # The optional name shares the profile's normalization and ceiling (D4):
     # trimmed, inner whitespace collapsed, blank -> None. It is validated here,
@@ -433,14 +437,15 @@ async def login(
     On too many failed attempts: returns 429.
     """
     keys = _attempt_keys("login", request, body.email)
-    _enforce_attempt_limit(keys)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, keys)
 
     user = await store.get_user_by_email(body.email)
     if not verify_credentials(
         body.password, user["password_hash"] if user else None
     ):
         for key in keys:
-            auth_attempt_limiter.record(key)
+            await limiter.record(key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -462,7 +467,7 @@ async def login(
     # (F4/S3): the person proved they own this account, so its failures were
     # mistyped passwords -- but one valid account must not let an attacker reset
     # the IP brake at will. The IP key survives a successful login.
-    auth_attempt_limiter.clear(_email_attempt_key("login", body.email))
+    await limiter.clear(_email_attempt_key("login", body.email))
 
     raw_token, cookie = await _mint_session(
         store, user["id"], request.headers.get("user-agent")
@@ -529,9 +534,10 @@ async def resend_verification(
     """
     email = normalize_email(body.email)
     keys = _attempt_keys("resend", request, email)
-    _enforce_attempt_limit(keys)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, keys)
     for key in keys:
-        auth_attempt_limiter.record(key)
+        await limiter.record(key)
 
     user = await store.get_user_by_email(email)
     if user is not None and user["email_verified_at"] is None:
@@ -558,9 +564,10 @@ async def forgot_password(
     """
     email = normalize_email(body.email)
     keys = _attempt_keys("forgot", request, email)
-    _enforce_attempt_limit(keys)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, keys)
     for key in keys:
-        auth_attempt_limiter.record(key)
+        await limiter.record(key)
 
     user = await store.get_user_by_email(email)
     if user is not None:
