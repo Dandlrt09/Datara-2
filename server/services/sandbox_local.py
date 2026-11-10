@@ -38,6 +38,16 @@ SANDBOX_RUNNER_PATH = str(resource_path("server", "sandbox_runner.py"))
 #: from this code instead of blaming a crash or a hard OOM.
 _WIN_CPU_KILL_EXIT_CODE = 0xC0000044
 
+#: Exit status the POSIX kernel gives a child killed for exceeding
+#: ``RLIMIT_CPU`` (``returncode`` == -SIGXCPU == -24; the 128 + signal convention
+#: is the shell's, not ``subprocess``'). MEASURED on this machine
+#: (WSL/Linux, Python 3.14, 2026-11-10), not assumed: with the runner's
+#: ``RLIMIT_CPU`` set soft < hard the child dies with ``-24``; with soft == hard
+#: it dies with ``-9`` (SIGKILL), indistinguishable from an OOM (decision D7).
+#: Only this exact status, and only when the request asked for a CPU cap, is
+#: named as a CPU kill.
+_POSIX_CPU_KILL_EXIT_CODE = -24
+
 
 def sandbox_child_command() -> list[str]:
     """The argv that starts the sandbox child.
@@ -263,13 +273,17 @@ async def run_code(
         raw = stdout.decode("utf-8") or ""
         if not raw:
             # A CPU-limit kill also leaves no stdout (the child dies before it
-            # can emit its JSON), and only the job's own exit code tells it
-            # apart from a crash or a hard OOM. The signature is Windows-only;
-            # a POSIX exit status cannot collide with it, so POSIX keeps the
-            # existing message unchanged.
+            # can emit its JSON), and only the exit code tells it apart from a
+            # crash or a hard OOM. The signature is the Windows job's own exit
+            # code on Windows and SIGXCPU on POSIX (the runner sets RLIMIT_CPU
+            # soft < hard so the kernel delivers it); neither collides with the
+            # other, so both are checked here, and SIGKILL (-9) is deliberately
+            # NOT claimed as a CPU kill because it is indistinguishable from an
+            # OOM or the parent's own timeout kill.
             if (
                 resolved_limits.get("cpu_seconds") is not None
-                and proc.returncode == _WIN_CPU_KILL_EXIT_CODE
+                and proc.returncode
+                in (_WIN_CPU_KILL_EXIT_CODE, _POSIX_CPU_KILL_EXIT_CODE)
             ):
                 return {
                     "status": "error",

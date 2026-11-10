@@ -61,8 +61,14 @@ def _set_rlimits(limits: dict) -> None:
 
     # Virtual memory (address space) — includes heap, stack, mmap
     resource.setrlimit(resource.RLIMIT_AS, (memory_mb * 1024 * 1024,) * 2)
-    # CPU seconds
-    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds,) * 2)
+    # CPU seconds. The hard limit is one second above the soft cap so the
+    # kernel delivers SIGXCPU (default action: terminate, exit status -24)
+    # instead of the simultaneous SIGKILL that soft == hard produces on this
+    # machine (measured on WSL/Linux, Python 3.14, decision D7). The soft value
+    # is the real cap; the extra second only makes the kill nameable by the
+    # parent, and SIGXCPU cannot be caught by the sandboxed code (``signal``
+    # is not on the import allowlist), so the hard limit stays a backstop.
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
     # No subprocesses
     resource.setrlimit(resource.RLIMIT_NPROC, (1, 1))
     # Max file write size (50MB)
