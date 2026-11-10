@@ -10,6 +10,7 @@ Windows kernel ignores a struct it cannot parse.
 from __future__ import annotations
 
 import ctypes
+import logging
 
 from server.services import sandbox_win_job as jobmod
 
@@ -98,3 +99,107 @@ class TestOffsetsNotJustSizes:
             | jobmod.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
             | jobmod.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         )
+
+
+class TestWinErrorHelpers:
+    """The Win32 diagnostics are portable to test from Linux by faking ctypes."""
+
+    def test_error_code_is_none_when_get_last_error_is_missing(self, monkeypatch):
+        monkeypatch.delattr(ctypes, "get_last_error", raising=False)
+
+        assert jobmod._win_error_code() is None
+
+    def test_error_code_is_none_when_get_last_error_raises(self, monkeypatch):
+        def boom():
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(ctypes, "get_last_error", boom, raising=False)
+
+        assert jobmod._win_error_code() is None
+
+    def test_error_code_returns_the_value_when_available(self, monkeypatch):
+        monkeypatch.setattr(ctypes, "get_last_error", lambda: 5, raising=False)
+
+        assert jobmod._win_error_code() == 5
+
+    def test_error_text_returns_format_error_text(self, monkeypatch):
+        monkeypatch.setattr(
+            ctypes, "FormatError", lambda code: "Access is denied.", raising=False
+        )
+
+        assert jobmod._win_error_text(5) == "Access is denied."
+
+    def test_error_text_is_empty_when_format_error_is_missing(self, monkeypatch):
+        monkeypatch.delattr(ctypes, "FormatError", raising=False)
+
+        assert jobmod._win_error_text(5) == ""
+
+    def test_error_text_is_empty_when_format_error_raises(self, monkeypatch):
+        def boom(code):
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(ctypes, "FormatError", boom, raising=False)
+
+        assert jobmod._win_error_text(5) == ""
+
+
+class TestLogWinFailure:
+    def test_logs_step_code_and_text(self, caplog, monkeypatch):
+        monkeypatch.setattr(
+            ctypes, "FormatError", lambda code: "Access is denied.", raising=False
+        )
+
+        with caplog.at_level(logging.ERROR, logger=jobmod.__name__):
+            jobmod._log_win_failure("create", 5)
+
+        records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "create" in message
+        assert "5" in message
+        assert "Access is denied." in message
+
+    def test_logs_missing_code_without_inventing_a_number(self, caplog):
+        with caplog.at_level(logging.ERROR, logger=jobmod.__name__):
+            jobmod._log_win_failure("assign", None)
+
+        records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "no win32 error code" in message.lower()
+        # The requirement's own wording names "Win32"; strip that literal so
+        # this only rejects an invented error-code number.
+        assert not any(ch.isdigit() for ch in message.replace("Win32", ""))
+
+    def test_logs_zero_code_as_no_code(self, caplog):
+        # D5: get_last_error() == 0 means no system error, so it is never
+        # printed as if it were an error code.
+        with caplog.at_level(logging.ERROR, logger=jobmod.__name__):
+            jobmod._log_win_failure("resume", 0)
+
+        records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "no win32 error code" in message.lower()
+        assert not any(ch.isdigit() for ch in message.replace("Win32", ""))
+
+
+class TestNonWindowsStaysSilent:
+    def test_entry_points_do_not_log_when_the_platform_cannot(
+        self, caplog, monkeypatch
+    ):
+        """The module's contract: off Windows every entry point is a silent no-op.
+
+        The new diagnostics must not leak there either, so the failure sites stay
+        behind the ``limits_supported()`` gate. Patching the gate (instead of
+        relying on the host OS) makes this hold on any platform.
+        """
+        monkeypatch.setattr(jobmod, "limits_supported", lambda: False)
+
+        with caplog.at_level(logging.ERROR, logger=jobmod.__name__):
+            assert jobmod.create_job(256) is None
+            assert jobmod.assign(123, 4242) is False
+            assert jobmod.resume(4242) is False
+            jobmod.close(123)
+
+        assert [r for r in caplog.records if r.levelno == logging.ERROR] == []
