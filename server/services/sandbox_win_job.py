@@ -53,6 +53,10 @@ CREATE_SUSPENDED: int = 0x00000004
 
 #: Cap on committed memory (see note 1 in the module docstring).
 JOB_OBJECT_LIMIT_PROCESS_MEMORY: int = 0x00000100
+#: Per-process CPU-time cap, set from ``PerProcessUserTimeLimit`` (100 ns
+#: units). When a process exceeds it the job terminates it; measured on
+#: Windows, the child exits with 0xC0000044 (STATUS_QUOTA_EXCEEDED).
+JOB_OBJECT_LIMIT_PROCESS_TIME: int = 0x00000002
 #: Cap on simultaneously active processes associated with the job.
 JOB_OBJECT_LIMIT_ACTIVE_PROCESS: int = 0x00000008
 #: Terminate every process in the job when the last job handle closes.
@@ -227,7 +231,9 @@ def limits_supported() -> bool:
 
 
 def build_limits(
-    memory_mb: int, max_processes: int = 1
+    memory_mb: int,
+    max_processes: int = 1,
+    cpu_seconds: int | None = None,
 ) -> tuple[int, JOBOBJECT_EXTENDED_LIMIT_INFORMATION]:
     """Build the flag mask and extended-limit struct for a job.
 
@@ -236,6 +242,11 @@ def build_limits(
     space. Note that it lives directly on the extended struct and NOT under
     ``BasicLimitInformation`` — that is how the Windows SDK defines it (see
     the struct source above).
+
+    When ``cpu_seconds`` is given, ``JOB_OBJECT_LIMIT_PROCESS_TIME`` is added
+    and ``PerProcessUserTimeLimit`` carries the cap in Win32's 100 ns units
+    (the Windows mirror of POSIX ``RLIMIT_CPU``). When it is ``None`` the flag
+    is left out, so the job's limits are exactly as they were before.
     """
     flags = (
         JOB_OBJECT_LIMIT_PROCESS_MEMORY
@@ -243,18 +254,27 @@ def build_limits(
         | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     )
     info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-    info.BasicLimitInformation.LimitFlags = flags
     info.ProcessMemoryLimit = memory_mb * 1024 * 1024
     info.BasicLimitInformation.ActiveProcessLimit = max_processes
+    if cpu_seconds is not None:
+        flags |= JOB_OBJECT_LIMIT_PROCESS_TIME
+        info.BasicLimitInformation.PerProcessUserTimeLimit = (
+            cpu_seconds * 10_000_000
+        )
+    info.BasicLimitInformation.LimitFlags = flags
     return flags, info
 
 
-def create_job(memory_mb: int, max_processes: int = 1) -> int | None:
+def create_job(
+    memory_mb: int,
+    max_processes: int = 1,
+    cpu_seconds: int | None = None,
+) -> int | None:
     """Create a Job Object configured with the sandbox limits.
 
     Returns the job ``HANDLE`` as an int, or ``None`` on any failure / off
     Windows. Callers that close the returned handle also kill every process
-    in the job: see ``close``.
+    in the job: see ``close``. ``cpu_seconds`` is forwarded to ``build_limits``.
     """
     if not limits_supported():
         return None
@@ -262,7 +282,7 @@ def create_job(memory_mb: int, max_processes: int = 1) -> int | None:
     _load_apis()
     assert _kernel32 is not None  # established by _load_apis
 
-    _flags, info = build_limits(memory_mb, max_processes)
+    _flags, info = build_limits(memory_mb, max_processes, cpu_seconds)
     job = _kernel32.CreateJobObjectW(None, None)
     if not job:
         _log_win_failure("create", _win_error_code())

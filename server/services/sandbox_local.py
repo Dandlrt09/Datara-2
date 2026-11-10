@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 # frozen bundle finds the copy PyInstaller unpacked.
 SANDBOX_RUNNER_PATH = str(resource_path("server", "sandbox_runner.py"))
 
+#: Exit code the Windows kernel gives a process a job killed for exceeding
+#: ``JOB_OBJECT_LIMIT_PROCESS_TIME`` (STATUS_QUOTA_EXCEEDED). Measured on
+#: Windows/Python 3.14.0, NOT taken from the documentation (decision D6); the
+#: kill loses the child's buffered output, so the parent must name the cause
+#: from this code instead of blaming a crash or a hard OOM.
+_WIN_CPU_KILL_EXIT_CODE = 0xC0000044
+
 
 def sandbox_child_command() -> list[str]:
     """The argv that starts the sandbox child.
@@ -167,6 +174,7 @@ async def run_code(
             job = sandbox_win_job.create_job(
                 resolved_limits.get("memory_mb", 512),
                 max_processes=_job_process_cap(),
+                cpu_seconds=resolved_limits.get("cpu_seconds"),
             )
             if job is None:
                 # Fail closed. Without a job handle there is no memory cap, no
@@ -254,6 +262,28 @@ async def run_code(
 
         raw = stdout.decode("utf-8") or ""
         if not raw:
+            # A CPU-limit kill also leaves no stdout (the child dies before it
+            # can emit its JSON), and only the job's own exit code tells it
+            # apart from a crash or a hard OOM. The signature is Windows-only;
+            # a POSIX exit status cannot collide with it, so POSIX keeps the
+            # existing message unchanged.
+            if (
+                resolved_limits.get("cpu_seconds") is not None
+                and proc.returncode == _WIN_CPU_KILL_EXIT_CODE
+            ):
+                return {
+                    "status": "error",
+                    "error": {
+                        "type": "timeout",
+                        "message": (
+                            "Execution exceeded the CPU limit "
+                            f"({resolved_limits.get('cpu_seconds')}s)"
+                        ),
+                    },
+                    "figures": [],
+                    "tables": [],
+                    "text": "",
+                }
             # Hard crash (no stdout). Surface stderr so the real cause is
             # visible — it is NOT always OOM (e.g. unserializable result
             # objects crash the runner after successful execution).

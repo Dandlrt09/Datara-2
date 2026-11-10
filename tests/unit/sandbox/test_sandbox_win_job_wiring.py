@@ -52,17 +52,27 @@ class _FakeProcess:
         return 0
 
 
-def _install_spawn_spy(monkeypatch, events: list) -> list:
+def _install_spawn_spy(
+    monkeypatch,
+    events: list,
+    *,
+    stdout: bytes = _OK_OUTPUT,
+    stderr: bytes = b"",
+    returncode: int = 0,
+) -> list:
     """Replace ``asyncio.create_subprocess_exec`` with a recording fake.
 
     Returns the list of fake processes that were spawned (empty when the
-    parent refuses to spawn).
+    parent refuses to spawn). The ``stdout``, ``stderr`` and ``returncode``
+    arguments shape the fake child's result so the no-output and CPU-kill
+    paths can be driven.
     """
     spawned: list = []
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         events.append(("spawn", kwargs.get("creationflags")))
-        proc = _FakeProcess()
+        proc = _FakeProcess(stdout=stdout, stderr=stderr)
+        proc.returncode = returncode
         spawned.append(proc)
         return proc
 
@@ -77,18 +87,25 @@ def _install_windows_job(
     job: int | None = 123,
     assign_ok: bool = True,
     resume_ok: bool = True,
+    requested_cpu: list | None = None,
 ) -> list:
     """Make the parent take the Windows Job Object path and record its calls.
 
     Returns the list of ``max_processes`` values the parent asked for, in a
-    separate record so the 2-tuple ``events`` stream keeps its shape.
+    separate record so the 2-tuple ``events`` stream keeps its shape. Pass
+    ``requested_cpu`` to also collect the ``cpu_seconds`` values, in their own
+    list so existing callers keep their ``requested_caps`` shape.
     """
 
     monkeypatch.setattr(sandbox_win_job, "limits_supported", lambda: True)
     requested_caps: list = []
 
-    def fake_create_job(memory_mb: int, max_processes: int = 1):
+    def fake_create_job(
+        memory_mb: int, max_processes: int = 1, cpu_seconds: int | None = None
+    ):
         requested_caps.append(max_processes)
+        if requested_cpu is not None:
+            requested_cpu.append(cpu_seconds)
         events.append(("create", memory_mb))
         return job
 
@@ -368,3 +385,92 @@ async def test_failed_resume_ends_the_run_instead_of_timing_out(monkeypatch):
     assert "not allowed" in result["error"]["message"].lower()
     # The job is still closed on this exit path like on every other.
     assert events[-1] == ("close", 123)
+
+
+# ── CPU limit: the cap is forwarded, and its kill is named ────────────────
+
+# Measured on Windows (interop, Python 3.14.0, 2026-11-10): a job with
+# JOB_OBJECT_LIMIT_PROCESS_TIME terminates the child with exit code 0xC0000044
+# (STATUS_QUOTA_EXCEEDED). D6 forbids guessing this from documentation.
+_WIN_CPU_KILL_EXIT_CODE = 0xC0000044
+
+
+@pytest.mark.asyncio
+async def test_wiring_passes_cpu_seconds_from_the_limits_dict(monkeypatch):
+    """The parent must hand the request's ``cpu_seconds`` to the job."""
+    events: list = []
+    requested_cpu: list = []
+    _install_windows_job(monkeypatch, events, requested_cpu=requested_cpu)
+    _install_spawn_spy(monkeypatch, events)
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "ok"
+    assert requested_cpu == [4]
+
+
+@pytest.mark.asyncio
+async def test_wiring_passes_no_cpu_seconds_when_absent(monkeypatch):
+    """Without ``cpu_seconds`` the job gets ``None``: no CPU cap is imposed."""
+    events: list = []
+    requested_cpu: list = []
+    _install_windows_job(monkeypatch, events, requested_cpu=requested_cpu)
+    _install_spawn_spy(monkeypatch, events)
+
+    result = await sandbox_local.run_code("print('hi')", limits={"memory_mb": 256})
+
+    assert result["status"] == "ok"
+    assert requested_cpu == [None]
+
+
+@pytest.mark.asyncio
+async def test_cpu_limit_kill_reports_the_cpu_limit(monkeypatch):
+    """A CPU-limit kill must not be reported as a crash or a hard OOM."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_WIN_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    # D2: reuses the existing ``timeout`` type, no taxonomy change.
+    assert result["error"]["type"] == "timeout"
+    assert result["error"]["message"] == "Execution exceeded the CPU limit (4s)"
+
+
+@pytest.mark.asyncio
+async def test_no_cpu_limit_keeps_the_produced_no_output_message(monkeypatch):
+    """The measured exit code alone is not enough: no cap means no claim."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_WIN_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code("print('hi')", limits={"memory_mb": 256})
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_other_exit_code_keeps_the_produced_no_output_message(monkeypatch):
+    """A cap set but a different exit code keeps the pre-existing message."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(monkeypatch, events, stdout=b"", returncode=1)
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]
