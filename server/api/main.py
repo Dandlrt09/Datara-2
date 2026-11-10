@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException
 from server.api import store as api_store
 from server.api import event_bus as api_event_bus
 from server.api.routers import auth, chat, files, sessions, settings, archive, activity, usage, export
+from server.api.csrf_guard import DEVELOPMENT_ORIGINS, install_csrf_origin_guard
 from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
 from server.logging_setup import configure_logging
@@ -195,15 +196,15 @@ app = FastAPI(
 # guard's 413/411 responses (the Vite dev origin needs them).
 install_upload_guard(app)
 
-# CORS — allow localhost origins for local dev
+# Origin/CSRF guard (F9/S2). Registered before CORS so CORS stays outermost
+# and its headers still apply to the guard's 403 responses. It refuses a
+# state-changing /api/* request whose Origin/Referer is not a trusted origin.
+install_csrf_origin_guard(app)
+
+# CORS — allow the dev/localhost origins (same tuple the CSRF guard trusts)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=list(DEVELOPMENT_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
