@@ -164,6 +164,16 @@ class ActiveSessionsResponse(BaseModel):
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 
+def _cookie_secure() -> bool:
+    """Whether the session cookie should carry ``Secure`` (F9/S3).
+
+    True only when the app is served over HTTPS, which the deployment
+    publishes in ``DATARA_APP_URL`` (the desktop build sets ``http://...``,
+    where a ``Secure`` cookie would never be sent and login would break).
+    """
+    return resolve_app_url().startswith("https://")
+
+
 async def _mint_session(
     store: SqliteStore,
     user_id: int,
@@ -179,7 +189,7 @@ async def _mint_session(
     raw_token = generate_raw_token()
     token_hash = hash_token(raw_token)
     await store.create_auth_session(user_id, token_hash, user_agent=user_agent)
-    cookie = build_set_cookie_header(raw_token)
+    cookie = build_set_cookie_header(raw_token, secure=_cookie_secure())
     return raw_token, cookie
 
 
@@ -618,7 +628,7 @@ async def logout(
     if raw_token:
         token_hash = hash_token(raw_token)
         await store.delete_auth_session(token_hash)
-    response.headers["Set-Cookie"] = build_expire_cookie_header()
+    response.headers["Set-Cookie"] = build_expire_cookie_header(secure=_cookie_secure())
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
 
@@ -841,7 +851,7 @@ async def request_account_deletion(
 
     await store.request_user_deletion(user["id"])
     await store.delete_all_auth_sessions(user["id"])
-    response.headers["Set-Cookie"] = build_expire_cookie_header()
+    response.headers["Set-Cookie"] = build_expire_cookie_header(secure=_cookie_secure())
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
 

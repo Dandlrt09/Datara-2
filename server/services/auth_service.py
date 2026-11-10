@@ -168,11 +168,17 @@ def build_set_cookie_header(
     return "; ".join(parts)
 
 
-def build_expire_cookie_header() -> str:
-    """Build a ``Set-Cookie`` header that clears the session cookie."""
-    return (
-        "session_id=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-    )
+def build_expire_cookie_header(*, secure: bool = False) -> str:
+    """Build a ``Set-Cookie`` header that clears the session cookie.
+
+    ``secure`` mirrors ``build_set_cookie_header`` (F9/S3): the clearing header
+    must carry the same flags as the cookie it replaces, or a browser that
+    stored a ``Secure`` cookie could keep it.
+    """
+    flags = "session_id=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    if secure:
+        flags += "; Secure"
+    return flags
 
 
 def compute_session_ttl(ttl_seconds: int = 28800) -> str:
