@@ -44,7 +44,7 @@ DECISIONES DE FORMA (cerradas con el maintainer, 03/11):
 TAREAS, EN ORDEN:
 | F1 | **Identidad local**: perfil local + bloqueo opcional; ocultar las pantallas de correo en modo local (dejarlas listas para el hospedado); adaptar el sidebar y la card Sesión | ✗ |
 | F2 | **Prueba de empaquetado**: el .exe con PyInstaller/Nuitka RESOLVIENDO el sandbox (hoy lanza `python server/sandbox_runner.py` como subproceso y en un binario congelado `sys.executable` es el .exe, no un Python); medir tamaño y primer arranque; probar la ventana propia (webview) | ✓ CERRADA 06/11 |
-| F2-advisories | **Los 9 hallazgos del review del Job Object** (trabajo posterior, NINGUNO bloqueó la entrega): el más serio es que el sandbox **falla ABIERTO** — si el Job Object no se crea o no se asigna, el código del modelo corre SIN límites y solo queda un warning (`sandbox_local.py:121-127`, `:113-127`, `:141-143`); más el tope de CPU no aplicado en Windows (`sandbox_runner.py:51-58`), huecos de límites (`sandbox_win_job.py:197-205`), `ActiveProcessLimit=1` incompatible con `--onefile` (`:203`), errores Win32 sin exponer, y dos tests flojos (camino congelado; `import resource` sin condicionar, que no corre en Windows) | ✗ |
+| F2-advisories | **Los 9 hallazgos del review del Job Object** (trabajo posterior, NINGUNO bloqueó la entrega): el más serio es que el sandbox **falla ABIERTO** — si el Job Object no se crea o no se asigna, el código del modelo corre SIN límites y solo queda un warning (`sandbox_local.py:121-127`, `:113-127`, `:141-143`); más el tope de CPU no aplicado en Windows (`sandbox_runner.py:51-58`), huecos de límites (`sandbox_win_job.py:197-205`), `ActiveProcessLimit=1` incompatible con `--onefile` (`:203`), errores Win32 sin exponer, y dos tests flojos (camino congelado; `import resource` sin condicionar, que no corre en Windows) | ✓ CERRADA 10/11/2026 (slices 1-3: PR #28, #29, #30) |
 | F3 | **Carpeta de datos**: ubicación por sistema operativo y **fuera de cualquier carpeta sincronizada** (OneDrive/Dropbox) | ✗ |
 | F4 | **Primer arranque / tutorial**: pantalla de bienvenida con la animación del logo | ✗ |
 | F5 | **Multi-dataset (FASE 2)**: cruce de varios archivos a la vez. VA ANTES DEL REPINTADO porque cambia la pantalla del chat | ✗ |
@@ -69,6 +69,11 @@ corre SIN límites y solo queda un warning en el log; debería negarse a ejecuta
 la tabla de arriba (Origin/CSRF, cookie `Secure`, freno persistente, tope en los
 endpoints de token, correos de aviso, clave del proveedor en el llavero del SO).
 El orden entre los dos frentes queda a decidir por el maintainer.
+
+**ACTUALIZADO 10/11/2026: F2-advisories ✓ CERRADO** (slices 1-3: PR #28 en
+`main`, PR #29 en `main`, PR #30 abierto al cierre de la sesión). Los 9
+advisories del review del Job Object quedaron cerrados, más las higienes H1 y H2.
+**PRÓXIMO FRENTE: F9 — hardening de auth para el hospedado.**
 
 - FASE 0 (cimientos): COMPLETA — 8 rondas de QA cerradas verdes.
 - FASE 1 (pulir el núcleo): ✓ COMPLETA (15/09) — cinturón ✓,
