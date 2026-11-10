@@ -30,7 +30,10 @@ unconditionally.
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 # ── Win32 constants ─────────────────────────────────────────────────────────
 #
@@ -174,6 +177,47 @@ def _load_apis() -> None:
     _ntdll = ntdll
 
 
+# ── Win32 error diagnostics ─────────────────────────────────────────────────
+#
+# Every Win32 call in this module is bound with use_last_error=True, so the
+# most recent failure is readable through ctypes.get_last_error(). The helpers
+# below are the only readers: they never raise off Windows, so the POSIX no-op
+# path stays silent.
+
+
+def _win_error_code() -> int | None:
+    """The calling thread's last Win32 error, or None when unreadable."""
+    try:
+        return ctypes.get_last_error()
+    except (AttributeError, OSError):
+        return None
+
+
+def _win_error_text(code: int) -> str:
+    """Human text for a Win32 error code; "" when the platform cannot."""
+    try:
+        return ctypes.FormatError(code)
+    except (AttributeError, OSError):
+        return ""
+
+
+def _log_win_failure(step: str, code: int | None) -> None:
+    """Log one job-object failure at ERROR, naming the step and the cause.
+
+    A ``None`` code (unreadable) and a ``0`` code (no system error recorded)
+    both mean there is no real Win32 error, so neither invents one.
+    """
+    if not code:
+        logger.error("Windows job %s failed (no Win32 error code available)", step)
+        return
+    logger.error(
+        "Windows job %s failed (Win32 error %d: %s)",
+        step,
+        code,
+        _win_error_text(code),
+    )
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -221,6 +265,7 @@ def create_job(memory_mb: int, max_processes: int = 1) -> int | None:
     _flags, info = build_limits(memory_mb, max_processes)
     job = _kernel32.CreateJobObjectW(None, None)
     if not job:
+        _log_win_failure("create", _win_error_code())
         return None
 
     ok = _kernel32.SetInformationJobObject(
@@ -230,6 +275,7 @@ def create_job(memory_mb: int, max_processes: int = 1) -> int | None:
         ctypes.sizeof(info),
     )
     if not ok:
+        _log_win_failure("create", _win_error_code())
         _kernel32.CloseHandle(job)
         return None
     return int(job)
@@ -251,9 +297,13 @@ def assign(job: int | None, pid: int) -> bool:
         PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid
     )
     if not handle:
+        _log_win_failure("open-process", _win_error_code())
         return False
     try:
-        return bool(_kernel32.AssignProcessToJobObject(job, handle))
+        if not _kernel32.AssignProcessToJobObject(job, handle):
+            _log_win_failure("assign", _win_error_code())
+            return False
+        return True
     finally:
         _kernel32.CloseHandle(handle)
 
@@ -273,10 +323,14 @@ def resume(pid: int) -> bool:
 
     handle = _kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
     if not handle:
+        _log_win_failure("open-process", _win_error_code())
         return False
     try:
         status = _ntdll.NtResumeProcess(handle)
-        return status == 0
+        if status != 0:
+            _log_win_failure("resume", _win_error_code())
+            return False
+        return True
     finally:
         _kernel32.CloseHandle(handle)
 

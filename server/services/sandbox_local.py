@@ -49,6 +49,53 @@ def sandbox_child_command() -> list[str]:
     return [sys.executable, "-I", "-B", SANDBOX_RUNNER_PATH]
 
 
+def _job_process_cap() -> int:
+    r"""How many process slots the Windows job must allow the child.
+
+    Windows needs one slot for the child itself. A venv interpreter is a
+    redirector: ``Scripts\python.exe`` spawns the real interpreter as a second
+    process, so it needs one more slot (a limit of 1 blocks it with
+    ``ERROR_NOT_ENOUGH_QUOTA``). A native child -- the frozen ``datara.exe`` or
+    the onedir build -- needs none, so it keeps the strict cap. The cap stays as
+    tight as the child allows because the sandbox's promise is that
+    model-generated code cannot multiply itself.
+
+    This does NOT cover a PyInstaller ``--onefile`` build, whose bootloader
+    re-launches the bundled exe: that is a separate redirector, own work.
+    """
+    if (
+        not is_frozen()
+        and getattr(sys, "_base_executable", None)
+        and sys._base_executable != sys.executable
+    ):
+        return 2
+    return 1
+
+
+def _job_startup_failure(cause: str) -> dict:
+    """Structured fail-closed error for a sandbox that could not be confined.
+
+    Reuses the existing error shape (``runtime_error``) rather than adding a
+    taxonomy entry: the point is to refuse to run, not to invent a new code.
+    *cause* names the actual failure; the message states plainly that running
+    without the Windows job limits is not allowed.
+    """
+    return {
+        "status": "error",
+        "error": {
+            "type": "runtime_error",
+            "message": (
+                "The sandbox process could not be started: "
+                f"{cause} Running the code without the Windows job limits is "
+                "not allowed."
+            ),
+        },
+        "figures": [],
+        "tables": [],
+        "text": "",
+    }
+
+
 async def run_code(
     code: str,
     *,
@@ -117,17 +164,23 @@ async def run_code(
         # spawn a grandchild outside the job.
         spawn_kwargs: dict = {}
         if sandbox_win_job.limits_supported():
-            job = sandbox_win_job.create_job(resolved_limits.get("memory_mb", 512))
+            job = sandbox_win_job.create_job(
+                resolved_limits.get("memory_mb", 512),
+                max_processes=_job_process_cap(),
+            )
             if job is None:
-                # No job handle means nothing to assign or resume: a suspended
-                # child would hang until the timeout, so spawn it normally.
-                logger.warning(
-                    "Windows Job Object creation failed; sandbox runs without "
-                    "parent-imposed limits"
+                # Fail closed. Without a job handle there is no memory cap, no
+                # process cap and no KILL_ON_JOB_CLOSE containment; running the
+                # model's code unconfined is not an option.
+                logger.error(
+                    "Windows Job Object creation failed; refusing to run the "
+                    "sandbox child without parent-imposed limits"
                 )
-            else:
-                # Only set on Windows -- POSIX subprocess rejects this kwarg.
-                spawn_kwargs["creationflags"] = sandbox_win_job.CREATE_SUSPENDED
+                return _job_startup_failure(
+                    "creating the Windows job failed."
+                )
+            # Only set on Windows -- POSIX subprocess rejects this kwarg.
+            spawn_kwargs["creationflags"] = sandbox_win_job.CREATE_SUSPENDED
 
         proc = await asyncio.create_subprocess_exec(
             *sandbox_child_command(),
@@ -140,11 +193,20 @@ async def run_code(
 
         if job is not None:
             if not sandbox_win_job.assign(job, proc.pid):
-                logger.warning("Failed to assign sandbox child %s to job", proc.pid)
-            # The child was spawned suspended, so it MUST be resumed on every
-            # path once that happened -- even if assign failed. Skipping the
-            # resume would leave the child frozen and the user would see a
-            # mysterious timeout instead of an error.
+                # Fail closed: the child is still suspended and outside the
+                # job. Resuming it would let it run with no limits, so kill it
+                # instead -- that also avoids the mysterious timeout of a child
+                # left frozen forever.
+                logger.error(
+                    "Failed to assign sandbox child %s to job; killing the "
+                    "suspended child instead of running it unconfined",
+                    proc.pid,
+                )
+                proc.kill()
+                await proc.wait()
+                return _job_startup_failure(
+                    "assigning the suspended child to the Windows job failed."
+                )
             if not sandbox_win_job.resume(proc.pid):
                 # It is still frozen, so waiting on it would burn the whole
                 # timeout budget and then report "execution exceeded Ns" -- a
@@ -152,19 +214,9 @@ async def run_code(
                 logger.error("Failed to resume sandbox child %s", proc.pid)
                 proc.kill()
                 await proc.wait()
-                return {
-                    "status": "error",
-                    "error": {
-                        "type": "runtime_error",
-                        "message": (
-                            "The sandbox process could not be started: resume "
-                            "failed after the Windows job assignment."
-                        ),
-                    },
-                    "figures": [],
-                    "tables": [],
-                    "text": "",
-                }
+                return _job_startup_failure(
+                    "resume failed after the Windows job assignment."
+                )
 
         try:
             stdout, stderr = await asyncio.wait_for(

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 
 import pytest
@@ -36,25 +37,37 @@ class _FakeProcess:
         self._stderr = stderr
         self.returncode: int | None = 0
         self.pid = 4242
+        self.killed = False
+        self.waited = False
 
     async def communicate(self, input: bytes | None = None):  # noqa: A002
         return self._stdout, self._stderr
 
     def kill(self) -> None:
+        self.killed = True
         self.returncode = -9
 
     async def wait(self) -> int:
+        self.waited = True
         return 0
 
 
-def _install_spawn_spy(monkeypatch, events: list) -> None:
-    """Replace ``asyncio.create_subprocess_exec`` with a recording fake."""
+def _install_spawn_spy(monkeypatch, events: list) -> list:
+    """Replace ``asyncio.create_subprocess_exec`` with a recording fake.
+
+    Returns the list of fake processes that were spawned (empty when the
+    parent refuses to spawn).
+    """
+    spawned: list = []
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         events.append(("spawn", kwargs.get("creationflags")))
-        return _FakeProcess()
+        proc = _FakeProcess()
+        spawned.append(proc)
+        return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    return spawned
 
 
 def _install_windows_job(
@@ -64,12 +77,18 @@ def _install_windows_job(
     job: int | None = 123,
     assign_ok: bool = True,
     resume_ok: bool = True,
-) -> None:
-    """Make the parent take the Windows Job Object path and record its calls."""
+) -> list:
+    """Make the parent take the Windows Job Object path and record its calls.
+
+    Returns the list of ``max_processes`` values the parent asked for, in a
+    separate record so the 2-tuple ``events`` stream keeps its shape.
+    """
 
     monkeypatch.setattr(sandbox_win_job, "limits_supported", lambda: True)
+    requested_caps: list = []
 
     def fake_create_job(memory_mb: int, max_processes: int = 1):
+        requested_caps.append(max_processes)
         events.append(("create", memory_mb))
         return job
 
@@ -88,6 +107,7 @@ def _install_windows_job(
     monkeypatch.setattr(sandbox_win_job, "assign", fake_assign)
     monkeypatch.setattr(sandbox_win_job, "resume", fake_resume)
     monkeypatch.setattr(sandbox_win_job, "close", fake_close)
+    return requested_caps
 
 
 # ── POSIX path is untouched ──────────────────────────────────────────────────
@@ -162,37 +182,168 @@ async def test_windows_job_ordering(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_assign_still_resumes_and_closes(monkeypatch):
-    """A failed assign must not leave a suspended child hanging to the timeout."""
+async def test_failed_assign_kills_the_suspended_child_instead_of_running_it(
+    monkeypatch,
+):
+    """Fail closed: a child that could not join the job must die, not run.
+
+    Resuming it (as before) would let the model's code run with no memory cap,
+    no process cap and no KILL_ON_JOB_CLOSE. The suspended child is killed
+    instead, so it is never left hanging to the timeout either.
+    """
     events: list = []
-    _install_windows_job(monkeypatch, events, assign_ok=False)
-    _install_spawn_spy(monkeypatch, events)
+    _install_windows_job(monkeypatch, events, assign_ok=False, resume_ok=False)
+    spawned = _install_spawn_spy(monkeypatch, events)
 
-    await sandbox_local.run_code("print('hi')")
+    result = await sandbox_local.run_code("print('hi')")
 
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    message = result["error"]["message"].lower()
+    assert "assign" in message
+    assert "not allowed" in message
+    # The suspended child was spawned but never resumed outside the job.
+    assert events[1] == ("spawn", sandbox_win_job.CREATE_SUSPENDED)
     names = [name for name, _ in events]
-    assert "resume" in names, "resume must run even when assign failed"
-    assert "close" in names, "the job handle must be closed on every path"
-    assert names.index("resume") > names.index("assign")
+    assert "assign" in names
+    assert "resume" not in names, "a child outside the job must never resume"
+    # It was killed, not left hanging, and nothing is still running.
+    assert spawned and spawned[0].killed is True
+    assert spawned[0].returncode == -9
+    assert spawned[0].waited is True, "a killed child must also be reaped"
+    # The job handle is still closed on this exit path like on every other.
     assert names[-1] == "close"
 
 
 @pytest.mark.asyncio
-async def test_no_job_falls_back_to_normal_spawn(monkeypatch):
-    """No job handle -> spawn normally. Never suspend a child nothing resumes."""
+async def test_no_job_refuses_to_spawn_the_child(monkeypatch):
+    """Fail closed: without a job there is no confinement, so do not run."""
     events: list = []
     _install_windows_job(monkeypatch, events, job=None)
+    spawned = _install_spawn_spy(monkeypatch, events)
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    message = result["error"]["message"].lower()
+    assert "job" in message
+    assert "not allowed" in message
+    # Nothing was spawned, so nothing runs unconfined.
+    assert spawned == []
+    assert [name for name, _ in events] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_job_creation_failure_logs_an_error_and_leaves_no_process(
+    monkeypatch, caplog
+):
+    """The refusal to run is logged at ERROR, not WARNING, and runs nothing."""
+    events: list = []
+    _install_windows_job(monkeypatch, events, job=None)
+    spawned = _install_spawn_spy(monkeypatch, events)
+
+    with caplog.at_level(logging.ERROR, logger=sandbox_local.__name__):
+        result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "error"
+    assert spawned == []
+    assert any(
+        record.levelno == logging.ERROR
+        and "creation" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_assign_failure_logs_an_error_and_leaves_no_process(
+    monkeypatch, caplog
+):
+    """The refusal to run is logged at ERROR, and the child is killed."""
+    events: list = []
+    _install_windows_job(monkeypatch, events, assign_ok=False)
+    spawned = _install_spawn_spy(monkeypatch, events)
+
+    with caplog.at_level(logging.ERROR, logger=sandbox_local.__name__):
+        result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "error"
+    assert spawned and spawned[0].killed is True
+    assert any(
+        record.levelno == logging.ERROR
+        and "assign" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+# ── Job process cap depends on whether the child is a launcher ──────────────
+
+def _set_native_interpreter(monkeypatch) -> None:
+    """Make the runner look like a native interpreter (no venv redirector)."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.setattr(sys, "_base_executable", sys.executable, raising=False)
+
+
+def _set_venv_redirector(monkeypatch) -> None:
+    """Make the runner look like a venv redirector (base != current)."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.setattr(
+        sys, "_base_executable", sys.executable + "-base", raising=False
+    )
+
+
+def test_job_process_cap_is_one_for_a_native_interpreter(monkeypatch):
+    """A native child needs a single slot: itself, and nothing else."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.delattr(sys, "_base_executable", raising=False)
+    assert sandbox_local._job_process_cap() == 1
+
+    # A base executable equal to the current one is still the native case.
+    monkeypatch.setattr(sys, "_base_executable", sys.executable, raising=False)
+    assert sandbox_local._job_process_cap() == 1
+
+
+def test_job_process_cap_is_two_for_a_venv_redirector(monkeypatch):
+    """A venv ``python.exe`` is a redirector: it spawns the real interpreter."""
+    _set_venv_redirector(monkeypatch)
+    assert sandbox_local._job_process_cap() == 2
+
+
+def test_job_process_cap_is_one_when_frozen(monkeypatch):
+    """The frozen exe is native even if a base executable is recorded."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+    monkeypatch.setattr(
+        sys, "_base_executable", sys.executable + "-base", raising=False
+    )
+    assert sandbox_local._job_process_cap() == 1
+
+
+@pytest.mark.asyncio
+async def test_redirector_child_gets_a_second_process_slot(monkeypatch):
+    """Wiring: with the redirector present the parent asks ``create_job`` for 2."""
+    events: list = []
+    requested_caps = _install_windows_job(monkeypatch, events)
     _install_spawn_spy(monkeypatch, events)
+    _set_venv_redirector(monkeypatch)
 
     result = await sandbox_local.run_code("print('hi')")
 
     assert result["status"] == "ok"
-    names = [name for name, _ in events]
-    assert names == ["create", "spawn"]
-    assert events[1] == ("spawn", None)
-    assert "assign" not in names
-    assert "resume" not in names
-    assert "close" not in names
+    assert requested_caps == [2]
+
+
+@pytest.mark.asyncio
+async def test_native_child_keeps_the_strict_process_cap(monkeypatch):
+    """Wiring: a native interpreter still asks ``create_job`` for exactly 1."""
+    events: list = []
+    requested_caps = _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(monkeypatch, events)
+    _set_native_interpreter(monkeypatch)
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "ok"
+    assert requested_caps == [1]
 
 
 @pytest.mark.asyncio
@@ -212,5 +363,8 @@ async def test_failed_resume_ends_the_run_instead_of_timing_out(monkeypatch):
     assert result["status"] == "error"
     assert result["error"]["type"] == "runtime_error"
     assert "resume" in result["error"]["message"].lower()
+    # The refusal states the policy, not only the cause: it is why the run was
+    # ended instead of falling back to an unconfined child.
+    assert "not allowed" in result["error"]["message"].lower()
     # The job is still closed on this exit path like on every other.
     assert events[-1] == ("close", 123)
