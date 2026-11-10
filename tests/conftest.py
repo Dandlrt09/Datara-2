@@ -1,8 +1,10 @@
 """Global test setup.
 
-The auth attempt limiter lives in the process, not the database, so without a
-reset the counters would leak from one test to the next (every TestClient shares
-the same source address). Each test starts from a clean limiter.
+The routes now persist attempt counters in SQLite (S4), and every auth test
+opens its own fresh ``:memory:`` database, so persisted state cannot leak
+between tests. What still lives in the process is the pure in-memory
+``AttemptLimiter`` -- the sliding-window algorithm and its direct-drive test
+seam -- so it is reset here to keep that seam clean.
 """
 
 import pytest

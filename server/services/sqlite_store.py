@@ -699,6 +699,67 @@ class SqliteStore:
         await self.conn.commit()
         return cursor.rowcount
 
+    def attempt_hmac_key(self) -> bytes:
+        """The HMAC key the auth attempt limiter must use (F9/S4).
+
+        Derived from the store's own secret (env var or the ``.secret_key``
+        file next to the DB), so it is stable across restarts and never stored
+        in the database itself.
+        """
+        return self._secret_box.attempt_hmac_key()
+
+    # ── Auth Attempts (S4) ──────────────────────────────────────────────────────
+
+    async def record_auth_attempt(
+        self, key_hash: str, attempted_at: float
+    ) -> None:
+        """Append one attempt for a hashed limiter key (S4).
+
+        ``key_hash`` is an HMAC-SHA256 digest of the limiter key (secret keyed),
+        never the raw IP or email (privacy promise, ``rate_limit.hash_attempt_key``).
+        ``attempted_at`` is wall-clock epoch seconds, so the window survives a
+        restart.
+        """
+        await self.conn.execute(
+            "INSERT INTO auth_attempts (key_hash, attempted_at) VALUES (?, ?)",
+            (key_hash, attempted_at),
+        )
+        await self.conn.commit()
+
+    async def list_auth_attempts(
+        self, key_hash: str, since: float
+    ) -> list[float]:
+        """Timestamps for *key_hash* newer than *since*, oldest first (S4).
+
+        The strict ``>`` matches the in-memory limiter's window boundary: an
+        event exactly on the cutoff has left the window.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT attempted_at FROM auth_attempts "
+            "WHERE key_hash = ? AND attempted_at > ? "
+            "ORDER BY attempted_at ASC",
+            (key_hash, since),
+        )
+        return [row[0] for row in rows]
+
+    async def clear_auth_attempts(self, key_hash: str) -> int:
+        """Forget every attempt for *key_hash* (a successful login). Returns rows."""
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_attempts WHERE key_hash = ?",
+            (key_hash,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
+    async def purge_auth_attempts(self, cutoff: float) -> int:
+        """Delete attempts at or before *cutoff*. Returns rows deleted (hygiene)."""
+        cursor = await self.conn.execute(
+            "DELETE FROM auth_attempts WHERE attempted_at <= ?",
+            (cutoff,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
     # ── Chat Sessions ───────────────────────────────────────────────────────────
 
     async def list_chat_sessions(self, user_id: int) -> list[dict[str, Any]]:

@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api import store as api_store
-from server.api.rate_limit import auth_attempt_limiter
+from server.api.rate_limit import PersistentAttemptLimiter, hash_attempt_key
 from server.api.routers.auth import router as auth_router
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
@@ -49,7 +49,7 @@ def client(app):
 
 
 @pytest.fixture
-def store():
+def store(app):
     return api_store._store
 
 
@@ -61,6 +61,17 @@ def _register(client, email: str):
 
 def _login(client, email: str, password: str = "wrongpass"):
     return client.post("/api/auth/login", json={"email": email, "password": password})
+
+
+def _preload_attempts(store, key: str, count: int = 5) -> None:
+    """Seed persisted counters the way a run of failed attempts would (S4)."""
+
+    async def _run():
+        limiter = PersistentAttemptLimiter(store)
+        for _ in range(count):
+            await limiter.record(key)
+
+    asyncio.run(_run())
 
 
 def _register_verified(client, email: str):
@@ -97,16 +108,14 @@ class TestLoginRateLimit:
         # The clear resets the window, so the next mistake is a 401, not a 429.
         assert _login(client, "limit-clear@example.com").status_code == 401
 
-    def test_email_key_alone_blocks_login(self, client):
+    def test_email_key_alone_blocks_login(self, client, store):
         _register(client, "keyed-email@example.com")
-        for _ in range(5):
-            auth_attempt_limiter.record("login:email:keyed-email@example.com")
+        _preload_attempts(store, "login:email:keyed-email@example.com")
         assert _login(client, "keyed-email@example.com").status_code == 429
 
-    def test_ip_key_alone_blocks_login(self, client):
+    def test_ip_key_alone_blocks_login(self, client, store):
         _register(client, "keyed-ip@example.com")
-        for _ in range(5):
-            auth_attempt_limiter.record("login:ip:testclient")
+        _preload_attempts(store, "login:ip:testclient")
         assert _login(client, "fresh@example.com").status_code == 429
 
     def test_ip_failures_survive_a_successful_login(self, client):
@@ -123,7 +132,7 @@ class TestLoginRateLimit:
         # And now the IP brake is tripped.
         assert _login(client, "route-clear@example.com").status_code == 429
 
-    def test_success_clears_the_account_email_key(self, client):
+    def test_success_clears_the_account_email_key(self, client, store):
         """F4: the authenticated account's own key is cleared on success.
 
         The account key is pre-loaded to 4 (not 5) because
@@ -132,8 +141,9 @@ class TestLoginRateLimit:
         the shared IP key stays at zero.
         """
         _register_verified(client, "clear-email-key@example.com")
-        for _ in range(4):
-            auth_attempt_limiter.record("login:email:clear-email-key@example.com")
+        _preload_attempts(
+            store, "login:email:clear-email-key@example.com", count=4
+        )
 
         assert (
             _login(client, "clear-email-key@example.com", "password123").status_code
@@ -184,3 +194,150 @@ class TestRegisterRateLimit:
             return rows[0][0]
 
         assert asyncio.run(_count()) == 0
+
+
+class TestPersistentAttempts:
+    """S4: the counters live in SQLite and survive a restart (new store)."""
+
+    def test_a_new_store_on_the_same_db_still_sees_the_brake(self, tmp_path):
+        db = str(tmp_path / "attempts.db")
+
+        async def _seed():
+            s = SqliteStore(db_path=db)
+            await s.connect()
+            await apply_all_migrations(s)
+            limiter = PersistentAttemptLimiter(s)
+            for _ in range(5):
+                await limiter.record("login:ip:testclient")
+            await s.close()
+
+        asyncio.run(_seed())
+
+        # A brand-new store + limiter (a "restart") reads the persisted rows.
+        async def _check():
+            s = SqliteStore(db_path=db)
+            await s.connect()
+            retry = await PersistentAttemptLimiter(s).retry_after(
+                "login:ip:testclient"
+            )
+            await s.close()
+            return retry
+
+        assert (asyncio.run(_check()) or 0) > 0
+
+    def test_route_still_answers_429_after_a_restart(self, tmp_path):
+        db = str(tmp_path / "attempts.db")
+
+        async def _seed():
+            s = SqliteStore(db_path=db)
+            await s.connect()
+            await apply_all_migrations(s)
+            limiter = PersistentAttemptLimiter(s)
+            for _ in range(5):
+                await limiter.record("login:ip:testclient")
+            await s.close()
+
+        asyncio.run(_seed())
+
+        application = FastAPI()
+        application.include_router(auth_router)
+        s = SqliteStore(db_path=db)
+        asyncio.run(s.connect())
+        api_store._store = s
+        try:
+            resp = TestClient(application).post(
+                "/api/auth/login",
+                json={"email": "after-restart@example.com", "password": "wrongpass"},
+            )
+            assert resp.status_code == 429
+        finally:
+            asyncio.run(s.close())
+            api_store._store = None
+
+    def test_only_the_hash_of_the_key_is_persisted(self, client, store):
+        """Privacy promise: no raw IP or email touches disk (S4)."""
+        email = "privacy-check@example.com"
+        _register(client, email)
+
+        async def _hashes():
+            rows = await store.conn.execute_fetchall(
+                "SELECT key_hash FROM auth_attempts"
+            )
+            return {row[0] for row in rows}
+
+        stored = asyncio.run(_hashes())
+        secret = store.attempt_hmac_key()
+        expected = {
+            hash_attempt_key(f"register:ip:testclient", secret),
+            hash_attempt_key(f"register:email:{email}", secret),
+        }
+        assert stored == expected
+        blob = repr(stored)
+        assert email not in blob
+        assert "testclient" not in blob
+        assert all(len(key_hash) == 64 for key_hash in stored)
+
+    def test_stored_hash_is_keyed_not_plain_sha256(self, client, store):
+        """Stronger privacy (S4): the digest is HMAC-keyed, not guessable.
+
+        A plain SHA-256 of the limiter key is reversible by dictionary attack
+        for a low-entropy value such as an email, so a leaked database would
+        confirm whether a given address/IP had attempts. The stored digest must
+        not equal the plain SHA-256 of any limiter key.
+        """
+        import hashlib
+
+        email = "hmac-check@example.com"
+        _register(client, email)
+
+        async def _hashes():
+            rows = await store.conn.execute_fetchall(
+                "SELECT key_hash FROM auth_attempts"
+            )
+            return {row[0] for row in rows}
+
+        stored = asyncio.run(_hashes())
+        plain = {
+            hashlib.sha256(f"register:ip:testclient".encode()).hexdigest(),
+            hashlib.sha256(f"register:email:{email}".encode()).hexdigest(),
+        }
+        assert stored.isdisjoint(plain)
+
+    def test_sweep_keeps_only_in_window_rows(self, store):
+        """S4: the purge drops rows outside the window and keeps live ones."""
+        import time as _time
+
+        from server.api.rate_limit import WINDOW_SECONDS
+        from server.services.session_cleanup import sweep_expired_attempts
+
+        async def _seed():
+            await store.record_auth_attempt("old", _time.time() - WINDOW_SECONDS - 5)
+            await store.record_auth_attempt("edge", _time.time() - WINDOW_SECONDS)
+            await store.record_auth_attempt("live", _time.time() - 450)
+
+        asyncio.run(_seed())
+        deleted = asyncio.run(sweep_expired_attempts(store))
+
+        async def _left():
+            rows = await store.conn.execute_fetchall(
+                "SELECT key_hash FROM auth_attempts ORDER BY key_hash"
+            )
+            return [row[0] for row in rows]
+
+        assert deleted == 2
+        assert asyncio.run(_left()) == ["live"]
+
+    def test_429_records_no_new_rows_for_the_blocked_key(self, client, store):
+        """S4: the brake is enforced before recording, so a blocked key cannot grow."""
+        _register(client, "blocked-key@example.com")
+
+        async def _count():
+            rows = await store.conn.execute_fetchall("SELECT 1 FROM auth_attempts")
+            return len(rows)
+
+        before = asyncio.run(_count())
+        for _ in range(8):
+            _login(client, "blocked-key@example.com")
+        # Five failures x two keys; the blocked attempts add nothing.
+        assert asyncio.run(_count()) == before + 10
+
