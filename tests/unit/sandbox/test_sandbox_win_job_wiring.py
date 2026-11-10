@@ -28,6 +28,11 @@ _OK_OUTPUT = json.dumps(
     {"status": "ok", "figures": [], "tables": [], "text": "", "error": None}
 ).encode("utf-8")
 
+#: Sentinel for "the caller did not pass this keyword argument". A plain ``1``
+#: default would make "omitted" indistinguishable from "passed 1", which is the
+#: loose pin the T3 verifier flagged (advisory of T7).
+_UNSET = object()
+
 
 class _FakeProcess:
     """Minimal stand-in for the asyncio subprocess used by ``run_code``."""
@@ -52,17 +57,31 @@ class _FakeProcess:
         return 0
 
 
-def _install_spawn_spy(monkeypatch, events: list) -> list:
+def _install_spawn_spy(
+    monkeypatch,
+    events: list,
+    *,
+    stdout: bytes = _OK_OUTPUT,
+    stderr: bytes = b"",
+    returncode: int = 0,
+    argv: list | None = None,
+) -> list:
     """Replace ``asyncio.create_subprocess_exec`` with a recording fake.
 
     Returns the list of fake processes that were spawned (empty when the
-    parent refuses to spawn).
+    parent refuses to spawn). The ``stdout``, ``stderr`` and ``returncode``
+    arguments shape the fake child's result so the no-output and CPU-kill
+    paths can be driven. Pass ``argv`` to also capture the exact argv the
+    parent spawned, in its own list so the ``events`` stream keeps its shape.
     """
     spawned: list = []
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         events.append(("spawn", kwargs.get("creationflags")))
-        proc = _FakeProcess()
+        if argv is not None:
+            argv.append(list(args))
+        proc = _FakeProcess(stdout=stdout, stderr=stderr)
+        proc.returncode = returncode
         spawned.append(proc)
         return proc
 
@@ -77,18 +96,30 @@ def _install_windows_job(
     job: int | None = 123,
     assign_ok: bool = True,
     resume_ok: bool = True,
+    requested_cpu: list | None = None,
 ) -> list:
     """Make the parent take the Windows Job Object path and record its calls.
 
     Returns the list of ``max_processes`` values the parent asked for, in a
-    separate record so the 2-tuple ``events`` stream keeps its shape.
+    separate record so the 2-tuple ``events`` stream keeps its shape. The
+    fake's default is ``_UNSET``, not ``1``: the real ``create_job`` defaults to
+    1, but recording that value would make "omitted the kwarg" look identical
+    to "passed 1" and leave the native cap pinned loosely (T7). Pass
+    ``requested_cpu`` to also collect the ``cpu_seconds`` values, in their own
+    list so existing callers keep their ``requested_caps`` shape.
     """
 
     monkeypatch.setattr(sandbox_win_job, "limits_supported", lambda: True)
     requested_caps: list = []
 
-    def fake_create_job(memory_mb: int, max_processes: int = 1):
+    def fake_create_job(
+        memory_mb: int,
+        max_processes: int | object = _UNSET,
+        cpu_seconds: int | None = None,
+    ):
         requested_caps.append(max_processes)
+        if requested_cpu is not None:
+            requested_cpu.append(cpu_seconds)
         events.append(("create", memory_mb))
         return job
 
@@ -123,6 +154,57 @@ def test_posix_child_command_unchanged():
     ]
 
 
+# ── Frozen path: the executable itself is the sandbox child ────────────────
+# Advisory ``R3-frozen-command-untested``: ``sandbox_child_command`` has two
+# branches and only the source one had a test. Inside a PyInstaller bundle
+# there is no interpreter left to spawn, so the child *is* the executable
+# wearing its ``--sandbox-runner`` hat -- the same token ``desktop.main``
+# dispatches on to run the runner instead of starting a second server. If this
+# argv drifts, a frozen build silently boots another app copy instead of
+# running the model's code, and nothing else would catch it.
+
+
+def test_frozen_child_command_is_the_executable_with_the_runner_flag(monkeypatch):
+    """Frozen, the child argv is the exe plus the flag -- not the script path."""
+    from server import desktop  # noqa: PLC0415
+
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+
+    assert sandbox_local.sandbox_child_command() == [
+        sys.executable,
+        sandbox_local.SANDBOX_RUNNER_FLAG,
+    ]
+    # The flag is the exact token ``desktop.main`` dispatches on ...
+    assert sandbox_local.SANDBOX_RUNNER_FLAG is desktop.SANDBOX_RUNNER_FLAG
+    assert sandbox_local.SANDBOX_RUNNER_FLAG == "--sandbox-runner"
+    # ... and the source-only arguments must not leak into the frozen argv.
+    assert "-I" not in sandbox_local.sandbox_child_command()
+    assert "-B" not in sandbox_local.sandbox_child_command()
+    assert sandbox_local.SANDBOX_RUNNER_PATH not in sandbox_local.sandbox_child_command()
+
+
+@pytest.mark.asyncio
+async def test_frozen_spawn_uses_the_executable_and_skips_the_script_check(
+    monkeypatch,
+):
+    """Frozen, ``run_code`` spawns that argv without requiring the script on disk."""
+    events: list = []
+    argv: list = []
+    _install_spawn_spy(monkeypatch, events, argv=argv)
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+    # No bundle unpacked a runner script here; the frozen guard must not raise.
+    monkeypatch.setattr(
+        sandbox_local, "SANDBOX_RUNNER_PATH", "/nonexistent/sandbox_runner.py"
+    )
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "ok"
+    assert events == [("spawn", None)]
+    # What actually got spawned, not only what the helper returns.
+    assert argv == [[sys.executable, sandbox_local.SANDBOX_RUNNER_FLAG]]
+
+
 @pytest.mark.asyncio
 async def test_posix_spawn_passes_no_creationflags(monkeypatch):
     """Regression: ``creationflags`` is Windows-only; POSIX subprocess rejects it.
@@ -142,18 +224,52 @@ async def test_posix_spawn_passes_no_creationflags(monkeypatch):
 # ── The child no longer requires the POSIX ``resource`` module ──────────────
 
 
-def test_set_rlimits_is_noop_without_resource(monkeypatch):
-    """On Windows ``import resource`` fails; the limits come from the parent."""
-    import resource as resource_mod  # noqa: PLC0415
+class _FakeResource:
+    """Stand-in for the POSIX ``resource`` module, usable on every platform.
 
-    calls: list = []
-    monkeypatch.setattr(sandbox_runner, "resource", None)
-    monkeypatch.setattr(resource_mod, "setrlimit", lambda *a: calls.append(a))
+    The real module does not exist on Windows, so a test that imported it
+    unconditionally errored there instead of running (advisory
+    ``R3-test-imports-resource-unconditionally``). This fake carries the four
+    constants and a recording ``setrlimit``, so both the positive and the
+    negative path run on any OS.
+    """
 
-    # Must return early without raising and without touching setrlimit.
+    RLIMIT_AS = 0
+    RLIMIT_CPU = 1
+    RLIMIT_NPROC = 2
+    RLIMIT_FSIZE = 3
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def setrlimit(self, which: int, value: tuple) -> None:
+        self.calls.append((which, value))
+
+
+def test_set_rlimits_applies_the_four_caps(monkeypatch):
+    """With the module present, every documented cap is handed to setrlimit."""
+    fake = _FakeResource()
+    monkeypatch.setattr(sandbox_runner, "resource", fake)
+
     sandbox_runner._set_rlimits({"memory_mb": 128, "cpu_seconds": 5})
 
-    assert calls == []
+    assert fake.calls == [
+        (fake.RLIMIT_AS, (128 * 1024 * 1024,) * 2),
+        (fake.RLIMIT_CPU, (5, 5)),
+        (fake.RLIMIT_NPROC, (1, 1)),
+        (fake.RLIMIT_FSIZE, (50 * 1024 * 1024,) * 2),
+    ]
+
+
+def test_set_rlimits_is_noop_without_resource(monkeypatch):
+    """On Windows ``import resource`` fails; the limits come from the parent.
+
+    The proof is that the call returns without raising: a version that did not
+    guard ``resource is None`` would blow up on the attribute access.
+    """
+    monkeypatch.setattr(sandbox_runner, "resource", None)
+
+    assert sandbox_runner._set_rlimits({"memory_mb": 128, "cpu_seconds": 5}) is None
 
 
 # ── Windows Job Object ordering (no Windows runtime available here) ─────────
@@ -334,7 +450,11 @@ async def test_redirector_child_gets_a_second_process_slot(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_native_child_keeps_the_strict_process_cap(monkeypatch):
-    """Wiring: a native interpreter still asks ``create_job`` for exactly 1."""
+    """Wiring: a native interpreter still asks ``create_job`` for exactly 1.
+
+    The fake records ``_UNSET`` when the kwarg is omitted, so this now fails
+    both on "passed the wrong cap" and on "did not pass the cap at all".
+    """
     events: list = []
     requested_caps = _install_windows_job(monkeypatch, events)
     _install_spawn_spy(monkeypatch, events)
@@ -368,3 +488,92 @@ async def test_failed_resume_ends_the_run_instead_of_timing_out(monkeypatch):
     assert "not allowed" in result["error"]["message"].lower()
     # The job is still closed on this exit path like on every other.
     assert events[-1] == ("close", 123)
+
+
+# ── CPU limit: the cap is forwarded, and its kill is named ────────────────
+
+# Measured on Windows (interop, Python 3.14.0, 2026-11-10): a job with
+# JOB_OBJECT_LIMIT_PROCESS_TIME terminates the child with exit code 0xC0000044
+# (STATUS_QUOTA_EXCEEDED). D6 forbids guessing this from documentation.
+_WIN_CPU_KILL_EXIT_CODE = 0xC0000044
+
+
+@pytest.mark.asyncio
+async def test_wiring_passes_cpu_seconds_from_the_limits_dict(monkeypatch):
+    """The parent must hand the request's ``cpu_seconds`` to the job."""
+    events: list = []
+    requested_cpu: list = []
+    _install_windows_job(monkeypatch, events, requested_cpu=requested_cpu)
+    _install_spawn_spy(monkeypatch, events)
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "ok"
+    assert requested_cpu == [4]
+
+
+@pytest.mark.asyncio
+async def test_wiring_passes_no_cpu_seconds_when_absent(monkeypatch):
+    """Without ``cpu_seconds`` the job gets ``None``: no CPU cap is imposed."""
+    events: list = []
+    requested_cpu: list = []
+    _install_windows_job(monkeypatch, events, requested_cpu=requested_cpu)
+    _install_spawn_spy(monkeypatch, events)
+
+    result = await sandbox_local.run_code("print('hi')", limits={"memory_mb": 256})
+
+    assert result["status"] == "ok"
+    assert requested_cpu == [None]
+
+
+@pytest.mark.asyncio
+async def test_cpu_limit_kill_reports_the_cpu_limit(monkeypatch):
+    """A CPU-limit kill must not be reported as a crash or a hard OOM."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_WIN_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    # D2: reuses the existing ``timeout`` type, no taxonomy change.
+    assert result["error"]["type"] == "timeout"
+    assert result["error"]["message"] == "Execution exceeded the CPU limit (4s)"
+
+
+@pytest.mark.asyncio
+async def test_no_cpu_limit_keeps_the_produced_no_output_message(monkeypatch):
+    """The measured exit code alone is not enough: no cap means no claim."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(
+        monkeypatch, events, stdout=b"", returncode=_WIN_CPU_KILL_EXIT_CODE
+    )
+
+    result = await sandbox_local.run_code("print('hi')", limits={"memory_mb": 256})
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_other_exit_code_keeps_the_produced_no_output_message(monkeypatch):
+    """A cap set but a different exit code keeps the pre-existing message."""
+    events: list = []
+    _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(monkeypatch, events, stdout=b"", returncode=1)
+
+    result = await sandbox_local.run_code(
+        "print('hi')", limits={"cpu_seconds": 4, "memory_mb": 256}
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    assert "produced no output" in result["error"]["message"]

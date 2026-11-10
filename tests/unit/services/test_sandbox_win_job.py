@@ -65,6 +65,73 @@ class TestBuildLimits:
 
         assert info.BasicLimitInformation.ActiveProcessLimit == 1
 
+    def test_cpu_limit_sets_the_flag_and_the_100ns_value(self):
+        flags, info = jobmod.build_limits(512, 1, cpu_seconds=5)
+
+        assert flags & jobmod.JOB_OBJECT_LIMIT_PROCESS_TIME
+        assert (
+            info.BasicLimitInformation.LimitFlags
+            & jobmod.JOB_OBJECT_LIMIT_PROCESS_TIME
+        )
+        # Win32 PROCESS_TIME is expressed in 100 ns units.
+        assert info.BasicLimitInformation.PerProcessUserTimeLimit == 5 * 10_000_000
+
+    def test_no_cpu_limit_leaves_the_cpu_flag_off(self):
+        flags, info = jobmod.build_limits(512, 1)
+
+        assert not (flags & jobmod.JOB_OBJECT_LIMIT_PROCESS_TIME)
+        assert not (
+            info.BasicLimitInformation.LimitFlags
+            & jobmod.JOB_OBJECT_LIMIT_PROCESS_TIME
+        )
+        assert info.BasicLimitInformation.PerProcessUserTimeLimit == 0
+
+
+class _FakeKernel32:
+    """Minimal kernel32 stand-in so ``create_job`` runs off Windows."""
+
+    def __init__(self) -> None:
+        self.closed: list = []
+
+    def CreateJobObjectW(self, *args):  # noqa: N802 - Win32 name
+        return 0x1234
+
+    def SetInformationJobObject(self, *args):  # noqa: N802 - Win32 name
+        return 1
+
+    def CloseHandle(self, handle):  # noqa: N802 - Win32 name
+        self.closed.append(handle)
+        return 1
+
+
+class TestCreateJobForwardsCpuSeconds:
+    """``create_job`` must hand the CPU cap down to ``build_limits``."""
+
+    def _install(self, monkeypatch) -> dict:
+        captured: dict = {}
+
+        def fake_build_limits(memory_mb, max_processes=1, cpu_seconds=None):
+            captured["args"] = (memory_mb, max_processes, cpu_seconds)
+            return 0, jobmod.JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+
+        monkeypatch.setattr(jobmod, "limits_supported", lambda: True)
+        monkeypatch.setattr(jobmod, "_load_apis", lambda: None)
+        monkeypatch.setattr(jobmod, "_kernel32", _FakeKernel32())
+        monkeypatch.setattr(jobmod, "build_limits", fake_build_limits)
+        return captured
+
+    def test_forwards_the_cpu_limit(self, monkeypatch):
+        captured = self._install(monkeypatch)
+
+        assert jobmod.create_job(512, 1, cpu_seconds=7) == 0x1234
+        assert captured["args"] == (512, 1, 7)
+
+    def test_defaults_to_no_cpu_limit(self, monkeypatch):
+        captured = self._install(monkeypatch)
+
+        assert jobmod.create_job(512, 1) == 0x1234
+        assert captured["args"] == (512, 1, None)
+
 
 class TestOffsetsNotJustSizes:
     """A wrong offset does not raise anywhere — the kernel silently ignores the cap.
@@ -99,6 +166,10 @@ class TestOffsetsNotJustSizes:
             | jobmod.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
             | jobmod.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         )
+        # The CPU cap is opt-in: when asked it is the ONE flag added, never
+        # any other, so the exact-mask pin above cannot go stale for it.
+        cpu_flags, _info = jobmod.build_limits(512, 1, cpu_seconds=5)
+        assert cpu_flags == (flags | jobmod.JOB_OBJECT_LIMIT_PROCESS_TIME)
 
 
 class TestWinErrorHelpers:

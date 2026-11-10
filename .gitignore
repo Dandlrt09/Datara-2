@@ -13,6 +13,9 @@ dist/
 .mypy_cache/
 .ruff_cache/
 server/uploads/
+# A run from source stages uploads at the repo root too (see H1): without this
+# the directory shows up in git status and in RDD's untracked inventory.
+/uploads/
 web/node_modules/
 node_modules/
 *.tsbuildinfo
