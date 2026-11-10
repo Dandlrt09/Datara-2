@@ -196,3 +196,39 @@ class TestResendVerification:
         resp = client.post("/api/auth/resend-verification", json={"email": email})
         assert resp.status_code == 429
         assert int(resp.headers["Retry-After"]) > 0
+
+
+class TestVerifyEmailRateLimit:
+    """The redemption endpoint is braked by origin (F9/S5).
+
+    A token is 32 random bytes, so guessing one is not a real threat; the brake
+    is the flood protection every other auth route already has. It is keyed on
+    the source address only: the token is the secret being tried, so keying on
+    it would give each attempt a fresh key and brake nothing.
+    """
+
+    def test_verify_email_is_rate_limited(self, client):
+        for _ in range(5):
+            resp = client.post("/api/auth/verify-email", json={"token": "nope"})
+            assert resp.status_code == 400
+
+        resp = client.post("/api/auth/verify-email", json={"token": "nope"})
+        assert resp.status_code == 429
+        assert int(resp.headers["Retry-After"]) > 0
+
+    def test_the_brake_does_not_eat_a_valid_token(self, client, recorder):
+        _register(client, "gate-brake-token@example.com")
+        token = recorder.last_token("gate-brake-token@example.com")
+        assert token is not None
+
+        for _ in range(4):
+            assert (
+                client.post(
+                    "/api/auth/verify-email", json={"token": "nope"}
+                ).status_code
+                == 400
+            )
+
+        # The fifth attempt is the real one: below the brake, it must verify.
+        verified = client.post("/api/auth/verify-email", json={"token": token})
+        assert verified.status_code == 204

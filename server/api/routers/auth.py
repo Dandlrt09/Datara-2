@@ -302,8 +302,23 @@ def _attempt_keys(scope: str, request: Request, email: str) -> list[str]:
     ]
 
 
+def _ip_attempt_key(scope: str, request: Request) -> str:
+    """The single origin-scoped key for a token-redemption endpoint (F9/S5).
+
+    ``verify-email`` and ``reset-password`` carry no address to key an account
+    brake on: their only input is the token, and the token IS the secret being
+    tried. Keying on it would give every attempt a distinct key and brake
+    nothing, so the source address is the one stable brake those routes have.
+    """
+    return f"{scope}:ip:{_client_ip(request)}"
+
+
 def _attempt_scope(key: str) -> str:
-    """The scope of a limiter key (``login`` / ``register``), for logs (F2)."""
+    """The scope of a limiter key, for logs (F2).
+
+    The scopes in use today are ``login``, ``register``, ``resend``, ``forgot``,
+    ``verify`` and ``reset``.
+    """
     return key.split(":", 1)[0]
 
 
@@ -484,6 +499,7 @@ async def login(
 @router.post("/verify-email", status_code=204)
 async def verify_email(
     body: VerifyEmailRequest,
+    request: Request,
     store: SqliteStore = Depends(get_store),
 ):
     """Prove the address behind a mailed verification token (D10).
@@ -495,7 +511,15 @@ async def verify_email(
     it was genuine. On success the address is stamped verified and every
     sibling verification token is dropped. Verifying does NOT log the person in
     (D10): the screen confirms and sends them to login.
+
+    The brake runs first (F9/S5), keyed on the source address: a flood of bad
+    tokens is refused before it costs a database lookup.
     """
+    brake_key = _ip_attempt_key("verify", request)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, [brake_key])
+    await limiter.record(brake_key)
+
     token = await store.consume_auth_token(
         hash_token(body.token), TOKEN_PURPOSE_VERIFY_EMAIL
     )
@@ -578,14 +602,17 @@ async def forgot_password(
 @router.post("/reset-password", status_code=204)
 async def reset_password(
     body: ResetPasswordRequest,
+    request: Request,
     response: Response,
     store: SqliteStore = Depends(get_store),
 ):
     """Set a new password from a mailed reset token (S4, D7, D8, D12).
 
-    The length check runs BEFORE the token is touched (D12-ish): a short
-    password is a malformed request, not a redemption, so it must not burn the
-    one-shot token and force the person to request another link. The token is
+    The brake runs first (F9/S5), keyed on the source address: a flood of bad
+    tokens is refused before it costs a database lookup. The length check runs
+    BEFORE the token is touched (D12-ish): a short password is a malformed
+    request, not a redemption, so it must not burn the one-shot token and force
+    the person to request another link. The token is
     then redeemed atomically exactly once; an unknown, expired, or already-used
     token answers the same 400. On success the password is replaced, the
     address is marked verified (D7 -- receiving the link at that mailbox proves
@@ -593,6 +620,11 @@ async def reset_password(
     closed (D8 -- a reset is the "my account was stolen" act, so no session may
     survive it), and any sibling reset token is dropped.
     """
+    brake_key = _ip_attempt_key("reset", request)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, [brake_key])
+    await limiter.record(brake_key)
+
     if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
