@@ -7,11 +7,38 @@ from pathlib import Path
 import asyncio
 import re
 
+from keyring.backend import KeyringBackend
+
 from server.services.auth_service import normalize_email
 from server.services.sqlite_store import SqliteStore
 from server.services.terms import TERMS_VERSION
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "server" / "migrations"
+
+
+class InMemoryKeyring(KeyringBackend):
+    """A keyring backend that lives in the process (F9/S11).
+
+    The store now asks the OS keyring for its at-rest key on every file-backed
+    boot, so no test may ever reach the real one: a suite run would otherwise
+    read and write the developer's own secret store. ``tests/conftest.py``
+    installs this backend automatically for every test.
+    """
+
+    priority = 1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.store.pop((service, username), None)
 
 
 async def apply_all_migrations(store: SqliteStore) -> None:

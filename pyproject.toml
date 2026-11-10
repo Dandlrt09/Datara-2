@@ -18,6 +18,7 @@ server = [
     "python-multipart>=0.0.9",
     "openai>=1.55.0",
     "cryptography>=43.0.0",
+    "keyring>=25.7.0",
 ]
 # The desktop application: everything the local server needs, plus the toolkit
 # that gives it its own window instead of a browser tab. Kept separate so a
