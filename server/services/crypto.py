@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 # HKDF context string, versioned so a future scheme can derive a different key.
 _HKDF_INFO = b"datara/user-settings-api-key/v1"
 
+# Separate HKDF context for the auth-attempt HMAC key (F9/S4). Deriving it from
+# the same secret material with a different info keeps key separation: the
+# limiter digest never shares a key with the at-rest encryption.
+_ATTEMPT_HMAC_INFO = b"datara/auth-attempt-hmac/v1"
+
 # Fernet tokens carry a stable version+timestamp prefix; legacy plaintext API
 # keys never start with it, which is what makes the heuristic safe.
 _FERNET_PREFIX = "gAAAAA"
@@ -79,7 +84,24 @@ class SecretBox:
     """Thin Fernet wrapper with legacy-plaintext passthrough."""
 
     def __init__(self, key: bytes) -> None:
+        self._key = key
         self._fernet = Fernet(key)
+
+    def attempt_hmac_key(self) -> bytes:
+        """A distinct subkey for the auth-attempt HMAC (F9/S4).
+
+        Derived from the same secret material as the at-rest encryption key,
+        with a different HKDF info so the two uses never share a key. The
+        result is deterministic for a given secret (env var or key file), which
+        is what lets the persisted brake survive a restart.
+        """
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=_ATTEMPT_HMAC_INFO,
+        )
+        return hkdf.derive(self._key)
 
     @classmethod
     def from_env_secret(cls, secret: str) -> SecretBox:

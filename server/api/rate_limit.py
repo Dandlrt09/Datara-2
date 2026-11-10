@@ -20,6 +20,7 @@ window, and the sixth attempt is refused until the oldest one falls out.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import time
 
 # Five attempts inside fifteen minutes, then wait (S3).
@@ -116,15 +117,17 @@ class AttemptLimiter:
 auth_attempt_limiter = AttemptLimiter()
 
 
-def hash_attempt_key(key: str) -> str:
-    """SHA-256 hex of a limiter key, the only form written to disk (S4).
+def hash_attempt_key(key: str, secret: bytes) -> str:
+    """HMAC-SHA256 hex of a limiter key, keyed by a server secret (S4).
 
-    ``hash_token`` in ``auth_service`` would be an import cycle and is about
-    session/token secrets, not limiter keys; ``hashlib`` directly keeps this
-    boundary independent. Hashing is what lets a leaked database yield no IP and
-    no email while the counter still works.
+    Keyed, not plain SHA-256: an email or IP is low-entropy, so a plain digest
+    is reversible by dictionary attack and a leaked database would confirm
+    whether a given address had attempts. Without the secret the digest cannot
+    be reproduced. The secret is derived from the same material as the at-rest
+    encryption (``DATARA_SECRET_KEY`` or the ``.secret_key`` file beside the
+    DB) and is never stored in the database itself.
     """
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return hmac.new(secret, key.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 class PersistentAttemptLimiter:
@@ -148,6 +151,7 @@ class PersistentAttemptLimiter:
         clock=time.time,
     ) -> None:
         self._store = store
+        self._secret = store.attempt_hmac_key()
         self._max_attempts = max_attempts
         self._window_seconds = window_seconds
         self._clock = clock
@@ -156,7 +160,7 @@ class PersistentAttemptLimiter:
         """Seconds to wait before *key* may try again, or None if it may now."""
         now = self._clock()
         events = await self._store.list_auth_attempts(
-            hash_attempt_key(key), now - self._window_seconds
+            hash_attempt_key(key, self._secret), now - self._window_seconds
         )
         if len(events) < self._max_attempts:
             return None
@@ -165,8 +169,10 @@ class PersistentAttemptLimiter:
 
     async def record(self, key: str) -> None:
         """Register one attempt for *key*."""
-        await self._store.record_auth_attempt(hash_attempt_key(key), self._clock())
+        await self._store.record_auth_attempt(
+            hash_attempt_key(key, self._secret), self._clock()
+        )
 
     async def clear(self, key: str) -> None:
         """Forget every attempt for *key* (a successful authentication)."""
-        await self._store.clear_auth_attempts(hash_attempt_key(key))
+        await self._store.clear_auth_attempts(hash_attempt_key(key, self._secret))

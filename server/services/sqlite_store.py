@@ -699,6 +699,15 @@ class SqliteStore:
         await self.conn.commit()
         return cursor.rowcount
 
+    def attempt_hmac_key(self) -> bytes:
+        """The HMAC key the auth attempt limiter must use (F9/S4).
+
+        Derived from the store's own secret (env var or the ``.secret_key``
+        file next to the DB), so it is stable across restarts and never stored
+        in the database itself.
+        """
+        return self._secret_box.attempt_hmac_key()
+
     # ── Auth Attempts (S4) ──────────────────────────────────────────────────────
 
     async def record_auth_attempt(

@@ -266,15 +266,42 @@ class TestPersistentAttempts:
             return {row[0] for row in rows}
 
         stored = asyncio.run(_hashes())
+        secret = store.attempt_hmac_key()
         expected = {
-            hash_attempt_key(f"register:ip:testclient"),
-            hash_attempt_key(f"register:email:{email}"),
+            hash_attempt_key(f"register:ip:testclient", secret),
+            hash_attempt_key(f"register:email:{email}", secret),
         }
         assert stored == expected
         blob = repr(stored)
         assert email not in blob
         assert "testclient" not in blob
         assert all(len(key_hash) == 64 for key_hash in stored)
+
+    def test_stored_hash_is_keyed_not_plain_sha256(self, client, store):
+        """Stronger privacy (S4): the digest is HMAC-keyed, not guessable.
+
+        A plain SHA-256 of the limiter key is reversible by dictionary attack
+        for a low-entropy value such as an email, so a leaked database would
+        confirm whether a given address/IP had attempts. The stored digest must
+        not equal the plain SHA-256 of any limiter key.
+        """
+        import hashlib
+
+        email = "hmac-check@example.com"
+        _register(client, email)
+
+        async def _hashes():
+            rows = await store.conn.execute_fetchall(
+                "SELECT key_hash FROM auth_attempts"
+            )
+            return {row[0] for row in rows}
+
+        stored = asyncio.run(_hashes())
+        plain = {
+            hashlib.sha256(f"register:ip:testclient".encode()).hexdigest(),
+            hashlib.sha256(f"register:email:{email}".encode()).hexdigest(),
+        }
+        assert stored.isdisjoint(plain)
 
     def test_sweep_keeps_only_in_window_rows(self, store):
         """S4: the purge drops rows outside the window and keeps live ones."""
