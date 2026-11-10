@@ -77,12 +77,18 @@ def _install_windows_job(
     job: int | None = 123,
     assign_ok: bool = True,
     resume_ok: bool = True,
-) -> None:
-    """Make the parent take the Windows Job Object path and record its calls."""
+) -> list:
+    """Make the parent take the Windows Job Object path and record its calls.
+
+    Returns the list of ``max_processes`` values the parent asked for, in a
+    separate record so the 2-tuple ``events`` stream keeps its shape.
+    """
 
     monkeypatch.setattr(sandbox_win_job, "limits_supported", lambda: True)
+    requested_caps: list = []
 
     def fake_create_job(memory_mb: int, max_processes: int = 1):
+        requested_caps.append(max_processes)
         events.append(("create", memory_mb))
         return job
 
@@ -101,6 +107,7 @@ def _install_windows_job(
     monkeypatch.setattr(sandbox_win_job, "assign", fake_assign)
     monkeypatch.setattr(sandbox_win_job, "resume", fake_resume)
     monkeypatch.setattr(sandbox_win_job, "close", fake_close)
+    return requested_caps
 
 
 # ── POSIX path is untouched ──────────────────────────────────────────────────
@@ -267,6 +274,76 @@ async def test_assign_failure_logs_an_error_and_leaves_no_process(
         and "assign" in record.getMessage().lower()
         for record in caplog.records
     )
+
+
+# ── Job process cap depends on whether the child is a launcher ──────────────
+
+def _set_native_interpreter(monkeypatch) -> None:
+    """Make the runner look like a native interpreter (no venv redirector)."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.setattr(sys, "_base_executable", sys.executable, raising=False)
+
+
+def _set_venv_redirector(monkeypatch) -> None:
+    """Make the runner look like a venv redirector (base != current)."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.setattr(
+        sys, "_base_executable", sys.executable + "-base", raising=False
+    )
+
+
+def test_job_process_cap_is_one_for_a_native_interpreter(monkeypatch):
+    """A native child needs a single slot: itself, and nothing else."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: False)
+    monkeypatch.delattr(sys, "_base_executable", raising=False)
+    assert sandbox_local._job_process_cap() == 1
+
+    # A base executable equal to the current one is still the native case.
+    monkeypatch.setattr(sys, "_base_executable", sys.executable, raising=False)
+    assert sandbox_local._job_process_cap() == 1
+
+
+def test_job_process_cap_is_two_for_a_venv_redirector(monkeypatch):
+    """A venv ``python.exe`` is a redirector: it spawns the real interpreter."""
+    _set_venv_redirector(monkeypatch)
+    assert sandbox_local._job_process_cap() == 2
+
+
+def test_job_process_cap_is_one_when_frozen(monkeypatch):
+    """The frozen exe is native even if a base executable is recorded."""
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+    monkeypatch.setattr(
+        sys, "_base_executable", sys.executable + "-base", raising=False
+    )
+    assert sandbox_local._job_process_cap() == 1
+
+
+@pytest.mark.asyncio
+async def test_redirector_child_gets_a_second_process_slot(monkeypatch):
+    """Wiring: with the redirector present the parent asks ``create_job`` for 2."""
+    events: list = []
+    requested_caps = _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(monkeypatch, events)
+    _set_venv_redirector(monkeypatch)
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "ok"
+    assert requested_caps == [2]
+
+
+@pytest.mark.asyncio
+async def test_native_child_keeps_the_strict_process_cap(monkeypatch):
+    """Wiring: a native interpreter still asks ``create_job`` for exactly 1."""
+    events: list = []
+    requested_caps = _install_windows_job(monkeypatch, events)
+    _install_spawn_spy(monkeypatch, events)
+    _set_native_interpreter(monkeypatch)
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "ok"
+    assert requested_caps == [1]
 
 
 @pytest.mark.asyncio

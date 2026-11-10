@@ -49,6 +49,29 @@ def sandbox_child_command() -> list[str]:
     return [sys.executable, "-I", "-B", SANDBOX_RUNNER_PATH]
 
 
+def _job_process_cap() -> int:
+    r"""How many process slots the Windows job must allow the child.
+
+    Windows needs one slot for the child itself. A venv interpreter is a
+    redirector: ``Scripts\python.exe`` spawns the real interpreter as a second
+    process, so it needs one more slot (a limit of 1 blocks it with
+    ``ERROR_NOT_ENOUGH_QUOTA``). A native child -- the frozen ``datara.exe`` or
+    the onedir build -- needs none, so it keeps the strict cap. The cap stays as
+    tight as the child allows because the sandbox's promise is that
+    model-generated code cannot multiply itself.
+
+    This does NOT cover a PyInstaller ``--onefile`` build, whose bootloader
+    re-launches the bundled exe: that is a separate redirector, own work.
+    """
+    if (
+        not is_frozen()
+        and getattr(sys, "_base_executable", None)
+        and sys._base_executable != sys.executable
+    ):
+        return 2
+    return 1
+
+
 def _job_startup_failure(cause: str) -> dict:
     """Structured fail-closed error for a sandbox that could not be confined.
 
@@ -141,7 +164,10 @@ async def run_code(
         # spawn a grandchild outside the job.
         spawn_kwargs: dict = {}
         if sandbox_win_job.limits_supported():
-            job = sandbox_win_job.create_job(resolved_limits.get("memory_mb", 512))
+            job = sandbox_win_job.create_job(
+                resolved_limits.get("memory_mb", 512),
+                max_processes=_job_process_cap(),
+            )
             if job is None:
                 # Fail closed. Without a job handle there is no memory cap, no
                 # process cap and no KILL_ON_JOB_CLOSE containment; running the
