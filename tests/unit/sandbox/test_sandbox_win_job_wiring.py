@@ -59,18 +59,22 @@ def _install_spawn_spy(
     stdout: bytes = _OK_OUTPUT,
     stderr: bytes = b"",
     returncode: int = 0,
+    argv: list | None = None,
 ) -> list:
     """Replace ``asyncio.create_subprocess_exec`` with a recording fake.
 
     Returns the list of fake processes that were spawned (empty when the
     parent refuses to spawn). The ``stdout``, ``stderr`` and ``returncode``
     arguments shape the fake child's result so the no-output and CPU-kill
-    paths can be driven.
+    paths can be driven. Pass ``argv`` to also capture the exact argv the
+    parent spawned, in its own list so the ``events`` stream keeps its shape.
     """
     spawned: list = []
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         events.append(("spawn", kwargs.get("creationflags")))
+        if argv is not None:
+            argv.append(list(args))
         proc = _FakeProcess(stdout=stdout, stderr=stderr)
         proc.returncode = returncode
         spawned.append(proc)
@@ -138,6 +142,57 @@ def test_posix_child_command_unchanged():
         "-B",
         sandbox_local.SANDBOX_RUNNER_PATH,
     ]
+
+
+# ── Frozen path: the executable itself is the sandbox child ────────────────
+# Advisory ``R3-frozen-command-untested``: ``sandbox_child_command`` has two
+# branches and only the source one had a test. Inside a PyInstaller bundle
+# there is no interpreter left to spawn, so the child *is* the executable
+# wearing its ``--sandbox-runner`` hat -- the same token ``desktop.main``
+# dispatches on to run the runner instead of starting a second server. If this
+# argv drifts, a frozen build silently boots another app copy instead of
+# running the model's code, and nothing else would catch it.
+
+
+def test_frozen_child_command_is_the_executable_with_the_runner_flag(monkeypatch):
+    """Frozen, the child argv is the exe plus the flag -- not the script path."""
+    from server import desktop  # noqa: PLC0415
+
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+
+    assert sandbox_local.sandbox_child_command() == [
+        sys.executable,
+        sandbox_local.SANDBOX_RUNNER_FLAG,
+    ]
+    # The flag is the exact token ``desktop.main`` dispatches on ...
+    assert sandbox_local.SANDBOX_RUNNER_FLAG is desktop.SANDBOX_RUNNER_FLAG
+    assert sandbox_local.SANDBOX_RUNNER_FLAG == "--sandbox-runner"
+    # ... and the source-only arguments must not leak into the frozen argv.
+    assert "-I" not in sandbox_local.sandbox_child_command()
+    assert "-B" not in sandbox_local.sandbox_child_command()
+    assert sandbox_local.SANDBOX_RUNNER_PATH not in sandbox_local.sandbox_child_command()
+
+
+@pytest.mark.asyncio
+async def test_frozen_spawn_uses_the_executable_and_skips_the_script_check(
+    monkeypatch,
+):
+    """Frozen, ``run_code`` spawns that argv without requiring the script on disk."""
+    events: list = []
+    argv: list = []
+    _install_spawn_spy(monkeypatch, events, argv=argv)
+    monkeypatch.setattr(sandbox_local, "is_frozen", lambda: True)
+    # No bundle unpacked a runner script here; the frozen guard must not raise.
+    monkeypatch.setattr(
+        sandbox_local, "SANDBOX_RUNNER_PATH", "/nonexistent/sandbox_runner.py"
+    )
+
+    result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "ok"
+    assert events == [("spawn", None)]
+    # What actually got spawned, not only what the helper returns.
+    assert argv == [[sys.executable, sandbox_local.SANDBOX_RUNNER_FLAG]]
 
 
 @pytest.mark.asyncio
