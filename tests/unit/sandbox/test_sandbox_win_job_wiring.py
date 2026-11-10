@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 
 import pytest
@@ -36,25 +37,37 @@ class _FakeProcess:
         self._stderr = stderr
         self.returncode: int | None = 0
         self.pid = 4242
+        self.killed = False
+        self.waited = False
 
     async def communicate(self, input: bytes | None = None):  # noqa: A002
         return self._stdout, self._stderr
 
     def kill(self) -> None:
+        self.killed = True
         self.returncode = -9
 
     async def wait(self) -> int:
+        self.waited = True
         return 0
 
 
-def _install_spawn_spy(monkeypatch, events: list) -> None:
-    """Replace ``asyncio.create_subprocess_exec`` with a recording fake."""
+def _install_spawn_spy(monkeypatch, events: list) -> list:
+    """Replace ``asyncio.create_subprocess_exec`` with a recording fake.
+
+    Returns the list of fake processes that were spawned (empty when the
+    parent refuses to spawn).
+    """
+    spawned: list = []
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         events.append(("spawn", kwargs.get("creationflags")))
-        return _FakeProcess()
+        proc = _FakeProcess()
+        spawned.append(proc)
+        return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    return spawned
 
 
 def _install_windows_job(
@@ -162,37 +175,98 @@ async def test_windows_job_ordering(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_failed_assign_still_resumes_and_closes(monkeypatch):
-    """A failed assign must not leave a suspended child hanging to the timeout."""
+async def test_failed_assign_kills_the_suspended_child_instead_of_running_it(
+    monkeypatch,
+):
+    """Fail closed: a child that could not join the job must die, not run.
+
+    Resuming it (as before) would let the model's code run with no memory cap,
+    no process cap and no KILL_ON_JOB_CLOSE. The suspended child is killed
+    instead, so it is never left hanging to the timeout either.
+    """
     events: list = []
-    _install_windows_job(monkeypatch, events, assign_ok=False)
-    _install_spawn_spy(monkeypatch, events)
+    _install_windows_job(monkeypatch, events, assign_ok=False, resume_ok=False)
+    spawned = _install_spawn_spy(monkeypatch, events)
 
-    await sandbox_local.run_code("print('hi')")
+    result = await sandbox_local.run_code("print('hi')")
 
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    message = result["error"]["message"].lower()
+    assert "assign" in message
+    assert "not allowed" in message
+    # The suspended child was spawned but never resumed outside the job.
+    assert events[1] == ("spawn", sandbox_win_job.CREATE_SUSPENDED)
     names = [name for name, _ in events]
-    assert "resume" in names, "resume must run even when assign failed"
-    assert "close" in names, "the job handle must be closed on every path"
-    assert names.index("resume") > names.index("assign")
+    assert "assign" in names
+    assert "resume" not in names, "a child outside the job must never resume"
+    # It was killed, not left hanging, and nothing is still running.
+    assert spawned and spawned[0].killed is True
+    assert spawned[0].returncode == -9
+    assert spawned[0].waited is True, "a killed child must also be reaped"
+    # The job handle is still closed on this exit path like on every other.
     assert names[-1] == "close"
 
 
 @pytest.mark.asyncio
-async def test_no_job_falls_back_to_normal_spawn(monkeypatch):
-    """No job handle -> spawn normally. Never suspend a child nothing resumes."""
+async def test_no_job_refuses_to_spawn_the_child(monkeypatch):
+    """Fail closed: without a job there is no confinement, so do not run."""
     events: list = []
     _install_windows_job(monkeypatch, events, job=None)
-    _install_spawn_spy(monkeypatch, events)
+    spawned = _install_spawn_spy(monkeypatch, events)
 
     result = await sandbox_local.run_code("print('hi')")
 
-    assert result["status"] == "ok"
-    names = [name for name, _ in events]
-    assert names == ["create", "spawn"]
-    assert events[1] == ("spawn", None)
-    assert "assign" not in names
-    assert "resume" not in names
-    assert "close" not in names
+    assert result["status"] == "error"
+    assert result["error"]["type"] == "runtime_error"
+    message = result["error"]["message"].lower()
+    assert "job" in message
+    assert "not allowed" in message
+    # Nothing was spawned, so nothing runs unconfined.
+    assert spawned == []
+    assert [name for name, _ in events] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_job_creation_failure_logs_an_error_and_leaves_no_process(
+    monkeypatch, caplog
+):
+    """The refusal to run is logged at ERROR, not WARNING, and runs nothing."""
+    events: list = []
+    _install_windows_job(monkeypatch, events, job=None)
+    spawned = _install_spawn_spy(monkeypatch, events)
+
+    with caplog.at_level(logging.ERROR, logger=sandbox_local.__name__):
+        result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "error"
+    assert spawned == []
+    assert any(
+        record.levelno == logging.ERROR
+        and "creation" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_assign_failure_logs_an_error_and_leaves_no_process(
+    monkeypatch, caplog
+):
+    """The refusal to run is logged at ERROR, and the child is killed."""
+    events: list = []
+    _install_windows_job(monkeypatch, events, assign_ok=False)
+    spawned = _install_spawn_spy(monkeypatch, events)
+
+    with caplog.at_level(logging.ERROR, logger=sandbox_local.__name__):
+        result = await sandbox_local.run_code("print('hi')")
+
+    assert result["status"] == "error"
+    assert spawned and spawned[0].killed is True
+    assert any(
+        record.levelno == logging.ERROR
+        and "assign" in record.getMessage().lower()
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -212,5 +286,8 @@ async def test_failed_resume_ends_the_run_instead_of_timing_out(monkeypatch):
     assert result["status"] == "error"
     assert result["error"]["type"] == "runtime_error"
     assert "resume" in result["error"]["message"].lower()
+    # The refusal states the policy, not only the cause: it is why the run was
+    # ended instead of falling back to an unconfined child.
+    assert "not allowed" in result["error"]["message"].lower()
     # The job is still closed on this exit path like on every other.
     assert events[-1] == ("close", 123)
