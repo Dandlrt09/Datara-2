@@ -20,6 +20,9 @@ from server.services.mailer import (
     ConsoleMailer,
     SmtpMailer,
     get_mailer,
+    render_new_session_email,
+    render_password_changed_email,
+    render_password_reset_email,
     render_reset_email,
     render_verification_email,
     reset_link,
@@ -214,3 +217,33 @@ class TestRenderedEmails:
         assert subject
         assert link in body
         assert "1" in body
+
+
+class TestNoticeEmails:
+    """The alert mails the maintainer scoped for sensitive events (F9/S10)."""
+
+    def test_password_changed_email_names_the_change(self):
+        subject, body = render_password_changed_email()
+
+        assert subject == "Tu contraseña cambió en Datara"
+        assert "contraseña" in body
+        assert body.strip()
+
+    def test_password_reset_email_names_the_reset(self):
+        subject, body = render_password_reset_email()
+
+        assert subject == "Tu contraseña se restableció en Datara"
+        assert "contraseña" in body
+        assert body.strip()
+
+    def test_new_session_email_names_the_browser_when_known(self):
+        subject, body = render_new_session_email(user_agent="Mozilla/5.0 Firefox")
+
+        assert subject == "Nueva sesión en Datara"
+        assert "Mozilla/5.0 Firefox" in body
+
+    def test_new_session_email_still_renders_without_a_browser(self):
+        subject, body = render_new_session_email()
+
+        assert subject == "Nueva sesión en Datara"
+        assert body.strip()

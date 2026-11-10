@@ -207,3 +207,54 @@ def render_reset_email(link: str, *, ttl_hours: int = 1) -> tuple[str, str]:
         "Si no lo pediste, ignora este mensaje: tu contraseña sigue igual.\n"
     )
     return subject, body
+
+
+def render_password_changed_email() -> tuple[str, str]:
+    """Return ``(subject, body)`` for the password-changed alert (F9/S10).
+
+    Sent after an authenticated ``POST /password``. The mail is a notice, not an
+    action: it carries no link and only asks the reader to react if the change
+    was not theirs.
+    """
+    subject = "Tu contraseña cambió en Datara"
+    body = (
+        "Tu contraseña de Datara se cambió correctamente.\n\n"
+        "Si hiciste este cambio, no necesitas hacer nada más. Si no lo reconoces, "
+        "restablece tu contraseña de inmediato y revisa tus sesiones activas.\n"
+    )
+    return subject, body
+
+
+def render_password_reset_email() -> tuple[str, str]:
+    """Return ``(subject, body)`` for the completed-reset alert (F9/S10).
+
+    Sent after ``POST /reset-password`` redeems a mailed token, once the new
+    password is stored and every session has been closed.
+    """
+    subject = "Tu contraseña se restableció en Datara"
+    body = (
+        "Tu contraseña de Datara se restableció correctamente.\n\n"
+        "Ya puedes iniciar sesión con tu nueva contraseña. Si no solicitaste este "
+        "cambio, restablece tu contraseña de nuevo y revisa tus sesiones activas.\n"
+    )
+    return subject, body
+
+
+def render_new_session_email(*, user_agent: str | None = None) -> tuple[str, str]:
+    """Return ``(subject, body)`` for the new-session alert (F9/S10).
+
+    Sent at login only when the account already held another live session, the
+    same signal that arms the in-app notice (D4/D9). ``user_agent`` is the
+    browser captured for the new session, stored truncated by the sessions
+    table; when it is unknown the body simply omits the browser line.
+    """
+    subject = "Nueva sesión en Datara"
+    browser_line = f"Navegador: {user_agent}\n" if user_agent else ""
+    body = (
+        "Se abrió una sesión nueva en tu cuenta de Datara.\n\n"
+        f"{browser_line}"
+        "Si fuiste tú, ignora este mensaje. Si no reconoces esta sesión, "
+        "cambia tu contraseña y cierra las sesiones que no reconozcas desde tu "
+        "perfil.\n"
+    )
+    return subject, body
