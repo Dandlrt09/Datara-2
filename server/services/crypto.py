@@ -9,13 +9,21 @@ in this order:
    entropy — the secret must already be high-entropy (e.g.
    ``openssl rand -base64 32``). A weak passphrase is brute-forceable
    directly from the ciphertext.
-2. Otherwise a random key file ``<db_dir>/.secret_key`` is created next to
+2. Otherwise the OS keyring is asked for the key (F9/S11).
+3. Otherwise a random key file ``<db_dir>/.secret_key`` is created next to
    the database (mode 0600) and reused across boots.
-3. When the store has no real on-disk path (e.g. ``:memory:`` in tests), an
+4. When the store has no real on-disk path (e.g. ``:memory:`` in tests), an
    ephemeral per-instance key is generated and NEVER written anywhere. A
    file-backed store, by contrast, always writes the key file beside its DB —
    including tests that build one from a ``tempfile.mkstemp`` path, which
    therefore leave a real ``.secret_key`` (mode 0600) next to that temp DB.
+
+Hard rule (S11): an existing ``.secret_key`` is never orphaned. If the
+keyring holds no usable key but the file does, the file's key is adopted and
+copied into the keyring, so the ciphertext already stored stays readable and
+the next boot prefers the keyring. The file is never deleted or overwritten.
+When the keyring is missing or raises (WSL, headless Linux), resolution falls
+back to the file and the app still boots.
 """
 
 from __future__ import annotations
@@ -30,7 +38,17 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+try:  # keyring is a declared dependency; guard import so a broken install
+    # degrades to the key-file path instead of failing to boot.
+    import keyring
+except Exception:  # pragma: no cover - defensive only
+    keyring = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+# Keyring slot owned by the at-rest Fernet key (service, username).
+_KEYRING_SERVICE = "datara"
+_KEYRING_USERNAME = "api-key-encryption"
 
 # HKDF context string, versioned so a future scheme can derive a different key.
 _HKDF_INFO = b"datara/user-settings-api-key/v1"
@@ -69,6 +87,39 @@ def _derive_key(secret: str) -> bytes:
         info=_HKDF_INFO,
     )
     return base64.urlsafe_b64encode(hkdf.derive(secret.encode("utf-8")))
+
+
+def _keyring_load_key() -> bytes | None:
+    """Return the Fernet key stored in the OS keyring, or ``None``.
+
+    Every keyring failure (no backend, locked collection, missing D-Bus) is
+    swallowed and logged: at-rest encryption must keep booting on hosts where
+    the keyring is unusable, falling back to the key file.
+    """
+    if keyring is None:
+        return None
+    try:
+        stored = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
+        if not stored:
+            return None
+        return stored.encode("ascii")
+    except Exception as exc:  # noqa: BLE001 - any backend failure is a fallback
+        logger.warning(
+            "OS keyring unavailable; falling back to the key file: %s", exc
+        )
+        return None
+
+
+def _keyring_store_key(key: bytes) -> bool:
+    """Persist *key* in the OS keyring; return whether it was stored."""
+    if keyring is None:
+        return False
+    try:
+        keyring.set_password(_KEYRING_SERVICE, _KEYRING_USERNAME, key.decode("ascii"))
+    except Exception as exc:  # noqa: BLE001 - best effort, file stays authoritative
+        logger.warning("Could not persist secret key to OS keyring: %s", exc)
+        return False
+    return True
 
 
 def _key_file_error(key_path: Path) -> SecretKeyFileError:
@@ -159,8 +210,9 @@ class SecretBox:
     def for_store(cls, db_path: str | None) -> SecretBox:
         """Resolve a box for a store backed by *db_path*.
 
-        Env var wins; then an on-disk key file next to the DB; then an
-        ephemeral in-memory key for ``:memory:`` / path-less stores.
+        Resolution order (S11): ``DATARA_SECRET_KEY`` (explicit override) →
+        OS keyring → on-disk key file → ephemeral in-memory key for
+        ``:memory:`` / path-less stores.
         """
         secret = os.environ.get("DATARA_SECRET_KEY")
         if secret:
@@ -170,8 +222,51 @@ class SecretBox:
             # ``server.db_path.resolve_db_path``; expanding here too is a safe
             # no-op that keeps direct callers consistent with them.
             key_path = Path(db_path).expanduser().parent / _SECRET_FILE_NAME
-            return cls.from_key_file(key_path)
+            return cls._from_keyring_or_file(key_path)
         return cls.ephemeral()
+
+    @classmethod
+    def _from_keyring_or_file(cls, key_path: Path) -> SecretBox:
+        """Resolve from the keyring, adopting the key file when needed.
+
+        A usable keyring key wins. Otherwise the file key is used and copied
+        into the keyring so a later boot prefers it; the file is never deleted
+        or overwritten, which is what keeps an existing ciphertext readable.
+        """
+        keyring_key = _keyring_load_key()
+        if keyring_key is not None:
+            try:
+                box = cls(keyring_key)
+            except ValueError:
+                logger.warning(
+                    "Ignoring unusable key in the OS keyring; "
+                    "falling back to key file %s",
+                    key_path,
+                )
+            else:
+                # Keep the file fallback in step with the keyring without ever
+                # touching a file that already exists.
+                cls._write_new_key_file(key_path, keyring_key)
+                return box
+        box = cls.from_key_file(key_path)
+        _keyring_store_key(box._key)
+        return box
+
+    @staticmethod
+    def _write_new_key_file(key_path: Path, key: bytes) -> None:
+        """Create *key_path* with *key* only when it does not exist yet."""
+        try:
+            fd = os.open(key_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return
+        try:
+            os.write(fd, key)
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            logger.warning("Could not chmod secret key file %s", key_path)
 
     def encrypt(self, plaintext: str) -> str:
         """Encrypt *plaintext* into a Fernet token string."""

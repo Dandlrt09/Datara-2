@@ -171,6 +171,49 @@ class TestResetPassword:
 
         assert client.get("/api/auth/me").status_code == 401
 
+    def test_reset_password_is_rate_limited(self, client):
+        for _ in range(5):
+            assert _reset(client, "nope").status_code == 400
+
+        resp = _reset(client, "nope")
+        assert resp.status_code == 429
+        assert int(resp.headers["Retry-After"]) > 0
+
+    def test_the_brake_does_not_eat_a_valid_token(self, client, recorder):
+        register_verified(client, "reset-brake-token@example.com")
+        _forgot(client, "reset-brake-token@example.com")
+        token = recorder.last_token("reset-brake-token@example.com")
+        assert token is not None
+
+        for _ in range(4):
+            assert _reset(client, "nope").status_code == 400
+
+        # The fifth attempt is the real one: below the brake, it must reset.
+        assert _reset(client, token).status_code == 204
+
+    def test_the_verify_brake_does_not_block_the_reset_scope(self, client, recorder):
+        register_verified(client, "scope-split@example.com")
+        _forgot(client, "scope-split@example.com")
+        token = recorder.last_token("scope-split@example.com")
+        assert token is not None
+
+        # ``register_verified`` already spent one verify attempt, so four more
+        # bring this address to the five-attempt limit.
+        for _ in range(4):
+            assert (
+                client.post(
+                    "/api/auth/verify-email", json={"token": "nope"}
+                ).status_code
+                == 400
+            )
+        assert (
+            client.post("/api/auth/verify-email", json={"token": "nope"}).status_code
+            == 429
+        )
+
+        # The verify brake tripped on this address; the reset scope is its own.
+        assert _reset(client, token).status_code == 204
+
     def test_reset_proves_the_address_for_an_unverified_account(
         self, client, recorder
     ):

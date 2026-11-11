@@ -33,6 +33,9 @@ from server.services.auth_service import (
 from server.services.mailer import (
     Mailer,
     get_mailer,
+    render_new_session_email,
+    render_password_changed_email,
+    render_password_reset_email,
     render_reset_email,
     render_verification_email,
     reset_link,
@@ -178,19 +181,46 @@ async def _mint_session(
     store: SqliteStore,
     user_id: int,
     user_agent: str | None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict]:
     """Generate a raw token and create the corresponding auth session.
 
     ``user_agent`` is the request header, stored truncated (D2) so the sessions
     list can name the browser; no IP is stored anywhere.
 
-    Returns (raw_token, set_cookie_header).
+    Returns (raw_token, set_cookie_header, session_row): the stored row is
+    handed back so the caller can use its truncated ``user_agent`` and its
+    ``token_hash`` without a second lookup (F9/S10).
     """
     raw_token = generate_raw_token()
     token_hash = hash_token(raw_token)
-    await store.create_auth_session(user_id, token_hash, user_agent=user_agent)
+    session = await store.create_auth_session(
+        user_id, token_hash, user_agent=user_agent
+    )
     cookie = build_set_cookie_header(raw_token, secure=_cookie_secure())
-    return raw_token, cookie
+    return raw_token, cookie, session
+
+
+async def _send_notice(
+    mailer: Mailer,
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    user_id: int,
+    description: str,
+) -> None:
+    """Send one notice, swallowing any delivery failure (F9/S10).
+
+    A broken mailbox must never change the HTTP response nor undo the side
+    effect the request already applied -- the same best-effort rule the
+    verification and reset mails follow.
+    """
+    try:
+        await mailer.send(to=to, subject=subject, body=body)
+    except Exception:
+        logger.exception(
+            "Failed to send %s email to user_id=%s", description, user_id
+        )
 
 
 async def _issue_and_send_verification(
@@ -219,12 +249,14 @@ async def _issue_and_send_verification(
     subject, body = render_verification_email(
         link, ttl_hours=VERIFICATION_TOKEN_TTL_SECONDS // 3600
     )
-    try:
-        await mailer.send(to=user["email"], subject=subject, body=body)
-    except Exception:
-        logger.exception(
-            "Failed to send verification email to user_id=%s", user["id"]
-        )
+    await _send_notice(
+        mailer,
+        to=user["email"],
+        subject=subject,
+        body=body,
+        user_id=user["id"],
+        description="verification",
+    )
 
 
 async def _issue_and_send_reset(
@@ -252,12 +284,71 @@ async def _issue_and_send_reset(
     subject, body = render_reset_email(
         link, ttl_hours=RESET_TOKEN_TTL_SECONDS // 3600
     )
-    try:
-        await mailer.send(to=user["email"], subject=subject, body=body)
-    except Exception:
-        logger.exception(
-            "Failed to send password reset email to user_id=%s", user["id"]
-        )
+    await _send_notice(
+        mailer,
+        to=user["email"],
+        subject=subject,
+        body=body,
+        user_id=user["id"],
+        description="password reset",
+    )
+
+
+async def _send_password_changed_notice(mailer: Mailer, user: dict) -> None:
+    """Alert the account that its password just changed (F9/S10)."""
+    subject, body = render_password_changed_email()
+    await _send_notice(
+        mailer,
+        to=user["email"],
+        subject=subject,
+        body=body,
+        user_id=user["id"],
+        description="password changed",
+    )
+
+
+async def _send_password_reset_notice(mailer: Mailer, user: dict) -> None:
+    """Alert the account that its password was just reset (F9/S10)."""
+    subject, body = render_password_reset_email()
+    await _send_notice(
+        mailer,
+        to=user["email"],
+        subject=subject,
+        body=body,
+        user_id=user["id"],
+        description="password reset completed",
+    )
+
+
+async def _maybe_send_new_session_notice(
+    store: SqliteStore,
+    user: dict,
+    mailer: Mailer,
+    session: dict,
+) -> None:
+    """Alert the account when a login found another live session (F9/S10).
+
+    This is the mail twin of the in-app notice: the notice arms on an older
+    session the moment a newer one appears (D4/D9), and the same event is what
+    this mail reports. At login the just-created session is the newest, so the
+    in-app signal is equivalent to "the account already held another live
+    session" -- ``list_auth_sessions`` is the listing that signal is derived
+    from, and it filters expired rows exactly like ``pending_new_session_at``.
+    The mail names the browser captured for the new session (truncated by the
+    store), matching what the sessions list would show.
+    """
+    sessions = await store.list_auth_sessions(user["id"], session["token_hash"])
+    if not any(not row["is_current"] for row in sessions):
+        return
+    subject, body = render_new_session_email(user_agent=session["user_agent"])
+    await _send_notice(
+        mailer,
+        to=user["email"],
+        subject=subject,
+        body=body,
+        user_id=user["id"],
+        description="new session",
+    )
 
 
 def _current_token_hash(request: Request) -> str:
@@ -302,8 +393,23 @@ def _attempt_keys(scope: str, request: Request, email: str) -> list[str]:
     ]
 
 
+def _ip_attempt_key(scope: str, request: Request) -> str:
+    """The single origin-scoped key for a token-redemption endpoint (F9/S5).
+
+    ``verify-email`` and ``reset-password`` carry no address to key an account
+    brake on: their only input is the token, and the token IS the secret being
+    tried. Keying on it would give every attempt a distinct key and brake
+    nothing, so the source address is the one stable brake those routes have.
+    """
+    return f"{scope}:ip:{_client_ip(request)}"
+
+
 def _attempt_scope(key: str) -> str:
-    """The scope of a limiter key (``login`` / ``register``), for logs (F2)."""
+    """The scope of a limiter key, for logs (F2).
+
+    The scopes in use today are ``login``, ``register``, ``resend``, ``forgot``,
+    ``verify`` and ``reset``.
+    """
     return key.split(":", 1)[0]
 
 
@@ -427,6 +533,7 @@ async def login(
     request: Request,
     response: Response,
     store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
 ):
     """Log in with email and password.
 
@@ -469,10 +576,11 @@ async def login(
     # the IP brake at will. The IP key survives a successful login.
     await limiter.clear(_email_attempt_key("login", body.email))
 
-    raw_token, cookie = await _mint_session(
+    _raw_token, cookie, session = await _mint_session(
         store, user["id"], request.headers.get("user-agent")
     )
     response.headers["Set-Cookie"] = cookie
+    await _maybe_send_new_session_notice(store, user, mailer, session)
     return UserResponse(
         id=user["id"],
         email=user["email"],
@@ -484,6 +592,7 @@ async def login(
 @router.post("/verify-email", status_code=204)
 async def verify_email(
     body: VerifyEmailRequest,
+    request: Request,
     store: SqliteStore = Depends(get_store),
 ):
     """Prove the address behind a mailed verification token (D10).
@@ -495,7 +604,15 @@ async def verify_email(
     it was genuine. On success the address is stamped verified and every
     sibling verification token is dropped. Verifying does NOT log the person in
     (D10): the screen confirms and sends them to login.
+
+    The brake runs first (F9/S5), keyed on the source address: a flood of bad
+    tokens is refused before it costs a database lookup.
     """
+    brake_key = _ip_attempt_key("verify", request)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, [brake_key])
+    await limiter.record(brake_key)
+
     token = await store.consume_auth_token(
         hash_token(body.token), TOKEN_PURPOSE_VERIFY_EMAIL
     )
@@ -578,14 +695,18 @@ async def forgot_password(
 @router.post("/reset-password", status_code=204)
 async def reset_password(
     body: ResetPasswordRequest,
+    request: Request,
     response: Response,
     store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
 ):
     """Set a new password from a mailed reset token (S4, D7, D8, D12).
 
-    The length check runs BEFORE the token is touched (D12-ish): a short
-    password is a malformed request, not a redemption, so it must not burn the
-    one-shot token and force the person to request another link. The token is
+    The brake runs first (F9/S5), keyed on the source address: a flood of bad
+    tokens is refused before it costs a database lookup. The length check runs
+    BEFORE the token is touched (D12-ish): a short password is a malformed
+    request, not a redemption, so it must not burn the one-shot token and force
+    the person to request another link. The token is
     then redeemed atomically exactly once; an unknown, expired, or already-used
     token answers the same 400. On success the password is replaced, the
     address is marked verified (D7 -- receiving the link at that mailbox proves
@@ -593,6 +714,11 @@ async def reset_password(
     closed (D8 -- a reset is the "my account was stolen" act, so no session may
     survive it), and any sibling reset token is dropped.
     """
+    brake_key = _ip_attempt_key("reset", request)
+    limiter = PersistentAttemptLimiter(store)
+    await _enforce_attempt_limit(limiter, [brake_key])
+    await limiter.record(brake_key)
+
     if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -616,6 +742,9 @@ async def reset_password(
     await store.invalidate_user_tokens(
         token["user_id"], TOKEN_PURPOSE_RESET_PASSWORD
     )
+    user = await store.get_user_by_id(token["user_id"])
+    if user is not None:
+        await _send_password_reset_notice(mailer, user)
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
 
@@ -794,6 +923,7 @@ async def change_password(
     request: Request,
     response: Response,
     store: SqliteStore = Depends(get_store),
+    mailer: Mailer = Depends(get_mailer),
     user: dict = Depends(current_user),
 ):
     """Change the authenticated user's password.
@@ -823,6 +953,8 @@ async def change_password(
     raw_token: str | None = request.cookies.get("session_id")
     if raw_token:
         await store.delete_other_auth_sessions(user["id"], hash_token(raw_token))
+
+    await _send_password_changed_notice(mailer, user)
 
     response.status_code = status.HTTP_204_NO_CONTENT
     return None
