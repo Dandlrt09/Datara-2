@@ -96,7 +96,9 @@ def write_data_location(path: str | os.PathLike[str]) -> Path:
     location = Path(os.fspath(path)).expanduser()
     pointer = location_file()
     pointer.parent.mkdir(parents=True, exist_ok=True)
-    pointer.write_text(str(location), encoding="utf-8")
+    # The trailing newline keeps this a well-formed text file for the editors and
+    # tools a human may open it with; the reader strips, so it tolerates both.
+    pointer.write_text(f"{location}\n", encoding="utf-8")
     return pointer
 
 

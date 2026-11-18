@@ -226,7 +226,9 @@ class TestDataLocationPointer:
         pointer = write_data_location(chosen)
 
         assert pointer == os_dir / self.POINTER_NAME
-        assert len(pointer.read_text(encoding="utf-8").splitlines()) == 1
+        # One line, and a well-formed text file: the trailing newline matters to
+        # the editors a human may open the pointer with.
+        assert pointer.read_text(encoding="utf-8") == f"{chosen}\n"
         assert read_data_location() == chosen
         assert resolve_db_path() == str(chosen / "datara.db")
 
