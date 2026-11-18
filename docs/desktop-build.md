@@ -120,10 +120,16 @@ build can be exercised where there is no display at all:
 
 | Path | Contents |
 | --- | --- |
-| `%USERPROFILE%\.datara\datara.db` (Windows) / `~/.datara/datara.db` | SQLite database |
-| `~/.datara/.secret_key` | Fernet key for stored provider credentials. **Losing it loses the credentials, not the data.** |
-| `~/.datara/uploads/` | Uploaded datasets (frozen builds only; from source they stay in the checkout) |
-| `~/.datara/datara.log` | Application log — the only place to look in a windowed build, which has no console |
+| `<data dir>/datara.db` | SQLite database |
+| `<data dir>/.secret_key` | Fernet key for stored provider credentials. **Losing it loses the credentials, not the data.** |
+| `<data dir>/uploads/` | Uploaded datasets (frozen builds only; from source they stay in the checkout) |
+| `<data dir>/datara.log` | Application log — the only place to look in a windowed build, which has no console |
+
+`<data dir>` is the directory holding the database, chosen by operating system:
+`%LOCALAPPDATA%\Datara` on Windows, `~/Library/Application Support/Datara` on
+macOS, `$XDG_DATA_HOME/Datara` (or `~/.local/share/Datara`) on Linux. An install
+that already keeps its database in the pre-F3 `~/.datara` goes on using it:
+nothing is moved and nothing is copied.
 
 `DATARA_DB_PATH` moves all of it (the log and the uploads directory follow the
 database), which is how a test run is isolated from a real install.
@@ -143,7 +149,7 @@ result of each point, plus the answers to point 9.
    window appears on its own.
 2. **Creates the data directory outside any synchronised folder.**
 3. **Applies migrations into a brand-new database.** A fresh `datara.db` gets the
-   schema; check `~/.datara/datara.log` if it does not.
+   schema; check `<data dir>/datara.log` if it does not.
 4. **The frontend loads.** The window shows the application, not a blank page or
    a JSON document.
 5. **Upload a CSV and profile it.** Columns, types and null counts appear.
