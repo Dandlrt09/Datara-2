@@ -19,8 +19,8 @@ interface DataFolderScreenProps {
  */
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_path:
-    "La ruta tiene que ser absoluta. Escribí una ruta completa, por ejemplo /home/vos/datos.",
-  path_not_writable: "No se puede escribir en esa carpeta. Elegí otra ruta.",
+    "La ruta tiene que ser absoluta. Escribe una ruta completa, por ejemplo /home/usuario/datos.",
+  path_not_writable: "No se puede escribir en esa carpeta. Elige otra ruta.",
   already_decided: "La carpeta de datos ya fue decidida en este equipo.",
 };
 
@@ -33,7 +33,7 @@ function errorMessage(error: unknown): string {
     if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
     if (detail?.detail?.message) return detail.detail.message;
   }
-  return "No se pudo guardar la carpeta. Probá de nuevo.";
+  return "No se pudo guardar la carpeta. Prueba de nuevo.";
 }
 
 /**
@@ -70,7 +70,7 @@ export default function DataFolderScreen({
       <div style={{ maxWidth: 560, margin: "80px auto", padding: 24 }}>
         <h1>Carpeta de datos elegida</h1>
         <p role="status">
-          Guardamos <strong>{decision.path}</strong>. Cerrá y volvé a abrir
+          Guardamos <strong>{decision.path}</strong>. Cierra y vuelve a abrir
           Datara para usar la carpeta nueva.
         </p>
         {decision.syncedClient && (
@@ -86,8 +86,8 @@ export default function DataFolderScreen({
           >
             Aviso: la carpeta que elegiste la sincroniza {decision.syncedClient}.
             Ese cliente puede copiar la base de Datara mientras la escribimos y
-            replicar a la nube los datasets que subas. Podés continuar igual:
-            solo tenelo en cuenta.
+            replicar a la nube los datasets que subas. Puedes continuar igual:
+            solo tenlo en cuenta.
           </p>
         )}
         <button type="button" onClick={onContinue} style={{ padding: 10 }}>
@@ -101,7 +101,7 @@ export default function DataFolderScreen({
     <div style={{ maxWidth: 560, margin: "80px auto", padding: 24 }}>
       <h1>¿Dónde guardamos tus datos?</h1>
       <p>
-        Ahí viven la base de Datara y los datasets que subas. Elegí una carpeta
+        Ahí viven la base de Datara y los datasets que subas. Elige una carpeta
         de este equipo.
       </p>
       <p>
@@ -124,7 +124,7 @@ export default function DataFolderScreen({
             id="data-folder-path"
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
-            placeholder="/home/vos/datos"
+            placeholder="/home/usuario/datos"
             style={{ width: "100%", padding: 8 }}
           />
         </div>

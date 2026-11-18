@@ -118,22 +118,22 @@ def _prepare_folder(folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
     except FileExistsError as exc:
         raise _unusable_folder(
-            f"La ruta elegida no es una carpeta: {folder}. Elija otra ruta."
+            f"La ruta elegida no es una carpeta: {folder}. Elige otra ruta."
         ) from exc
     except OSError as exc:
         raise _unusable_folder(
-            f"No se pudo crear la carpeta de datos: {folder}. Elija otra ruta."
+            f"No se pudo crear la carpeta de datos: {folder}. Elige otra ruta."
         ) from exc
     if not folder.is_dir():
         raise _unusable_folder(
-            f"La ruta elegida no es una carpeta: {folder}. Elija otra ruta."
+            f"La ruta elegida no es una carpeta: {folder}. Elige otra ruta."
         )
     try:
         fd, probe = tempfile.mkstemp(prefix=".datara-write-probe-", dir=folder)
     except OSError as exc:
         raise _unusable_folder(
             f"No se puede escribir en la carpeta de datos: {folder}. "
-            "Elija otra ruta."
+            "Elige otra ruta."
         ) from exc
     os.close(fd)
     try:

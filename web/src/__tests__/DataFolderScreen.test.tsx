@@ -153,7 +153,7 @@ describe("DataFolderScreen (S1/S6)", () => {
       screen.getByRole("button", { name: "Usar la carpeta recomendada" })
     );
 
-    expect(await screen.findByText(/volvé a abrir Datara/i)).toBeTruthy();
+    expect(await screen.findByText(/vuelve a abrir Datara/i)).toBeTruthy();
   });
 
   it("names the sync risk once and still lets the analyst continue", async () => {
@@ -194,7 +194,7 @@ describe("DataFolderScreen (S1/S6)", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Usar la carpeta recomendada" })
     );
-    await screen.findByText(/volvé a abrir Datara/i);
+    await screen.findByText(/vuelve a abrir Datara/i);
 
     expect(screen.queryByRole("alert")).toBeNull();
   });
