@@ -117,7 +117,7 @@ describe("DeleteAccountDialog", () => {
     fillAndSubmit("eliminar");
 
     expect(screen.getByRole("alert").textContent).toBe(
-      "Escribí ELIMINAR para confirmar.",
+      "Escribe ELIMINAR para confirmar.",
     );
   });
 

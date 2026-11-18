@@ -64,14 +64,14 @@ describe("RegisterScreen", () => {
     expect(screen.getByLabelText("Contraseña")).toBeTruthy();
     expect(screen.getByLabelText("Repetir contraseña")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Crear cuenta" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Iniciá sesión" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Inicia sesión" })).toBeTruthy();
   });
 
   it("says what happens when the name is left empty (S2)", () => {
     renderWithProviders(<RegisterScreen />);
 
     expect(
-      screen.getByText(/si lo dejás vacío, usamos la parte local de tu email/i),
+      screen.getByText(/si lo dejas vacío, usamos la parte local de tu email/i),
     ).toBeTruthy();
   });
 
@@ -198,7 +198,7 @@ describe("RegisterScreen", () => {
     });
     renderWithProviders(<RegisterScreen />);
 
-    expect(screen.getByText("Demasiados intentos, probá más tarde")).toBeTruthy();
+    expect(screen.getByText("Demasiados intentos, prueba más tarde")).toBeTruthy();
   });
 
   it("shows a data-check message on 422", () => {
@@ -209,7 +209,7 @@ describe("RegisterScreen", () => {
     });
     renderWithProviders(<RegisterScreen />);
 
-    expect(screen.getByText("Revisá los datos ingresados")).toBeTruthy();
+    expect(screen.getByText("Revisa los datos ingresados")).toBeTruthy();
   });
 
   it("tells the person to reload when the terms changed under the tab (D5)", () => {
@@ -220,7 +220,7 @@ describe("RegisterScreen", () => {
     });
     renderWithProviders(<RegisterScreen />);
 
-    expect(screen.getByText("Los términos cambiaron, recargá la página")).toBeTruthy();
+    expect(screen.getByText("Los términos cambiaron, recarga la página")).toBeTruthy();
   });
 
   it("shows a Spanish generic message on an unexpected failure", () => {
@@ -246,7 +246,7 @@ describe("RegisterScreen", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Tenés que aceptar los términos para crear la cuenta"),
+        screen.getByText("Tienes que aceptar los términos para crear la cuenta"),
       ).toBeTruthy(),
     );
     expect(mutateAsync).not.toHaveBeenCalled();

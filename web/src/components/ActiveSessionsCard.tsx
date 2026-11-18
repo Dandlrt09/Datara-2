@@ -78,7 +78,7 @@ export default function ActiveSessionsCard() {
     <section style={cardStyle} aria-busy={isLoading}>
       <h2 style={{ margin: 0, color: colors.textPrimary }}>Sesiones activas</h2>
       <p style={{ margin: "4px 0 0", ...sublabelStyle }}>
-        Navegadores con la sesión abierta. Cerrá los que no reconozcas.
+        Navegadores con la sesión abierta. Cierra los que no reconozcas.
       </p>
 
       {sessions.map((session) => {
@@ -126,7 +126,7 @@ export default function ActiveSessionsCard() {
             role="status"
             style={{ color: colors.textMuted, fontSize: typography.fontSize.sm }}
           >
-            No se pudo cerrar la sesión. Probá de nuevo.
+            No se pudo cerrar la sesión. Prueba de nuevo.
           </span>
         )}
         <button
