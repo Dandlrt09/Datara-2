@@ -18,7 +18,18 @@ from starlette.exceptions import HTTPException
 
 from server.api import store as api_store
 from server.api import event_bus as api_event_bus
-from server.api.routers import auth, chat, files, sessions, settings, archive, activity, usage, export
+from server.api.routers import (
+    activity,
+    archive,
+    auth,
+    chat,
+    data_folder,
+    export,
+    files,
+    sessions,
+    settings,
+    usage,
+)
 from server.api.csrf_guard import DEVELOPMENT_ORIGINS, install_csrf_origin_guard
 from server.api.upload_guard import install_upload_guard
 from server.db_path import resolve_db_path
@@ -225,6 +236,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router)
+app.include_router(data_folder.router)
 app.include_router(sessions.router)
 app.include_router(settings.router)
 app.include_router(files.router)
