@@ -970,7 +970,7 @@ describe("ChatView component", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Formato no soportado (.txt).");
-    expect(alert.textContent).toContain("Usá CSV, TSV, XLSX o JSON.");
+    expect(alert.textContent).toContain("Usa CSV, TSV, XLSX o JSON.");
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
@@ -996,7 +996,7 @@ describe("ChatView component", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Ya hay un archivo con ese nombre");
-    expect(alert.textContent).toContain("Borralo antes de volver a subirlo.");
+    expect(alert.textContent).toContain("Bórralo antes de volver a subirlo.");
     expect(alert.textContent).not.toContain("already exists");
   });
 
@@ -1019,7 +1019,7 @@ describe("ChatView component", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(
-      "No se pudo leer el archivo. Verificá el formato y el contenido.",
+      "No se pudo leer el archivo. Verifica el formato y el contenido.",
     );
     expect(alert.textContent).not.toContain("Failed to parse file");
   });

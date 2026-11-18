@@ -53,8 +53,8 @@ export default function ActivityLogCard() {
     <section style={cardStyle} aria-busy={isLoading}>
       <h2 style={{ margin: 0, color: colors.textPrimary }}>Bitácora</h2>
       <p style={{ margin: "4px 0 0", ...sublabelStyle }}>
-        Tu actividad de este mes. Refleja lo que existe hoy: si borrás un chat,
-        también desaparece de acá.
+        Tu actividad de este mes. Refleja lo que existe hoy: si borras un chat,
+        también desaparece de aquí.
       </p>
 
       <dl

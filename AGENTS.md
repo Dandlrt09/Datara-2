@@ -64,7 +64,7 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 ## Conventions
 
 - Conventional commits (`feat:`, `fix:`, `test:`, `chore:`), message in English, **no** AI attribution or `Co-Authored-By`.
-- Identifiers/comments in English; user-facing chat copy in natural professional Spanish; docs/specs in English.
+- Identifiers/comments in English; user-facing copy in **neutral Spanish with tuteo** (tú: "Cierra y vuelve", "Puedes", "Elige", "Prueba"), never voseo (*vos*, *tenés*, *podés*, *cerrá*, *volvé*, *elegí*, *probá*, *acá*) nor formal usted (*Elija*, *vuelva*, *téngalo*); docs/specs in English. Guarded by `web/src/__tests__/neutralCopy.test.ts`.
 - Full test suite must stay green before pushing. The counts are deliberately not
   written here -- they drift with every change: `.venv/bin/python -m pytest -q` and
   `cd web && npm test` print the real numbers at the end of the run.

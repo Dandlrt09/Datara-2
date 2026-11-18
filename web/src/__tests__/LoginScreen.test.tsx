@@ -89,7 +89,7 @@ describe("LoginScreen", () => {
       error: { status: 429, message: "Too many attempts" },
     });
     renderWithProviders(<LoginScreen />);
-    expect(screen.getByText("Demasiados intentos, probá más tarde")).toBeTruthy();
+    expect(screen.getByText("Demasiados intentos, prueba más tarde")).toBeTruthy();
   });
 
   it("links to the password recovery screen", () => {

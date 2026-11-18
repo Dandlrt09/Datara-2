@@ -313,7 +313,7 @@ export default function ChatView() {
         // No extension must not print an empty parenthesis.
         const shownExt = ext || "sin extensión";
         setAttachError(
-          `Formato no soportado (${shownExt}). Usá CSV, TSV, XLSX o JSON.`,
+          `Formato no soportado (${shownExt}). Usa CSV, TSV, XLSX o JSON.`,
         );
         return;
       }
@@ -345,14 +345,14 @@ export default function ChatView() {
           if (uploadCanceledByUserRef.current) setAttachError("Carga cancelada.");
         } else if (e instanceof UploadError && e.status === 409) {
           setAttachError(
-            "Ya hay un archivo con ese nombre en esta sesión. Borralo antes de volver a subirlo.",
+            "Ya hay un archivo con ese nombre en esta sesión. Bórralo antes de volver a subirlo.",
           );
         } else if (e instanceof UploadError && e.status === 400) {
           setAttachError(
-            "No se pudo leer el archivo. Verificá el formato y el contenido.",
+            "No se pudo leer el archivo. Verifica el formato y el contenido.",
           );
         } else {
-          setAttachError("No se pudo adjuntar el archivo. Reintentá.");
+          setAttachError("No se pudo adjuntar el archivo. Reintenta.");
         }
       } finally {
         uploadAbortRef.current = null;
@@ -897,7 +897,7 @@ export default function ChatView() {
             disabled={!sessionId || store.isStreaming || uploadFileMut.isPending}
             title={
               !sessionId
-                ? "Creá o seleccioná una sesión para adjuntar archivos"
+                ? "Crea o selecciona una sesión para adjuntar archivos"
                 : "Adjuntar archivo (CSV, TSV, XLSX o JSON)"
             }
             style={{ padding: "8px 12px" }}

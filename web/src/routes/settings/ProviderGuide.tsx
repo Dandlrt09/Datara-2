@@ -43,7 +43,7 @@ const GUIDES: Record<string, GuideContent> = {
       "Instala Ollama en tu máquina.",
       "Inicia el servidor local (Ollama lo levanta al abrir la app o con «ollama serve»).",
       "Descarga un modelo, por ejemplo «ollama pull llama3.2».",
-      "No hace falta clave de API: Datara se conecta al servidor local que ya tenés corriendo.",
+      "No hace falta clave de API: Datara se conecta al servidor local que ya tienes corriendo.",
     ],
     linkLabel: "Descargar Ollama",
     setupUrl: "https://ollama.com/download",
@@ -53,8 +53,8 @@ const GUIDES: Record<string, GuideContent> = {
     steps: [
       "Instala LM Studio en tu máquina.",
       "Descarga un modelo desde la app y arráncalo en modo servidor local.",
-      "Asegurate de que el servidor OpenAI-compatible esté escuchando en el puerto configurado.",
-      "No hace falta clave de API: Datara se conecta al servidor local que ya tenés corriendo.",
+      "Asegúrate de que el servidor OpenAI-compatible esté escuchando en el puerto configurado.",
+      "No hace falta clave de API: Datara se conecta al servidor local que ya tienes corriendo.",
     ],
     linkLabel: "Abrir LM Studio",
     setupUrl: "https://lmstudio.ai/",
@@ -64,7 +64,7 @@ const GUIDES: Record<string, GuideContent> = {
     steps: [
       "Usa cualquier servidor compatible con la API de OpenAI.",
       "Ingresa la URL base que termina en /v1 (por ejemplo, https://mi-servidor/v1).",
-      "Si el servidor exige autenticación, pega su clave de API; si no, dejala vacía.",
+      "Si el servidor exige autenticación, pega su clave de API; si no, déjala vacía.",
       "Escribe el identificador del modelo que expone tu servidor.",
     ],
     linkLabel: "",

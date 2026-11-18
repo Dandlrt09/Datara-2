@@ -76,11 +76,11 @@ function registerErrorMessage(error: unknown): string {
       // fails there instead of silently degrading this message.
       const body = (error as ApiError).body as { detail?: string } | undefined;
       return body?.detail === "Terms of use version has changed"
-        ? "Los términos cambiaron, recargá la página"
-        : "Revisá los datos ingresados";
+        ? "Los términos cambiaron, recarga la página"
+        : "Revisa los datos ingresados";
     }
     case 429:
-      return "Demasiados intentos, probá más tarde";
+      return "Demasiados intentos, prueba más tarde";
     default:
       return "No pudimos crear la cuenta. Vuelve a intentarlo.";
   }
@@ -140,7 +140,7 @@ export default function RegisterScreen() {
           <input
             {...register("name", {
               validate: (value) =>
-                value.trim().length <= 50 || "Usá 50 caracteres como máximo",
+                value.trim().length <= 50 || "Usa 50 caracteres como máximo",
             })}
             id="register-name"
             type="text"
@@ -149,7 +149,7 @@ export default function RegisterScreen() {
             style={inputStyle}
           />
           <p id="register-name-hint" style={hintStyle}>
-            Si lo dejás vacío, usamos la parte local de tu email.
+            Si lo dejas vacío, usamos la parte local de tu email.
           </p>
           {errors.name && <p style={errorStyle}>{errors.name.message}</p>}
         </div>
@@ -160,7 +160,7 @@ export default function RegisterScreen() {
           </label>
           <input
             {...register("email", {
-              required: "Ingresá tu email",
+              required: "Ingresa tu email",
               pattern: {
                 value: EMAIL_PATTERN,
                 message: "Ese email no parece válido",
@@ -180,7 +180,7 @@ export default function RegisterScreen() {
           </label>
           <input
             {...register("password", {
-              required: "Elegí una contraseña",
+              required: "Elige una contraseña",
               minLength: {
                 value: 8,
                 message: "La contraseña debe tener al menos 8 caracteres",
@@ -223,13 +223,13 @@ export default function RegisterScreen() {
           </label>
           <input
             {...register("confirmPassword", {
-              required: "Repetí la contraseña",
+              required: "Repite la contraseña",
               validate: (value, formValues) =>
                 value === formValues.password || "Las contraseñas no coinciden",
             })}
             id="register-confirm"
             type={showPasswords ? "text" : "password"}
-            placeholder="Repetí tu contraseña"
+            placeholder="Repite tu contraseña"
             style={inputStyle}
           />
           {errors.confirmPassword && (
@@ -260,7 +260,7 @@ export default function RegisterScreen() {
           >
             <input
               {...register("terms", {
-                required: "Tenés que aceptar los términos para crear la cuenta",
+                required: "Tienes que aceptar los términos para crear la cuenta",
               })}
               id="register-terms"
               type="checkbox"
@@ -288,7 +288,7 @@ export default function RegisterScreen() {
         </button>
       </form>
       <p style={{ marginTop: 16 }}>
-        ¿Ya tenés cuenta? <Link to="/login">Iniciá sesión</Link>
+        ¿Ya tienes cuenta? <Link to="/login">Inicia sesión</Link>
       </p>
     </div>
   );

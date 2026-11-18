@@ -17,7 +17,7 @@ function deleteAccountErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return "La contraseña no es correcta.";
     if (error.status === 422) {
-      return `Escribí ${DELETE_CONFIRMATION_WORD} para confirmar.`;
+      return `Escribe ${DELETE_CONFIRMATION_WORD} para confirmar.`;
     }
   }
   return "No se pudo programar el borrado. Vuelve a intentarlo.";
@@ -123,7 +123,7 @@ function DeleteAccountDialogContent({
             htmlFor={confirmId}
             style={{ display: "block", marginBottom: 6, color: "#444" }}
           >
-            Escribí {DELETE_CONFIRMATION_WORD} para confirmar
+            Escribe {DELETE_CONFIRMATION_WORD} para confirmar
           </label>
           <input
             id={confirmId}

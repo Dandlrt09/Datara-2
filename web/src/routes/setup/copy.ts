@@ -13,7 +13,7 @@ export const COPY = {
   // dropped: the label keeps the raw id visible so it can be recognized.
   LEGACY_PROVIDER_LABEL: (id: string) => `Otro (${id})`,
   LEGACY_PROVIDER_HINT:
-    "Este proveedor quedó guardado por una versión anterior de Datara. Al guardar, revisá que la URL base sea la correcta.",
+    "Este proveedor quedó guardado por una versión anterior de Datara. Al guardar, revisa que la URL base sea la correcta.",
 
   // Honest save lifecycle copy: a successful PUT is not enough to claim
   // "Connected" — the probe has the last word.
@@ -69,5 +69,5 @@ export const COPY = {
   KEYLESS_NO_KEY_REQUIRED: (label: string) => `«${label}» no requiere clave de API.`,
   KEYLESS_ENDPOINT_LABEL: "Endpoint que usará Datara:",
   KEYLESS_SERVER_HINT: (label: string) =>
-    `Asegurate de tener «${label}» corriendo en tu máquina.`,
+    `Asegúrate de tener «${label}» corriendo en tu máquina.`,
 } as const;

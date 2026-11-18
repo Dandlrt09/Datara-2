@@ -60,7 +60,7 @@ export default function NewSessionNotice() {
         {`Se abrió una sesión el ${formatTimestamp(
           newSessionAt,
           dateFormat,
-        )} desde otro navegador. Si no fuiste vos, cambiá tu contraseña y cerrá las demás.`}
+        )} desde otro navegador. Si no fuiste tú, cambia tu contraseña y cierra las demás.`}
       </p>
       <button
         type="button"

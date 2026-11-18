@@ -63,7 +63,7 @@ describe("NewSessionNotice", () => {
     expect(screen.getByText("Entró una nueva sesión")).toBeTruthy();
     expect(
       screen.getByText(
-        "Se abrió una sesión el 26/10/2026 desde otro navegador. Si no fuiste vos, cambiá tu contraseña y cerrá las demás.",
+        "Se abrió una sesión el 26/10/2026 desde otro navegador. Si no fuiste tú, cambia tu contraseña y cierra las demás.",
       ),
     ).toBeTruthy();
   });

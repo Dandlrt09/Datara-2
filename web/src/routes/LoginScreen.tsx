@@ -23,7 +23,7 @@ function loginErrorMessage(error: unknown): string {
       // open from here by resending the verification mail.
       return "Your email is not verified yet";
     case 429:
-      return "Demasiados intentos, probá más tarde";
+      return "Demasiados intentos, prueba más tarde";
     default:
       return "Login failed";
   }
