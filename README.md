@@ -19,7 +19,7 @@ datara/
 uv sync --extra server
 
 # Run the server (API + built frontend, if web/dist exists)
-# Local DB: ~/.datara/datara.db (override with DATARA_DB_PATH)
+# Local DB: OS data dir (see server/db_path.py); ~/.datara if a DB already lives there
 uv run uvicorn server.api.main:app
 
 # For frontend development with hot reload

@@ -48,7 +48,7 @@ set -a && source .env && set +a       # the server does NOT load .env itself
 ```
 
 **Gotchas**
-- The LLM provider key lives in `.env` at the repo root — NOT in `~/.datara/datara.db` (that SQLite DB holds app data: users, sessions, messages, files, profiles).
+- The LLM provider key lives in `.env` at the repo root — NOT in the app's SQLite DB (`~/.datara/datara.db`, or the per-OS data directory on a fresh install; that DB holds app data: users, sessions, messages, files, profiles).
 - On WSL, starting uvicorn from `/mnt/c` takes ~10-15s (imports are slow); a curl right after launch may return 000 — wait and retry.
 - Graceful uvicorn shutdown hangs on browser keep-alive connections; `kill -9` when needed.
 - Never pipe pytest through other commands (`pytest | tail && commit` masks the exit code).

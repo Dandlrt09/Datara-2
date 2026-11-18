@@ -79,9 +79,11 @@ async def lifespan(app: FastAPI):
     configure_logging()
 
     # Step 1: database setup
-    # Design: local DB lives at ~/.datara/datara.db (outside the repo),
-    # configurable via DATARA_DB_PATH. The parent directory may not exist
-    # on a fresh machine — create it before connecting.
+    # Design: the DB lives in the per-user data directory for this operating
+    # system (outside the repo; see server.db_path), or in the pre-F3
+    # ``~/.datara`` location when a database already exists there. Either way it
+    # is configurable via DATARA_DB_PATH. The parent directory may not exist on a
+    # fresh machine — create it before connecting.
     # resolve_db_path is the single source of truth: it expands ``~`` so the
     # store and its key file always agree on the directory.
     db_path = resolve_db_path()

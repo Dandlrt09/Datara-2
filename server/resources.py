@@ -67,8 +67,10 @@ def data_dir() -> Path:
     """The per-user directory that holds the database, its key and the uploads.
 
     Taken from the resolved database path so the three can never drift apart:
-    ``~/.datara`` by default, and whatever ``DATARA_DB_PATH`` points at when it
-    is set (which is how tests isolate themselves).
+    the operating system's data directory by default (or the pre-F3
+    ``~/.datara`` when that database already exists), and whatever
+    ``DATARA_DB_PATH`` points at when it is set (which is how tests isolate
+    themselves).
     """
     return Path(resolve_db_path()).parent
 

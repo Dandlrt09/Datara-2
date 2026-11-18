@@ -9,6 +9,7 @@ drift apart.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from server.db_path import resolve_db_path
@@ -37,12 +38,98 @@ class TestResolveDbPath:
         monkeypatch.setenv("DATARA_DB_PATH", "~/from-env.db")
         assert resolve_db_path("") == str(fresh_home / "from-env.db")
 
-    def test_unset_env_resolves_to_expanded_default(self, monkeypatch, tmp_path):
+    def test_unset_env_resolves_to_an_expanded_path(self, monkeypatch, tmp_path):
+        """A fresh machine has no literal ``~`` left in the resolved default."""
         fresh_home = tmp_path / "home"
         fresh_home.mkdir()
         monkeypatch.setenv("HOME", str(fresh_home))
         monkeypatch.delenv("DATARA_DB_PATH", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        resolved = resolve_db_path()
+        assert "~" not in resolved
+        assert Path(resolved).is_relative_to(fresh_home)
+
+
+class TestOperatingSystemDefault:
+    """S1/S2: with no override, the location follows each operating system's
+    convention instead of one hardcoded ``~/.datara``."""
+
+    @staticmethod
+    def _fresh_home(monkeypatch, tmp_path) -> Path:
+        fresh_home = tmp_path / "home"
+        fresh_home.mkdir()
+        monkeypatch.setenv("HOME", str(fresh_home))
+        monkeypatch.delenv("DATARA_DB_PATH", raising=False)
+        return fresh_home
+
+    def test_linux_honours_xdg_data_home(self, monkeypatch, tmp_path):
+        self._fresh_home(monkeypatch, tmp_path)
+        xdg = tmp_path / "xdg"
+        xdg.mkdir()
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert resolve_db_path() == str(xdg / "Datara" / "datara.db")
+
+    def test_linux_falls_back_to_local_share(self, monkeypatch, tmp_path):
+        fresh_home = self._fresh_home(monkeypatch, tmp_path)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert resolve_db_path() == str(
+            fresh_home / ".local" / "share" / "Datara" / "datara.db"
+        )
+
+    def test_windows_uses_localappdata(self, monkeypatch, tmp_path):
+        self._fresh_home(monkeypatch, tmp_path)
+        local = tmp_path / "LocalAppData"
+        local.mkdir()
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert resolve_db_path() == str(local / "Datara" / "datara.db")
+
+    def test_macos_uses_application_support(self, monkeypatch, tmp_path):
+        fresh_home = self._fresh_home(monkeypatch, tmp_path)
+        monkeypatch.setattr(sys, "platform", "darwin")
+        assert resolve_db_path() == str(
+            fresh_home / "Library" / "Application Support" / "Datara" / "datara.db"
+        )
+
+
+class TestLegacyLocation:
+    """D1/S7: an install that already keeps its database in ``~/.datara`` goes on
+    using it. Nothing is moved and nothing is copied."""
+
+    def test_existing_legacy_database_still_wins(self, monkeypatch, tmp_path):
+        fresh_home = tmp_path / "home"
+        (fresh_home / ".datara").mkdir(parents=True)
+        (fresh_home / ".datara" / "datara.db").write_bytes(b"legacy")
+        monkeypatch.setenv("HOME", str(fresh_home))
+        monkeypatch.delenv("DATARA_DB_PATH", raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
         assert resolve_db_path() == str(fresh_home / ".datara" / "datara.db")
+
+    def test_legacy_shim_never_overrides_the_env_var(self, monkeypatch, tmp_path):
+        fresh_home = tmp_path / "home"
+        (fresh_home / ".datara").mkdir(parents=True)
+        (fresh_home / ".datara" / "datara.db").write_bytes(b"legacy")
+        monkeypatch.setenv("HOME", str(fresh_home))
+        monkeypatch.setenv("DATARA_DB_PATH", "~/chosen.db")
+        assert resolve_db_path() == str(fresh_home / "chosen.db")
+
+    def test_leftover_legacy_directory_is_not_adopted_without_a_database(
+        self, monkeypatch, tmp_path
+    ):
+        """A ``~/.datara`` holding no database (say an orphaned key) is not data."""
+        fresh_home = tmp_path / "home"
+        (fresh_home / ".datara").mkdir(parents=True)
+        (fresh_home / ".datara" / ".secret_key").write_text("stale")
+        monkeypatch.setenv("HOME", str(fresh_home))
+        monkeypatch.delenv("DATARA_DB_PATH", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert resolve_db_path() == str(
+            fresh_home / ".local" / "share" / "Datara" / "datara.db"
+        )
 
 
 class TestStoreKeepsDbAndKeyTogether:
