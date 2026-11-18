@@ -12,7 +12,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from server.db_path import resolve_db_path
+from server.db_path import (
+    read_data_location,
+    resolve_db_path,
+    write_data_location,
+)
 from server.services.sqlite_store import SqliteStore
 
 
@@ -188,3 +192,125 @@ class TestStoreKeepsDbAndKeyTogether:
         assert (expanded_parent / "datara.db").exists()
         assert (expanded_parent / ".secret_key").exists()
         assert not (cwd / "~").exists()
+
+
+class TestDataLocationPointer:
+    """S4/D6: the first-run choice is a one-line pointer file, not a config.
+
+    Precedence under test: explicit → ``DATARA_DB_PATH`` → pointer → legacy
+    shim → operating-system default. The pointer must never win over
+    ``DATARA_DB_PATH``: that variable is what isolates every test, so a stale
+    pointer on the machine running the suite would hijack the entire run, and
+    a missing, empty or unreadable pointer must fall through without raising.
+    """
+
+    POINTER_NAME = "data-location.txt"
+
+    @staticmethod
+    def _isolate(monkeypatch, tmp_path) -> Path:
+        """Move the OS default data dir (and with it the pointer) into tmp."""
+        home = tmp_path / "home"
+        home.mkdir()
+        xdg = tmp_path / "xdg"
+        xdg.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+        monkeypatch.delenv("DATARA_DB_PATH", raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        return xdg / "Datara"
+
+    def test_pointer_decides_the_database_location(self, monkeypatch, tmp_path):
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        chosen = tmp_path / "chosen"
+
+        pointer = write_data_location(chosen)
+
+        assert pointer == os_dir / self.POINTER_NAME
+        # One line, and a well-formed text file: the trailing newline matters to
+        # the editors a human may open the pointer with.
+        assert pointer.read_text(encoding="utf-8") == f"{chosen}\n"
+        assert read_data_location() == chosen
+        assert resolve_db_path() == str(chosen / "datara.db")
+
+    def test_writing_creates_the_os_data_directory(self, monkeypatch, tmp_path):
+        """On a fresh machine the pointer is the first thing ever written."""
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        assert not os_dir.exists()
+
+        write_data_location(tmp_path / "chosen")
+
+        assert (os_dir / self.POINTER_NAME).exists()
+
+    def test_env_var_still_beats_the_pointer(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        write_data_location(tmp_path / "chosen")
+        monkeypatch.setenv("DATARA_DB_PATH", "~/isolated.db")
+
+        assert resolve_db_path() == str(tmp_path / "home" / "isolated.db")
+
+    def test_explicit_argument_still_beats_the_pointer(self, monkeypatch, tmp_path):
+        self._isolate(monkeypatch, tmp_path)
+        write_data_location(tmp_path / "chosen")
+
+        assert resolve_db_path(str(tmp_path / "explicit.db")) == str(
+            tmp_path / "explicit.db"
+        )
+
+    def test_missing_pointer_falls_through_to_the_os_default(
+        self, monkeypatch, tmp_path
+    ):
+        os_dir = self._isolate(monkeypatch, tmp_path)
+
+        assert read_data_location() is None
+        assert resolve_db_path() == str(os_dir / "datara.db")
+
+    def test_missing_pointer_falls_through_to_the_legacy_database(
+        self, monkeypatch, tmp_path
+    ):
+        self._isolate(monkeypatch, tmp_path)
+        legacy = tmp_path / "home" / ".datara" / "datara.db"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b"legacy")
+
+        assert resolve_db_path() == str(legacy)
+
+    def test_empty_pointer_falls_through_to_the_os_default(
+        self, monkeypatch, tmp_path
+    ):
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        os_dir.mkdir(parents=True)
+        (os_dir / self.POINTER_NAME).write_text("   \n\n", encoding="utf-8")
+
+        assert read_data_location() is None
+        assert resolve_db_path() == str(os_dir / "datara.db")
+
+    def test_empty_pointer_falls_through_to_the_legacy_database(
+        self, monkeypatch, tmp_path
+    ):
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        legacy = tmp_path / "home" / ".datara" / "datara.db"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b"legacy")
+        os_dir.mkdir(parents=True)
+        (os_dir / self.POINTER_NAME).write_text("", encoding="utf-8")
+
+        assert resolve_db_path() == str(legacy)
+
+    def test_unreadable_pointer_falls_through_without_raising(
+        self, monkeypatch, tmp_path
+    ):
+        """A pointer that cannot be read as text must never break startup."""
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        (os_dir / self.POINTER_NAME).mkdir(parents=True)
+
+        assert read_data_location() is None
+        assert resolve_db_path() == str(os_dir / "datara.db")
+
+    def test_relative_pointer_content_is_ignored(self, monkeypatch, tmp_path):
+        """A relative line would resolve against the server's cwd — nonsense."""
+        os_dir = self._isolate(monkeypatch, tmp_path)
+        os_dir.mkdir(parents=True)
+        (os_dir / self.POINTER_NAME).write_text("datos/datara", encoding="utf-8")
+
+        assert read_data_location() is None
+        assert resolve_db_path() == str(os_dir / "datara.db")
