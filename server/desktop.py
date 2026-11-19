@@ -147,6 +147,11 @@ def run_desktop(*, open_window: Callable[[str], None] | None = None) -> bool:
     # Before the server takes a single request: the mail sent to prove an address
     # has to point back at the port this process just bound.
     publish_app_url(url)
+    # The packaged app IS the local deployment (F1/T2b, D2): one analyst on
+    # their own machine, so it opts in to the local profile. ``setdefault``
+    # never overwrites an explicit value, and a bare uvicorn run never reaches
+    # this line -- it keeps the hosted default from ``get_mode``.
+    os.environ.setdefault("DATARA_MODE", "local")
     config = uvicorn.Config(app, log_config=None)
     server = uvicorn.Server(config)
     thread = threading.Thread(

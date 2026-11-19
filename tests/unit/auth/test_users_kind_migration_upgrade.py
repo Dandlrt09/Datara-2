@@ -168,8 +168,10 @@ def test_local_profiles_need_no_email_and_hosted_ones_still_do(tmp_path):
     apply_migrations(db)
 
     conn = sqlite3.connect(db)
+    # One local row is all this probe needs: 0015 makes "at most one local
+    # profile" the database's invariant (F1/T2b, S1) and its own probe owns
+    # that, so a second local insert here would fail on an unrelated line.
     conn.execute("INSERT INTO users (kind, name) VALUES ('local', 'Ana local')")
-    conn.execute("INSERT INTO users (kind, name) VALUES ('local', 'Otra')")  # many NULLs ok
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("INSERT INTO users (email, password_hash) VALUES (NULL, 'h')")
     with pytest.raises(sqlite3.IntegrityError):

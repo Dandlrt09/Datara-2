@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.errors import DuplicateError
 from server.api.deps import current_user, get_store
+from server.app_mode import get_mode
 from server.api.rate_limit import PersistentAttemptLimiter
 from server.services.auth_service import (
     MAX_DISPLAY_NAME_LENGTH,
@@ -77,6 +78,18 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class LocalProfileRequest(BaseModel):
+    """Body of ``POST /api/auth/local-profile`` (F1/T2b).
+
+    ``name`` is required (D5): a local profile has no email, so the display
+    name is the only thing that can name it -- there is nothing else to fall
+    back to, unlike a hosted account whose name can be derived from its
+    address.
+    """
+
+    name: str
+
+
 class VerifyEmailRequest(BaseModel):
     """Body of ``POST /api/auth/verify-email`` (D9).
 
@@ -133,7 +146,9 @@ class NameUpdateRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    email: str
+    # None for a local profile, which has no address (F1/T2b); hosted accounts
+    # always carry one, so every existing caller keeps passing the same value.
+    email: str | None
     # The user-chosen display name, or None when they never set one (T1/D1).
     # The frontend resolves None to the email-derived name (D6).
     name: str | None = None
@@ -581,6 +596,64 @@ async def login(
     )
     response.headers["Set-Cookie"] = cookie
     await _maybe_send_new_session_notice(store, user, mailer, session)
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        name=user.get("name"),
+        pending_deletion_at=user.get("pending_deletion_at"),
+    )
+
+
+@router.post("/local-profile", status_code=201)
+async def create_local_profile(
+    body: LocalProfileRequest,
+    request: Request,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+):
+    """Create the machine's single local profile and start its session (F1/T2b).
+
+    Only reachable in local mode (D2): in hosted mode the route is a backstop
+    that answers 403. The frontend hides the screen, but hiding existence is
+    not access control, so a direct call is refused too -- 403 rather than 404
+    says "not here", not "never existed".
+
+    Unlike register, this route DOES open a session (D5): a local profile has
+    no address to prove, so there is no gate to hold it behind, and a first
+    boot that created a profile nobody could enter would be a dead end. The
+    name is required and normalized; "at most one local profile" is enforced
+    by the store's partial unique index (0015), surfaced here as a 409.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    name = normalize_display_name(body.name)
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Name is required",
+        )
+    if len(name) > MAX_DISPLAY_NAME_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters",
+        )
+
+    try:
+        user = await store.create_local_user(name)
+    except DuplicateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A local profile already exists",
+        )
+
+    _raw_token, cookie, _session = await _mint_session(
+        store, user["id"], request.headers.get("user-agent")
+    )
+    response.headers["Set-Cookie"] = cookie
     return UserResponse(
         id=user["id"],
         email=user["email"],
