@@ -19,7 +19,7 @@ interface DataFolderScreenProps {
  */
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_path:
-    "La ruta tiene que ser absoluta. Escribe una ruta completa, por ejemplo /home/usuario/datos.",
+    "La ruta tiene que ser absoluta. Escribe la ruta completa de la carpeta en este equipo.",
   path_not_writable: "No se puede escribir en esa carpeta. Elige otra ruta.",
   already_decided: "La carpeta de datos ya fue decidida en este equipo.",
 };
@@ -124,7 +124,7 @@ export default function DataFolderScreen({
             id="data-folder-path"
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
-            placeholder="/home/usuario/datos"
+            placeholder={defaultPath}
             style={{ width: "100%", padding: 8 }}
           />
         </div>
