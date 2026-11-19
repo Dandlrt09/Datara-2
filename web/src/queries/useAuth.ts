@@ -7,7 +7,8 @@ export const LOCAL_PASSWORD_MIN_LENGTH = 8;
 
 export interface User {
   id: number;
-  email: string;
+  /** The account address, or null for a local profile, which has none (F1/T5). */
+  email: string | null;
   /** The name the user chose in Perfil, or null to fall back to the email (T1). */
   name: string | null;
   /** Scheduled purge deadline in the grace period, or null (S3). */

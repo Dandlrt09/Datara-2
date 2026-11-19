@@ -272,6 +272,12 @@ export default function ProfileView() {
   const name = resolveDisplayName(user.name, user.email);
   const initial = name.charAt(0).toUpperCase();
 
+  // A local profile has no address at all (F1/T5): show a neutral label where
+  // the email used to be, and never let the missing value reach the screen as
+  // "null". A hosted account keeps its real address byte for byte.
+  const email = user.email?.trim() ? user.email : null;
+  const address = email ?? "Perfil local";
+
   return (
     <div style={{ maxWidth: 560 }}>
       <h1 style={{ margin: "0 0 16px", color: colors.textPrimary }}>Perfil</h1>
@@ -328,7 +334,7 @@ export default function ProfileView() {
                 color: colors.textMuted,
               }}
             >
-              {user.email}
+              {address}
             </span>
           </div>
         </div>
@@ -360,17 +366,23 @@ export default function ProfileView() {
 
         <div style={{ ...rowStyle, marginTop: 20 }}>
           <div>
-            <span style={rowLabelStyle}>Correo electrónico</span>
-            <span style={rowSublabelStyle}>Se usa para iniciar sesión.</span>
+            <span style={rowLabelStyle}>
+              {email ? "Correo electrónico" : "Cuenta"}
+            </span>
+            <span style={rowSublabelStyle}>
+              {email
+                ? "Se usa para iniciar sesión."
+                : "Sin correo. Este perfil vive en este equipo."}
+            </span>
           </div>
           <span
             style={{
               fontFamily: typography.fontMono,
               fontSize: "0.85em",
-              color: colors.textPrimary,
+              color: email ? colors.textPrimary : colors.textMuted,
             }}
           >
-            {user.email}
+            {address}
           </span>
         </div>
 

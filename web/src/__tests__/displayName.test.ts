@@ -51,3 +51,37 @@ describe("resolveDisplayName", () => {
     expect(resolveDisplayName(undefined, "dan@datara.ai")).toBe("dan");
   });
 });
+
+/**
+ * F1/T5: a local profile has no address at all, so `email` is null. The name
+ * is required when a local profile is created (D5), so a real local user never
+ * needs the email; the resolver still has to stay total and must never
+ * fabricate an address. The final branch covers the partial payloads the
+ * screens see while the user loads.
+ */
+describe("resolveDisplayName without an address", () => {
+  it("prefers the chosen name when there is no email", () => {
+    expect(resolveDisplayName("Ana", null)).toBe("Ana");
+    expect(resolveDisplayName("  Ana  ", null)).toBe("Ana");
+  });
+
+  it("falls back to a person-like default with neither name nor email", () => {
+    expect(resolveDisplayName(null, null)).toBe("Analista");
+    expect(resolveDisplayName(undefined, null)).toBe("Analista");
+    expect(resolveDisplayName("", null)).toBe("Analista");
+    expect(resolveDisplayName("   ", null)).toBe("Analista");
+  });
+
+  it("treats a blank email as no email, never as an address", () => {
+    expect(resolveDisplayName(null, "")).toBe("Analista");
+    expect(resolveDisplayName(null, "   ")).toBe("Analista");
+  });
+
+  it("keeps deriving from the email when one is present", () => {
+    expect(resolveDisplayName(null, "dan@datara.ai")).toBe("dan");
+  });
+
+  it("never returns the string 'null'", () => {
+    expect(resolveDisplayName(null, null)).not.toBe("null");
+  });
+});

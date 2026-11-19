@@ -254,7 +254,8 @@ function AppShellContent({ user }: { user: User }) {
   useSessionEvents({ onEvent, onReconnected });
 
   // The same resolver Perfil uses (T1/D6): a chosen name wins, and an account
-  // with no name keeps showing the email-derived one.
+  // with no name keeps showing the email-derived one. A local profile has no
+  // address at all (F1/T5), so the block below shows a neutral label instead.
   const displayName = resolveDisplayName(user.name, user.email);
 
   return (
@@ -337,7 +338,7 @@ function AppShellContent({ user }: { user: User }) {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {user.email}
+                  {user.email || "Perfil local"}
                 </span>
               </span>
             </Link>
