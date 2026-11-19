@@ -353,14 +353,22 @@ class TestLocalProfileStatus:
 
         before = client.get("/api/auth/local-profile")
         assert before.status_code == 200
-        assert before.json() == {"exists": False, "hosted_accounts": False}
+        assert before.json() == {
+            "exists": False,
+            "hosted_accounts": False,
+            "locked": False,
+        }
 
         created = client.post("/api/auth/local-profile", json={"name": "Ana"})
         assert created.status_code == 201
 
         after = client.get("/api/auth/local-profile")
         assert after.status_code == 200
-        assert after.json() == {"exists": True, "hosted_accounts": False}
+        assert after.json() == {
+            "exists": True,
+            "hosted_accounts": False,
+            "locked": False,
+        }
 
     def test_hosted_accounts_is_true_after_a_hosted_account_is_registered(
         self, client, monkeypatch
@@ -373,7 +381,11 @@ class TestLocalProfileStatus:
         resp = client.get("/api/auth/local-profile")
 
         assert resp.status_code == 200
-        assert resp.json() == {"exists": False, "hosted_accounts": True}
+        assert resp.json() == {
+            "exists": False,
+            "hosted_accounts": True,
+            "locked": False,
+        }
 
     def test_hosted_accounts_counts_a_row_scheduled_for_deletion(
         self, client, store, monkeypatch
@@ -393,7 +405,11 @@ class TestLocalProfileStatus:
 
         resp = client.get("/api/auth/local-profile")
 
-        assert resp.json() == {"exists": False, "hosted_accounts": True}
+        assert resp.json() == {
+            "exists": False,
+            "hosted_accounts": True,
+            "locked": False,
+        }
 
     def test_a_local_profile_and_hosted_accounts_are_reported_together(
         self, client, monkeypatch
@@ -407,7 +423,11 @@ class TestLocalProfileStatus:
 
         resp = client.get("/api/auth/local-profile")
 
-        assert resp.json() == {"exists": True, "hosted_accounts": True}
+        assert resp.json() == {
+            "exists": True,
+            "hosted_accounts": True,
+            "locked": False,
+        }
 
     def test_hosted_mode_refuses_the_status(self, client, store, monkeypatch):
         monkeypatch.setenv("DATARA_MODE", "hosted")

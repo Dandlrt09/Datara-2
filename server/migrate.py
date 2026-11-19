@@ -92,17 +92,20 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
         # matters: the baseline runner never read or wrote this pragma, so a
         # caller that opened the connection with enforcement deliberately off
         # must not get it switched on behind its back just because a migration
-        # needed the rebuild.
-        fk_was_enabled = False
+        # needed the rebuild. Sample it BEFORE anything that can fail -- the
+        # backup, the commit, the script -- so the ``finally`` always restores
+        # the true value: sampling it late leaves the default ``False`` when the
+        # backup aborts first, and the caller that had enforcement ON gets it
+        # back OFF. Reading early is safe because the pragma is a connection
+        # property, and no step before the switch-off changes it.
+        fk_was_enabled = _foreign_keys_enabled(conn) if fk_off else False
         try:
             if fk_off:
                 if existing_install:  # a brand-new database has nothing to protect
                     _backup_before(conn, version)
                 conn.commit()
-                # Read right before switching off: the pragma is a no-op inside a
-                # transaction, so after the commit this is the value the caller
-                # actually had.
-                fk_was_enabled = _foreign_keys_enabled(conn)
+                # The pragma is a no-op inside a transaction, so switch it off
+                # only after the commit above.
                 conn.execute("PRAGMA foreign_keys=OFF")
             conn.executescript(sql)
             # Ensure migrations table exists before recording (first migration

@@ -177,7 +177,7 @@ class SqliteStore:
         even if a future write path ever loosened that index.
         """
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, name, password_hash, created_at, "
+            "SELECT id, email, name, password_hash, local_rescue_hash, created_at, "
             "pending_deletion_at, email_verified_at FROM users "
             "WHERE kind = 'local' ORDER BY id LIMIT 1",
         )
@@ -242,6 +242,53 @@ class SqliteStore:
         """
         cursor = await self.conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def set_local_lock(
+        self, user_id: int, password_hash: str, rescue_hash: str
+    ) -> bool:
+        """Turn the optional lock on, storing password and rescue hashes (F1/T4).
+
+        Both values are already hashed by the caller (D4): the password with
+        bcrypt, the one-time rescue key with SHA-256. Scoped to ``kind = 'local'``
+        so the hosted path can never be locked through this helper. Returns True
+        if a row changed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET password_hash = ?, local_rescue_hash = ? "
+            "WHERE id = ? AND kind = 'local'",
+            (password_hash, rescue_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def set_local_rescue_hash(self, user_id: int, rescue_hash: str) -> bool:
+        """Replace the outstanding rescue-key hash, and nothing else (F1/T4).
+
+        The rescue route overwrites the hash of the key it just accepted, so
+        that key stops working (D4): rotation is the whole point. Scoped to
+        ``kind = 'local'``. Returns True if a row changed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET local_rescue_hash = ? "
+            "WHERE id = ? AND kind = 'local'",
+            (rescue_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def set_local_password(self, user_id: int, password_hash: str) -> bool:
+        """Replace the local lock's password hash (F1/T4).
+
+        Scoped to ``kind = 'local'`` so a hosted account can never be rewritten
+        through the local-lock path. Returns True if a row changed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET password_hash = ? "
+            "WHERE id = ? AND kind = 'local'",
             (password_hash, user_id),
         )
         await self.conn.commit()

@@ -5,6 +5,7 @@ All endpoints are unauthenticated except ``/logout`` and ``/me``.
 
 from __future__ import annotations
 
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -91,22 +92,65 @@ class LocalProfileRequest(BaseModel):
 
 
 class LocalProfileStatus(BaseModel):
-    """Body of ``GET /api/auth/local-profile`` (F1/T2b, L10; T3, D3).
+    """Body of ``GET /api/auth/local-profile`` (F1/T2b, L10; T3, D3; T4, D4).
 
     The identity state the first-boot landing needs. ``exists`` lets the first
     boot tell "create the profile" (false) from "open the profile" (true)
     before it holds any session. ``hosted_accounts`` reports whether the
     database already holds email accounts: when it does, the local profile is
     only OFFERED on an empty database (D3), so the visitor keeps the email
-    login instead of seeing the creation form.
+    login instead of seeing the creation form. ``locked`` reports whether the
+    optional local lock is ON (D4), so the frontend knows to ask for the
+    password instead of opening silently.
 
     This signal lives on the auth surface, not in ``/api/app-config``: the mode
     there is a deployment property (D2), while "is there a local profile / are
-    there email accounts" is data.
+    there email accounts / is it locked" is data. The rescue key is deliberately
+    NOT here: it is shown once at lock time and never read back.
     """
 
     exists: bool
     hosted_accounts: bool
+    locked: bool
+
+
+class LocalLockRequest(BaseModel):
+    """Body of ``POST /api/auth/local-profile/lock`` (F1/T4, D4).
+
+    The password that turns the optional lock on. It is hashed before storage;
+    the raw rescue key minted alongside it is the only secret ever returned in
+    the clear, and only in this response.
+    """
+
+    password: str
+
+
+class LocalOpenRequest(BaseModel):
+    """Body of ``POST /api/auth/local-profile/open`` (F1/T4, D4)."""
+
+    password: str
+
+
+class LocalRescueRequest(BaseModel):
+    """Body of ``POST /api/auth/local-profile/rescue`` (F1/T4, D4).
+
+    ``rescue_key`` is the raw key shown once when the profile was locked;
+    ``new_password`` replaces the lock's password, and the accepted key is
+    rotated so it stops working.
+    """
+
+    rescue_key: str
+    new_password: str
+
+
+class LocalRescueKeyResponse(BaseModel):
+    """The one-time rescue key, returned by lock and rescue (F1/T4, D4).
+
+    The only shape that carries the raw key: it is minted here, shown once, and
+    never stored -- the database keeps only its SHA-256 hash.
+    """
+
+    rescue_key: str
 
 
 class VerifyEmailRequest(BaseModel):
@@ -687,6 +731,14 @@ async def create_local_profile(
 
     user = await store.get_local_user()
     if user is not None:
+        # The lock, once on, is never bypassed here (T4/D4): a boot must ask
+        # for the password (``/local-profile/open``) instead of opening a
+        # locked profile silently.
+        if user["password_hash"] is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This profile is locked",
+            )
         # Opening: an existing profile is not renamed by a boot (L10), so any
         # name in the body is deliberately ignored and never validated.
         response.status_code = status.HTTP_200_OK
@@ -754,10 +806,194 @@ async def get_local_profile_status(
             detail="Local profile is only available in local mode",
         )
 
+    local = await store.get_local_user()
     return LocalProfileStatus(
-        exists=await store.get_local_user() is not None,
+        exists=local is not None,
         hosted_accounts=await store.has_hosted_accounts(),
+        locked=local is not None and local["password_hash"] is not None,
     )
+
+
+@router.post("/local-profile/lock", status_code=200)
+async def lock_local_profile(
+    body: LocalLockRequest,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+) -> LocalRescueKeyResponse:
+    """Turn the optional local lock on and hand back a one-time rescue key (F1/T4, D4).
+
+    Requires the caller's own session (``current_user``): turning the lock on is
+    an act on a profile the caller is already inside. Only the machine's local
+    profile can be locked -- a hosted account behind this session answers 404,
+    the same as an id that is not there. A profile that already has a password
+    is refused with 409 rather than overwritten, so a second lock cannot silently
+    invalidate the rescue key shown the first time.
+
+    On success the password is hashed with bcrypt, a fresh rescue key is minted
+    with ``generate_raw_token()``, only its SHA-256 hash is stored, and the RAW
+    key is returned exactly once (D4). It is never persisted and never appears
+    in a later read: forgetting both the password and the raw key means starting
+    over.
+
+    This is NOT a login route: ``login`` is by email and a local profile has no
+    email (`L9`). Opening a locked profile is ``POST /local-profile/open``.
+
+    Outside local mode the mode gate answers 403 before any row is touched.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    # ``current_user`` reads through ``get_user_by_id``, whose column list
+    # deliberately omits ``kind`` (only ``get_local_user`` exposes the rescue
+    # column). Comparing ids against the single local row is what tells a local
+    # session from a hosted one without widening that helper.
+    local = await store.get_local_user()
+    if local is None or local["id"] != user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local profile not found",
+        )
+
+    if local["password_hash"] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This profile is already locked",
+        )
+
+    if len(body.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+
+    rescue_key = generate_raw_token()
+    await store.set_local_lock(
+        local["id"], hash_password(body.password), hash_token(rescue_key)
+    )
+    return LocalRescueKeyResponse(rescue_key=rescue_key)
+
+
+@router.post("/local-profile/open", status_code=200)
+async def open_local_profile(
+    body: LocalOpenRequest,
+    request: Request,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+):
+    """Open a locked local profile and start a session (F1/T4, D4).
+
+    Unauthenticated on purpose: this route is the way back in when the 8h
+    session expired, so it cannot require what it is trying to produce. It is
+    the reason the get-or-create route was left unauthenticated (L10): the
+    first boot creates the profile, and this route opens it once the lock is on.
+
+    A wrong password and a profile that never had a lock answer the same 401
+    "Invalid password": there is no lock to open with a password, and saying so
+    would only help guessing. On success it mints a session exactly like
+    ``login`` does (cookie + ``Set-Cookie``) and returns the ``UserResponse``.
+
+    This is NOT the email ``login``: ``login`` is by email, and a local profile
+    has no email (`L9`), so there is deliberately no local path through it.
+
+    Outside local mode the mode gate answers 403 before any lookup.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    user = await store.get_local_user()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local profile not found",
+        )
+
+    password_hash = user["password_hash"]
+    if password_hash is None or not verify_password(body.password, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password",
+        )
+
+    _raw_token, cookie, _session = await _mint_session(
+        store, user["id"], request.headers.get("user-agent")
+    )
+    response.headers["Set-Cookie"] = cookie
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        name=user.get("name"),
+        pending_deletion_at=user.get("pending_deletion_at"),
+    )
+
+
+@router.post("/local-profile/rescue", status_code=200)
+async def rescue_local_profile(
+    body: LocalRescueRequest,
+    request: Request,
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+) -> LocalRescueKeyResponse:
+    """Recover a locked local profile with its one-time rescue key (F1/T4, D4).
+
+    Unauthenticated like ``open``: whoever forgot the password proves ownership
+    with the raw rescue key shown when they locked the profile.
+
+    The stored hash is compared in constant time; a missing stored hash (the
+    lock was never turned on, or the key was already rotated) and a wrong key
+    answer the same 401 "Invalid rescue key", so the route cannot confirm which
+    one it is. On success the new password is hashed, the rescue key is ROTATED
+    -- the key just used stops working, deliberately (D4) -- and a session is
+    minted exactly like ``login``, returning the NEW raw key. It is the same
+    one-time reveal as the lock route: stored hashed, shown once.
+
+    This is NOT the email ``login``: a local profile has no email (`L9`).
+
+    Outside local mode the mode gate answers 403 before any lookup.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    user = await store.get_local_user()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local profile not found",
+        )
+
+    stored_hash = user.get("local_rescue_hash")
+    if not stored_hash or not hmac.compare_digest(
+        hash_token(body.rescue_key), stored_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid rescue key",
+        )
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+
+    new_rescue_key = generate_raw_token()
+    await store.set_local_password(user["id"], hash_password(body.new_password))
+    await store.set_local_rescue_hash(user["id"], hash_token(new_rescue_key))
+
+    _raw_token, cookie, _session = await _mint_session(
+        store, user["id"], request.headers.get("user-agent")
+    )
+    response.headers["Set-Cookie"] = cookie
+    return LocalRescueKeyResponse(rescue_key=new_rescue_key)
 
 
 @router.post(
