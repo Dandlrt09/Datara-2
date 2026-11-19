@@ -13,6 +13,13 @@ from server.resources import resource_path
 
 logger = logging.getLogger(__name__)
 
+# A migration whose FIRST line is this marker rebuilds a table that other tables
+# reference with ON DELETE CASCADE. SQLite needs foreign_keys=OFF for that (the
+# DROP TABLE would otherwise cascade-delete the children), and the pragma is a
+# no-op inside a transaction, so the runner owns it. Opt-in: every older
+# migration keeps running with enforcement on.
+FOREIGN_KEYS_OFF_MARKER = "-- migrate: foreign_keys=off"
+
 # Resolved through server.resources: a frozen build ships the .sql files inside
 # the bundle, and an empty directory here boots a schema-less database that
 # looks like a fresh install rather than a packaging error.
@@ -29,6 +36,30 @@ def get_applied_versions(conn: sqlite3.Connection) -> set[int]:
         return set()
 
 
+def _needs_foreign_keys_off(sql: str) -> bool:
+    return sql.lstrip().startswith(FOREIGN_KEYS_OFF_MARKER)
+
+
+def _backup_before(conn: sqlite3.Connection, version: int) -> None:
+    """Copy the database file to ``<db>.pre-<version>.bak`` before a rebuild.
+
+    Only called for an install that already had migrations applied when the
+    runner started; an in-memory database has no file to copy.
+    """
+    main = next((row for row in conn.execute("PRAGMA database_list") if row[1] == "main"), None)
+    db_file = main[2] if main else ""
+    if not db_file:
+        return
+    conn.commit()
+    backup_path = f"{db_file}.pre-{version:04d}.bak"
+    target = sqlite3.connect(backup_path)
+    try:
+        conn.backup(target)
+    finally:
+        target.close()
+    logger.info("Backed up the database to %s before migration %04d", backup_path, version)
+
+
 def run_pending_migrations(conn: sqlite3.Connection) -> None:
     """Discover and apply pending .sql migration files."""
     sql_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
@@ -37,6 +68,7 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
         return
 
     applied = get_applied_versions(conn)
+    existing_install = bool(applied)
 
     for sql_path in sql_files:
         try:
@@ -50,7 +82,13 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
             continue
 
         sql = sql_path.read_text(encoding="utf-8")
+        fk_off = _needs_foreign_keys_off(sql)
         try:
+            if fk_off:
+                if existing_install:  # a brand-new database has nothing to protect
+                    _backup_before(conn, version)
+                conn.commit()
+                conn.execute("PRAGMA foreign_keys=OFF")
             conn.executescript(sql)
             # Ensure migrations table exists before recording (first migration
             # typically creates it, but standalone .sql files may not).
@@ -71,6 +109,9 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
             conn.rollback()
             logger.error("Failed to apply migration %s: %s", sql_path.name, exc)
             raise
+        finally:
+            if fk_off:
+                conn.execute("PRAGMA foreign_keys=ON")
 
 
 def apply_migrations(db_path: str) -> None:

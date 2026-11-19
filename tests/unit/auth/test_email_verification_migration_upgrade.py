@@ -69,8 +69,19 @@ def test_0012_upgrade_is_additive_and_legacy_rows_read_as_unverified(tmp_path):
         (r[1], r[2], r[3], r[4]) for r in conn.execute("PRAGMA table_info(users)")
     ]
     # Every pre-existing column is still there, unchanged and in order.
+    #
+    # 0014 (F1 / T2a) is the one intended exception: it relaxes users.email and
+    # users.password_hash to nullable so a local profile can exist without them,
+    # while the row-level CHECK still demands both from a 'hosted' account. That
+    # intent is recorded here instead of loosening the guard, which keeps pinning
+    # the type, the default and the column order.
+    intended_changes = {
+        "email": ("email", "TEXT", 0, None),
+        "password_hash": ("password_hash", "TEXT", 0, None),
+    }
+    expected = [intended_changes.get(column[0], column) for column in before]
     pre_existing = {column[0] for column in before}
-    assert [column for column in after if column[0] in pre_existing] == before
+    assert [column for column in after if column[0] in pre_existing] == expected
     # The new column is nullable with no default: an old account reads as
     # "never verified", which is exactly its history (D1).
     assert [column for column in after if column[0] == "email_verified_at"] == [

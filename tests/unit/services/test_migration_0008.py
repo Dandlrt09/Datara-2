@@ -79,8 +79,11 @@ def test_0008_applies_to_a_database_that_already_holds_rows(tmp_path, monkeypatc
     """
     previous_dir = tmp_path / "migrations-0001-0007"
     previous_dir.mkdir()
-    for path in sorted(migrate.MIGRATIONS_DIR.glob("0*.sql")):
-        if not path.name.startswith("0008"):
+    # Bound by version, not by name: a name check ("not 0008") silently keeps
+    # every later migration too, and 0014 rebuilds users assuming 0008's column
+    # exists. The directory must hold exactly the pre-0008 schema.
+    for path in sorted(migrate.MIGRATIONS_DIR.glob("*.sql")):
+        if int(path.stem.split("_")[0]) <= 7:
             shutil.copy(path, previous_dir / path.name)
 
     db_path = str(tmp_path / "datara.db")
