@@ -79,15 +79,25 @@ class LoginRequest(BaseModel):
 
 
 class LocalProfileRequest(BaseModel):
-    """Body of ``POST /api/auth/local-profile`` (F1/T2b).
+    """Body of ``POST /api/auth/local-profile`` (F1/T2b, L10).
 
-    ``name`` is required (D5): a local profile has no email, so the display
-    name is the only thing that can name it -- there is nothing else to fall
-    back to, unlike a hosted account whose name can be derived from its
-    address.
+    ``name`` is required only when the profile is being created: a local
+    profile has no email, so the display name is the only thing that can name
+    it (D5). An open call -- the profile already exists -- has nothing to name,
+    so the field is optional and any value is ignored (a boot never renames).
     """
 
-    name: str
+    name: str | None = None
+
+
+class LocalProfileStatus(BaseModel):
+    """Body of ``GET /api/auth/local-profile`` (F1/T2b, L10).
+
+    ``exists`` lets the first boot tell "create the profile" (false) from
+    "open the profile" (true) before it holds any session.
+    """
+
+    exists: bool
 
 
 class VerifyEmailRequest(BaseModel):
@@ -611,7 +621,7 @@ async def create_local_profile(
     response: Response,
     store: SqliteStore = Depends(get_store),
 ):
-    """Create the machine's single local profile and start its session (F1/T2b).
+    """Create the machine's local profile, or open it, and start a session (F1/T2b, L10).
 
     Only reachable in local mode (D2): in hosted mode the route is a backstop
     that answers 403. The frontend hides the screen, but hiding existence is
@@ -620,9 +630,16 @@ async def create_local_profile(
 
     Unlike register, this route DOES open a session (D5): a local profile has
     no address to prove, so there is no gate to hold it behind, and a first
-    boot that created a profile nobody could enter would be a dead end. The
-    name is required and normalized; "at most one local profile" is enforced
-    by the store's partial unique index (0015), surfaced here as a 409.
+    boot that created a profile nobody could enter would be a dead end.
+
+    Get-or-create (L10): the local lock is optional (D4), so when it is OFF the
+    app must simply open -- a profile with no password plus an 8h session expiry
+    would otherwise trap the analyst out of their own install. The first call
+    creates the profile and answers 201, requiring a name (D5); every later
+    call opens the existing profile and answers 200, ignoring any ``name`` in
+    the body so a boot never renames. "At most one local profile" is enforced
+    by the store's partial unique index (0015): if two first boots race, the
+    loser re-reads the winner and opens its session instead of a 409.
     """
     if get_mode() != "local":
         raise HTTPException(
@@ -630,25 +647,41 @@ async def create_local_profile(
             detail="Local profile is only available in local mode",
         )
 
-    name = normalize_display_name(body.name)
-    if not name:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Name is required",
-        )
-    if len(name) > MAX_DISPLAY_NAME_LENGTH:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters",
-        )
+    user = await store.get_local_user()
+    if user is not None:
+        # Opening: an existing profile is not renamed by a boot (L10), so any
+        # name in the body is deliberately ignored and never validated.
+        response.status_code = status.HTTP_200_OK
+    else:
+        name = normalize_display_name(body.name) if body.name else None
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Name is required",
+            )
+        if len(name) > MAX_DISPLAY_NAME_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Name must be at most {MAX_DISPLAY_NAME_LENGTH} characters",
+            )
 
-    try:
-        user = await store.create_local_user(name)
-    except DuplicateError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A local profile already exists",
-        )
+        try:
+            user = await store.create_local_user(name)
+        except DuplicateError:
+            # A concurrent first boot won the race (L10). Re-read its row and
+            # open that profile's session -- exactly what this call wanted --
+            # rather than surfacing a 409.
+            user = await store.get_local_user()
+            if user is None:
+                # The winner's row vanished between our failed insert and this
+                # read, so there is no profile to open and no session to mint.
+                # This cannot happen while the partial index holds; treat it as
+                # the server error it is instead of inventing an identity.
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Local profile could not be created",
+                )
+            response.status_code = status.HTTP_200_OK
 
     _raw_token, cookie, _session = await _mint_session(
         store, user["id"], request.headers.get("user-agent")
@@ -660,6 +693,28 @@ async def create_local_profile(
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
     )
+
+
+@router.get("/local-profile", status_code=200)
+async def get_local_profile_status(
+    store: SqliteStore = Depends(get_store),
+) -> LocalProfileStatus:
+    """Report whether the machine already has a local profile (F1/T2b, L10).
+
+    Only reachable in local mode (D2): outside it the route is the same 403
+    backstop as the POST. Unauthenticated on purpose -- the frontend needs this
+    BEFORE it holds any session, to choose between showing the first-boot
+    screen and opening the existing profile silently. The mode is a deployment
+    property, so this signal lives on the auth surface, not in
+    ``/api/app-config``.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    return LocalProfileStatus(exists=await store.get_local_user() is not None)
 
 
 @router.post("/verify-email", status_code=204)
