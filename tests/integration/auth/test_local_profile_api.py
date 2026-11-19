@@ -5,9 +5,10 @@ required display name, and -- unlike register -- it immediately starts the
 session, because there is no address to prove and a profile nobody could enter
 would be a dead end. Under L10 the lock is optional, so a later boot OPENS the
 existing profile instead of being refused (200 rather than the old 409), and
-``GET /api/auth/local-profile`` reports ``{exists}`` before any session so the
-frontend can pick the first-boot screen or open silently. In hosted mode both
-routes are a backstop that refuses with 403.
+``GET /api/auth/local-profile`` reports ``{exists, hosted_accounts}`` before any
+session so the frontend can pick the first-boot screen, open silently, or keep
+an existing install's email login (D3). In hosted mode both routes are a
+backstop that refuses with 403.
 """
 
 import asyncio
@@ -20,6 +21,7 @@ from core.errors import DuplicateError
 from server.api.routers.auth import router as auth_router
 from server.services.auth_service import MAX_DISPLAY_NAME_LENGTH
 from server.services.sqlite_store import SqliteStore
+from server.services.terms import TERMS_VERSION
 from tests.test_helpers import apply_all_migrations
 
 
@@ -74,6 +76,19 @@ def _session_count(store: SqliteStore) -> int:
         return rows[0][0]
 
     return asyncio.run(_count())
+
+
+def _register_hosted(client, email: str = "ana@example.com") -> None:
+    """Register one email account through the real route (D3 signal)."""
+    resp = client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": "password123",
+            "terms_version": TERMS_VERSION,
+        },
+    )
+    assert resp.status_code == 200
 
 
 class TestLocalProfile:
@@ -329,14 +344,61 @@ class TestLocalProfileStatus:
 
         before = client.get("/api/auth/local-profile")
         assert before.status_code == 200
-        assert before.json() == {"exists": False}
+        assert before.json() == {"exists": False, "hosted_accounts": False}
 
         created = client.post("/api/auth/local-profile", json={"name": "Ana"})
         assert created.status_code == 201
 
         after = client.get("/api/auth/local-profile")
         assert after.status_code == 200
-        assert after.json() == {"exists": True}
+        assert after.json() == {"exists": True, "hosted_accounts": False}
+
+    def test_hosted_accounts_is_true_after_a_hosted_account_is_registered(
+        self, client, monkeypatch
+    ):
+        """D3: an install that already has email accounts keeps its login."""
+        monkeypatch.setenv("DATARA_MODE", "local")
+
+        _register_hosted(client)
+
+        resp = client.get("/api/auth/local-profile")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"exists": False, "hosted_accounts": True}
+
+    def test_hosted_accounts_counts_a_row_scheduled_for_deletion(
+        self, client, store, monkeypatch
+    ):
+        """D3: a pending purge still owns data and can still sign in."""
+        monkeypatch.setenv("DATARA_MODE", "local")
+        _register_hosted(client)
+
+        async def _schedule() -> None:
+            await store.conn.execute(
+                "UPDATE users SET pending_deletion_at = datetime('now') "
+                "WHERE kind = 'hosted'"
+            )
+            await store.conn.commit()
+
+        asyncio.run(_schedule())
+
+        resp = client.get("/api/auth/local-profile")
+
+        assert resp.json() == {"exists": False, "hosted_accounts": True}
+
+    def test_a_local_profile_and_hosted_accounts_are_reported_together(
+        self, client, monkeypatch
+    ):
+        """D3: the two facts are independent; the profile still wins the offer."""
+        monkeypatch.setenv("DATARA_MODE", "local")
+        _register_hosted(client)
+
+        created = client.post("/api/auth/local-profile", json={"name": "Ana"})
+        assert created.status_code == 201
+
+        resp = client.get("/api/auth/local-profile")
+
+        assert resp.json() == {"exists": True, "hosted_accounts": True}
 
     def test_hosted_mode_refuses_the_status(self, client, store, monkeypatch):
         monkeypatch.setenv("DATARA_MODE", "hosted")

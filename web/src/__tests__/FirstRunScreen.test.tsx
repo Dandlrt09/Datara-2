@@ -35,13 +35,19 @@ vi.mock("react-router-dom", async (importOriginal) => {
 });
 
 /** Network the mocked wrapper answers: the session check and the local-profile
- * probe. `user` null means "no session" (the check rejects with 401). */
-const net: { user: unknown; exists: boolean } = { user: null, exists: false };
+ * probe. `user` null means "no session" (the check rejects with 401).
+ * `hosted` is the `hosted_accounts` flag the probe reports. */
+const net: { user: unknown; exists: boolean; hosted: boolean } = {
+  user: null,
+  exists: false,
+  hosted: false,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   net.user = null;
   net.exists = false;
+  net.hosted = false;
   navigateMock.mockReset();
   getMock.mockImplementation((url: string) => {
     if (url === "/api/auth/me") {
@@ -50,7 +56,7 @@ beforeEach(() => {
         : Promise.reject(new ApiError(401, {}));
     }
     if (url === "/api/auth/local-profile") {
-      return Promise.resolve({ exists: net.exists });
+      return Promise.resolve({ exists: net.exists, hosted_accounts: net.hosted });
     }
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
@@ -143,6 +149,35 @@ describe("FirstRunScreen (F1 / T2c)", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith("/app", { replace: true }),
     );
+  });
+
+  it("sends the visitor to /login when there are hosted accounts and no profile", async () => {
+    net.hosted = true;
+
+    renderWithProviders(<FirstRunScreen />);
+
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/login", { replace: true }),
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Crear perfil" })).toBeNull();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("still auto-opens the profile when hosted accounts are also present", async () => {
+    net.exists = true;
+    net.hosted = true;
+
+    renderWithProviders(<FirstRunScreen />);
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/auth/local-profile", {}),
+    );
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/app", { replace: true }),
+    );
+    expect(navigateMock).not.toHaveBeenCalledWith("/login", { replace: true });
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("sends an already signed-in visitor straight to /app", async () => {

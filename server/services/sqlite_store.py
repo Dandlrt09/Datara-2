@@ -183,6 +183,20 @@ class SqliteStore:
         )
         return dict(rows[0]) if rows else None
 
+    async def has_hosted_accounts(self) -> bool:
+        """Whether the database holds at least one email account (F1/T3, D3).
+
+        The local profile is only OFFERED on an empty database (D3): an install
+        that already has email accounts keeps its login. Any hosted row counts,
+        including one scheduled for deletion, because it still owns data and
+        can still sign in. An existence check -- the first row is enough, the
+        count is not the question.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT 1 FROM users WHERE kind = 'hosted' LIMIT 1"
+        )
+        return bool(rows)
+
     async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Look up a user by email, case- and space-insensitively (S4/S5).
 

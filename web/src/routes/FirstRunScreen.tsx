@@ -80,6 +80,17 @@ export default function FirstRunScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me.isLoading, me.data, status.isSuccess, status.data]);
 
+  // An install that already has email accounts keeps its login (D3): the local
+  // profile is only offered on an empty database, so this visitor goes to the
+  // email login instead of the creation form. It loses to the auto-open above,
+  // which already returned when a local profile exists.
+  useEffect(() => {
+    if (me.isLoading || me.data) return;
+    if (!status.isSuccess || !status.data) return;
+    if (status.data.exists || !status.data.hosted_accounts) return;
+    navigate("/login", { replace: true });
+  }, [me.isLoading, me.data, status.isSuccess, status.data, navigate]);
+
   if (me.isLoading || me.data) return <Loading />;
   // Do not render an empty shell while the profile probe is in flight.
   if (status.isLoading) return <Loading />;
@@ -110,6 +121,10 @@ export default function FirstRunScreen() {
       </div>
     );
   }
+
+  // While the redirect to /login is in flight, never flash the name form: this
+  // install offers the email login, not a new local profile (D3).
+  if (status.data?.hosted_accounts) return <Loading />;
 
   return (
     <div style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}>

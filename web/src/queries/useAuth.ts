@@ -34,16 +34,24 @@ export function useMe() {
 }
 
 /**
- * Whether this machine already has a local profile (F1 / T2b / T2c).
+ * The machine's identity state before any session (F1 / T2b / T2c / T3).
  *
  * Unauthenticated on purpose: the first-run screen needs it before it holds a
- * session, to choose between showing the creation form and opening the
- * existing profile silently (L10).
+ * session, to choose between showing the creation form, opening the existing
+ * profile silently (L10), or keeping the email login. `hosted_accounts` is
+ * true when the database already holds email accounts: the local profile is
+ * only OFFERED on an empty database (D3), so an existing install is sent to
+ * `/login` instead of the creation form.
  */
+export interface LocalProfileStatus {
+  exists: boolean;
+  hosted_accounts: boolean;
+}
+
 export function useLocalProfileStatus() {
   return useQuery({
     queryKey: ["auth", "local-profile"],
-    queryFn: () => api.get<{ exists: boolean }>("/api/auth/local-profile"),
+    queryFn: () => api.get<LocalProfileStatus>("/api/auth/local-profile"),
     retry: false,
   });
 }
