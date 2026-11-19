@@ -20,6 +20,7 @@ from server.api import store as api_store
 from server.api import event_bus as api_event_bus
 from server.api.routers import (
     activity,
+    app_config,
     archive,
     auth,
     chat,
@@ -235,6 +236,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(app_config.router)
 app.include_router(auth.router)
 app.include_router(data_folder.router)
 app.include_router(sessions.router)

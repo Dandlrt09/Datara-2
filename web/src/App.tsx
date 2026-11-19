@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDataFolder } from "./queries/useDataFolder";
+import { emailFlowsEnabled, useAppConfig } from "./queries/useAppConfig";
 
 const DataFolderScreen = lazy(() => import("./routes/DataFolderScreen"));
 const LoginScreen = lazy(() => import("./routes/LoginScreen"));
@@ -42,20 +43,70 @@ function DataFolderGate({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Email-flow gate (F1 / T1, D2/D6): in ``local`` mode there is no email, so the
+ * registration / verification / recovery screens are not routed -- they stay in
+ * the code for the hosted deployment. While the mode loads nothing renders (no
+ * flash of a screen that is about to disappear); if it cannot be read the
+ * screens stay reachable, as before.
+ */
+function HostedOnly({ children }: { children: ReactNode }) {
+  const config = useAppConfig();
+
+  if (!config.data && !config.isError) return <Loading />;
+  if (!emailFlowsEnabled(config)) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <Suspense fallback={<Loading />}>
       <DataFolderGate>
         <Routes>
           <Route path="/login" element={<LoginScreen />} />
-          <Route path="/register" element={<RegisterScreen />} />
+          <Route
+            path="/register"
+            element={
+              <HostedOnly>
+                <RegisterScreen />
+              </HostedOnly>
+            }
+          />
           {/* Email verification and password recovery (S3/S4). Both link
               targets are frontend routes, never the API: a mail prefetcher
               must not be able to consume a one-shot token (D9). */}
-          <Route path="/check-email" element={<CheckEmailScreen />} />
-          <Route path="/verify-email" element={<VerifyEmailScreen />} />
-          <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
-          <Route path="/reset-password" element={<ResetPasswordScreen />} />
+          <Route
+            path="/check-email"
+            element={
+              <HostedOnly>
+                <CheckEmailScreen />
+              </HostedOnly>
+            }
+          />
+          <Route
+            path="/verify-email"
+            element={
+              <HostedOnly>
+                <VerifyEmailScreen />
+              </HostedOnly>
+            }
+          />
+          <Route
+            path="/forgot-password"
+            element={
+              <HostedOnly>
+                <ForgotPasswordScreen />
+              </HostedOnly>
+            }
+          />
+          <Route
+            path="/reset-password"
+            element={
+              <HostedOnly>
+                <ResetPasswordScreen />
+              </HostedOnly>
+            }
+          />
           <Route path="/terminos" element={<TermsScreen />} />
           <Route path="/app/*" element={<AppShell />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
