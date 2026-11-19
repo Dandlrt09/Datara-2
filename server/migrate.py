@@ -40,6 +40,11 @@ def _needs_foreign_keys_off(sql: str) -> bool:
     return sql.lstrip().startswith(FOREIGN_KEYS_OFF_MARKER)
 
 
+def _foreign_keys_enabled(conn: sqlite3.Connection) -> bool:
+    """Return whether *conn* currently enforces foreign keys."""
+    return bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+
+
 def _backup_before(conn: sqlite3.Connection, version: int) -> None:
     """Copy the database file to ``<db>.pre-<version>.bak`` before a rebuild.
 
@@ -83,11 +88,21 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
 
         sql = sql_path.read_text(encoding="utf-8")
         fk_off = _needs_foreign_keys_off(sql)
+        # Restoration target for the pragma. Restoring the caller's own value
+        # matters: the baseline runner never read or wrote this pragma, so a
+        # caller that opened the connection with enforcement deliberately off
+        # must not get it switched on behind its back just because a migration
+        # needed the rebuild.
+        fk_was_enabled = False
         try:
             if fk_off:
                 if existing_install:  # a brand-new database has nothing to protect
                     _backup_before(conn, version)
                 conn.commit()
+                # Read right before switching off: the pragma is a no-op inside a
+                # transaction, so after the commit this is the value the caller
+                # actually had.
+                fk_was_enabled = _foreign_keys_enabled(conn)
                 conn.execute("PRAGMA foreign_keys=OFF")
             conn.executescript(sql)
             # Ensure migrations table exists before recording (first migration
@@ -111,7 +126,11 @@ def run_pending_migrations(conn: sqlite3.Connection) -> None:
             raise
         finally:
             if fk_off:
-                conn.execute("PRAGMA foreign_keys=ON")
+                # A pragma cannot be parameterised, so the literal is built from
+                # the captured value. This runs on the failure path too: an
+                # aborted migration must not leave enforcement switched off.
+                restore = "ON" if fk_was_enabled else "OFF"
+                conn.execute(f"PRAGMA foreign_keys={restore}")
 
 
 def apply_migrations(db_path: str) -> None:

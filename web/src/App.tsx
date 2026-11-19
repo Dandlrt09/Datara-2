@@ -62,10 +62,15 @@ function DataFolderGate({ children }: { children: ReactNode }) {
 
   if (data && !data.decided) sawUndecided.current = true;
 
-  if (isError) return <>{children}</>;
-  if (data?.decided) {
-    return sawUndecided.current ? <RestartNotice /> : <>{children}</>;
+  // Evaluated first (D1/S1): once this boot saw the folder undecided, only an
+  // explicitly undecided read releases the app. A decided refetch and an
+  // erroring or undefined refetch all keep the notice, so a failed probe
+  // cannot reopen the app in the boot that chose the folder.
+  if (sawUndecided.current && data?.decided !== false) {
+    return <RestartNotice />;
   }
+  if (isError) return <>{children}</>;
+  if (data?.decided) return <>{children}</>;
   if (!data) return <Loading />;
 
   return (

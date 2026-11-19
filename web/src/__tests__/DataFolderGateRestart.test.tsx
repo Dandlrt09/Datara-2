@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import { ApiError } from "../lib/api";
 
@@ -119,6 +119,31 @@ describe("data-folder gate restart latch (F1 / T2c, L12)", () => {
         screen.getByText(/se usa a partir del próximo arranque/i),
       ).toBeTruthy(),
     );
+    expect(screen.queryByText("first-run-screen")).toBeNull();
+  });
+
+  it("keeps the notice when a later refetch after the decision fails", async () => {
+    folderReads = [UNDECIDED, DECIDED, new ApiError(500, { detail: "boom" })];
+
+    const { qc } = renderWithProviders(<App />, { route: "/first-run" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Usar la carpeta recomendada" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar" }));
+    await screen.findByText(/se usa a partir del próximo arranque/i);
+
+    // A failed refetch after the choice must not reopen the app this boot.
+    await qc.invalidateQueries({ queryKey: ["data-folder"] });
+    // React Query notifies observers on a setTimeout(0); flush it inside act
+    // so the error state is committed before we assert (otherwise the first
+    // waitFor check can pass on the pre-error render and mask the bug).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(
+      screen.getByText(/se usa a partir del próximo arranque/i),
+    ).toBeTruthy();
     expect(screen.queryByText("first-run-screen")).toBeNull();
   });
 

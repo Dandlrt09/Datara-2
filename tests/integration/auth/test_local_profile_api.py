@@ -78,8 +78,16 @@ def _session_count(store: SqliteStore) -> int:
     return asyncio.run(_count())
 
 
-def _register_hosted(client, email: str = "ana@example.com") -> None:
-    """Register one email account through the real route (D3 signal)."""
+def _register_hosted(client, monkeypatch, email: str = "ana@example.com") -> None:
+    """Seed D3's "this install already has accounts" state.
+
+    The account is created the way a real install created it -- in hosted mode
+    -- and the environment is flipped back to local afterwards, which is the
+    state under test. Since S2/D2 the register route is itself refused in local
+    mode, so seeding the account through the very door the guard closes would
+    be a lie about how that state ever comes to exist.
+    """
+    monkeypatch.setenv("DATARA_MODE", "hosted")
     resp = client.post(
         "/api/auth/register",
         json={
@@ -89,6 +97,7 @@ def _register_hosted(client, email: str = "ana@example.com") -> None:
         },
     )
     assert resp.status_code == 200
+    monkeypatch.setenv("DATARA_MODE", "local")
 
 
 class TestLocalProfile:
@@ -359,7 +368,7 @@ class TestLocalProfileStatus:
         """D3: an install that already has email accounts keeps its login."""
         monkeypatch.setenv("DATARA_MODE", "local")
 
-        _register_hosted(client)
+        _register_hosted(client, monkeypatch)
 
         resp = client.get("/api/auth/local-profile")
 
@@ -371,7 +380,7 @@ class TestLocalProfileStatus:
     ):
         """D3: a pending purge still owns data and can still sign in."""
         monkeypatch.setenv("DATARA_MODE", "local")
-        _register_hosted(client)
+        _register_hosted(client, monkeypatch)
 
         async def _schedule() -> None:
             await store.conn.execute(
@@ -391,7 +400,7 @@ class TestLocalProfileStatus:
     ):
         """D3: the two facts are independent; the profile still wins the offer."""
         monkeypatch.setenv("DATARA_MODE", "local")
-        _register_hosted(client)
+        _register_hosted(client, monkeypatch)
 
         created = client.post("/api/auth/local-profile", json={"name": "Ana"})
         assert created.status_code == 201
