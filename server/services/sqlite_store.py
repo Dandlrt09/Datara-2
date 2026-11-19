@@ -177,8 +177,9 @@ class SqliteStore:
         even if a future write path ever loosened that index.
         """
         rows = await self.conn.execute_fetchall(
-            "SELECT id, email, name, password_hash, local_rescue_hash, created_at, "
-            "pending_deletion_at, email_verified_at FROM users "
+            "SELECT id, email, name, password_hash, local_rescue_hash, "
+            "lock_step_answered, created_at, pending_deletion_at, "
+            "email_verified_at FROM users "
             "WHERE kind = 'local' ORDER BY id LIMIT 1",
         )
         return dict(rows[0]) if rows else None
@@ -253,13 +254,15 @@ class SqliteStore:
         """Turn the optional lock on, storing password and rescue hashes (F1/T4).
 
         Both values are already hashed by the caller (D4): the password with
-        bcrypt, the one-time rescue key with SHA-256. Scoped to ``kind = 'local'``
-        so the hosted path can never be locked through this helper. Returns True
-        if a row changed.
+        bcrypt, the one-time rescue key with SHA-256. Turning the lock on also
+        answers the optional lock step (F1/T3, D1): the step is offered so the
+        profile is protected, and a locked profile has answered it. Scoped to
+        ``kind = 'local'`` so the hosted path can never be locked through this
+        helper. Returns True if a row changed.
         """
         cursor = await self.conn.execute(
-            "UPDATE users SET password_hash = ?, local_rescue_hash = ? "
-            "WHERE id = ? AND kind = 'local'",
+            "UPDATE users SET password_hash = ?, local_rescue_hash = ?, "
+            "lock_step_answered = 1 WHERE id = ? AND kind = 'local'",
             (password_hash, rescue_hash, user_id),
         )
         await self.conn.commit()
@@ -276,6 +279,24 @@ class SqliteStore:
             "UPDATE users SET local_rescue_hash = ? "
             "WHERE id = ? AND kind = 'local'",
             (rescue_hash, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def mark_local_lock_step_answered(self, user_id: int) -> bool:
+        """Record that the local profile answered the optional lock step.
+
+        The decline route writes this flag without touching the password
+        (F1/T3, D1): the analyst explicitly said "not now", so the step must
+        not come back. The lock route writes the same flag through
+        ``set_local_lock`` when the answer is "yes". Scoped to ``kind = 'local'``
+        so a hosted account can never be marked through the local-only path.
+        Returns True if a row changed.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET lock_step_answered = 1 "
+            "WHERE id = ? AND kind = 'local'",
+            (user_id,),
         )
         await self.conn.commit()
         return cursor.rowcount > 0

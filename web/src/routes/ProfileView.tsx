@@ -231,6 +231,45 @@ function LocalLockSection() {
 }
 
 /**
+ * The generic password row (F1/T2, S2).
+ *
+ * The local password IS the lock: a profile without a lock has no password at
+ * all, so the generic "Cambiar" form cannot work there and must not be offered.
+ * The row stays for hosted accounts and for a local profile whose lock is on;
+ * the lock section owns the password otherwise and points to this one place.
+ */
+function PasswordRow({ onChange }: { onChange: () => void }) {
+  const config = useAppConfig();
+  if (config.data?.mode === "local") {
+    return <LocalPasswordRow onChange={onChange} />;
+  }
+  return <ChangePasswordRow onChange={onChange} />;
+}
+
+function LocalPasswordRow({ onChange }: { onChange: () => void }) {
+  const status = useLocalProfileStatus();
+  // While the status is unknown, or while there is no lock, the local profile
+  // has no password to change: hide the row instead of offering a form that
+  // cannot work.
+  if (status.data?.locked !== true) return null;
+  return <ChangePasswordRow onChange={onChange} />;
+}
+
+function ChangePasswordRow({ onChange }: { onChange: () => void }) {
+  return (
+    <div style={{ ...rowStyle, marginTop: 20 }}>
+      <div>
+        <span style={rowLabelStyle}>Contraseña</span>
+        <span style={rowSublabelStyle}>Se usa para proteger tu cuenta.</span>
+      </div>
+      <button type="button" onClick={onChange} style={secondaryButtonStyle}>
+        Cambiar
+      </button>
+    </div>
+  );
+}
+
+/**
  * The Perfil screen: account data (read-only), password change and the current
  * session's logout.
  *
@@ -250,7 +289,12 @@ export default function ProfileView() {
 
   const handleLogout = async () => {
     await logout.mutateAsync();
-    navigate("/login", { replace: true });
+    // Local mode has no email login (F1/T1, S1): signing out returns to the
+    // local landing, which asks for the password when the profile is locked
+    // and opens it otherwise. Hosted keeps the email login, and an unreadable
+    // mode falls back to it too, so nothing changes before the mode loads.
+    const landing = config.data?.mode === "local" ? "/first-run" : "/login";
+    navigate(landing, { replace: true });
   };
 
   const handleDeletionScheduled = () => {
@@ -386,19 +430,7 @@ export default function ProfileView() {
           </span>
         </div>
 
-        <div style={{ ...rowStyle, marginTop: 20 }}>
-          <div>
-            <span style={rowLabelStyle}>Contraseña</span>
-            <span style={rowSublabelStyle}>Se usa para proteger tu cuenta.</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setDialogOpen(true)}
-            style={secondaryButtonStyle}
-          >
-            Cambiar
-          </button>
-        </div>
+        <PasswordRow onChange={() => setDialogOpen(true)} />
       </section>
 
       {/* The local lock exists only where there is no email (F1 / T4, D4). */}

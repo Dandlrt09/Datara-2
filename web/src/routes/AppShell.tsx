@@ -1,7 +1,19 @@
-import { lazy, Suspense, useEffect, useCallback } from "react";
-import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
+import { lazy, Suspense, useEffect, useCallback, useRef, useState } from "react";
+import {
+  Routes,
+  Route,
+  useNavigate,
+  Link,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
-import { useMe, type User } from "../queries/useAuth";
+import {
+  useLocalProfileStatus,
+  useMe,
+  type User,
+} from "../queries/useAuth";
+import { emailFlowsEnabled, useAppConfig } from "../queries/useAppConfig";
 import { useSettings } from "../queries/useSettings";
 import { isProviderConfigured } from "./settings/configured";
 import { useSessions } from "../queries/useSessions";
@@ -22,6 +34,7 @@ const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
 const ProfileView = lazy(() => import("./ProfileView"));
+const LockStepScreen = lazy(() => import("./LockStepScreen"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -81,13 +94,22 @@ function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
 
 export default function AppShell() {
   const navigate = useNavigate();
-  const { data: user, isLoading, error } = useMe();
+  const { data: user, isLoading } = useMe();
+  const config = useAppConfig();
 
+  // Signing out (or losing the session) lands on the mode's front door (F1/T1,
+  // S1): local mode has no email login, so it goes to the local landing -- the
+  // password screen when the profile is locked, otherwise whatever /first-run
+  // does. Hosted mode keeps going to /login. The mode is read first: an
+  // unreadable mode falls back to /login, the same fail-open rule the rest of
+  // the app uses.
   useEffect(() => {
-    if (!isLoading && (error || !user)) {
-      navigate("/login", { replace: true });
-    }
-  }, [user, isLoading, error, navigate]);
+    if (isLoading || user) return;
+    if (!config.data && !config.isError) return;
+    navigate(emailFlowsEnabled(config) ? "/login" : "/first-run", {
+      replace: true,
+    });
+  }, [user, isLoading, config, navigate]);
 
   if (isLoading) return <div>Checking auth...</div>;
   if (!user) return null;
@@ -101,6 +123,60 @@ export default function AppShell() {
         <PendingDeletionScreen deadline={user.pending_deletion_at} />
       </PreferencesProvider>
     );
+  }
+
+  return <LockStepGate user={user} />;
+}
+
+/**
+ * The lock-step gate (F1 / T3, S3, D1).
+ *
+ * The optional lock is mandatory on the path: a signed-in local analyst whose
+ * step is still pending is sent to /app/lock-step and cannot reach the rest of
+ * the app until they answer. The step stays optional (D4): answering means
+ * turning the lock on or declining explicitly.
+ *
+ * The gate is split in two so a hosted account never queries the local-only
+ * status: a local profile has no email, so the already-known user payload is
+ * enough to tell them apart. The inner gate owns the status query and the two
+ * latches that keep the screen honest.
+ */
+function LockStepGate({ user }: { user: User }) {
+  if (user.email !== null) return <AppShellContent user={user} />;
+  return <LocalLockStepGate user={user} />;
+}
+
+function LocalLockStepGate({ user }: { user: User }) {
+  const status = useLocalProfileStatus();
+  const location = useLocation();
+  // The step was seen pending in this mount. It keeps the screen on the path
+  // even if a refetch stops reporting it, so the rescue key cannot disappear
+  // between the lock being turned on and the analyst keeping it.
+  const stepWasPending = useRef(false);
+  // The step was answered in this mount. It releases the gate without waiting
+  // for the status query to refetch, so an answered step cannot loop.
+  const [answered, setAnswered] = useState(false);
+
+  if (status.data?.lock_step_pending) stepWasPending.current = true;
+
+  if (status.isLoading) return <Loading />;
+
+  const showStep = stepWasPending.current && !answered;
+  if (showStep) {
+    if (location.pathname !== "/app/lock-step") {
+      return <Navigate to="/app/lock-step" replace />;
+    }
+    return (
+      <Suspense fallback={<Loading />}>
+        <LockStepScreen onAnswered={() => setAnswered(true)} />
+      </Suspense>
+    );
+  }
+
+  // A reload after answering lands on the same URL; send it back into the app
+  // instead of showing a 404.
+  if (location.pathname === "/app/lock-step") {
+    return <Navigate to="/app" replace />;
   }
 
   return <AppShellContent user={user} />;
@@ -365,6 +441,8 @@ function AppShellContent({ user }: { user: User }) {
                 {/* The guided flow lives inside Ajustes as one of its two modes;
                     the old standalone URL keeps working for bookmarks. */}
                 <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
+                {/* A stale bookmark or reload after the step was answered. */}
+                <Route path="/lock-step" element={<Navigate to="/app" replace />} />
                 <Route
                   path="/archives"
                   element={withErrorBoundary("Archives", ArchiveList)}

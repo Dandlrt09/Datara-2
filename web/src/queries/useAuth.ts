@@ -54,6 +54,10 @@ export interface LocalProfileStatus {
   /** The optional lock (T4/D4) is on: the profile has a password and must not
    * be opened silently. */
   locked: boolean;
+  /** The optional lock step on the onboarding path (T3/D1) still needs an
+   * answer: true for an unlocked profile that neither turned the lock on nor
+   * declined. */
+  lock_step_pending: boolean;
 }
 
 export function useLocalProfileStatus() {
@@ -83,9 +87,34 @@ export interface LocalRescueKey {
  * keep it nowhere in the app.
  */
 export function useLocalProfileLock() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { password: string }) =>
       api.post<LocalRescueKey>("/api/auth/local-profile/lock", data),
+    onSuccess: () => {
+      // Turning the lock on answers the optional step (T3/D1), so the status
+      // that decides whether the step is still pending must be refetched.
+      qc.invalidateQueries({ queryKey: ["auth", "local-profile"] });
+    },
+  });
+}
+
+/**
+ * Decline the optional lock step on the onboarding path (F1/T3, D1).
+ *
+ * Declining is an explicit answer: the server persists it so the step does not
+ * come back, and the profile stays without a lock (D4). The status query is
+ * invalidated so the gate that decides whether the step is still pending reads
+ * the new answer.
+ */
+export function useDeclineLockStep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<undefined>("/api/auth/local-profile/lock-step/decline"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auth", "local-profile"] });
+    },
   });
 }
 
@@ -104,6 +133,7 @@ export function useLocalProfileOpen() {
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
       qc.invalidateQueries({ queryKey: ["sessions"] });
+      qc.invalidateQueries({ queryKey: ["auth", "local-profile"] });
     },
   });
 }
@@ -123,6 +153,7 @@ export function useLocalProfileRescue() {
       api.post<LocalRescueKey>("/api/auth/local-profile/rescue", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["auth", "me"] });
+      qc.invalidateQueries({ queryKey: ["auth", "local-profile"] });
     },
   });
 }
@@ -143,6 +174,9 @@ export function useLocalProfile() {
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
       qc.invalidateQueries({ queryKey: ["sessions"] });
+      // Creating or opening the profile changes the step-pending answer, so
+      // the gate that decides whether to show the step must read it again.
+      qc.invalidateQueries({ queryKey: ["auth", "local-profile"] });
     },
   });
 }
