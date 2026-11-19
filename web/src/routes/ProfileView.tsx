@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMe, useLogout } from "../queries/useAuth";
+import {
+  LOCAL_PASSWORD_MIN_LENGTH,
+  useLocalProfileLock,
+  useLocalProfileStatus,
+  useMe,
+  useLogout,
+} from "../queries/useAuth";
+import { useAppConfig } from "../queries/useAppConfig";
 import {
   ChangePasswordDialog,
   PASSWORD_CHANGED_NOTICE,
@@ -56,6 +63,173 @@ const secondaryButtonStyle = {
   flexShrink: 0,
 } as const;
 
+const sectionTitleStyle = {
+  margin: "0 0 8px",
+  color: colors.textPrimary,
+  fontSize: "1.1em",
+} as const;
+
+const inputStyle = {
+  width: "100%",
+  padding: 8,
+  boxSizing: "border-box",
+} as const;
+
+/**
+ * The optional local lock (F1 / T4, D4), rendered only in local mode.
+ *
+ * There is deliberately NO "turn the lock off" path: D4 grants the one-time
+ * rescue key as the way back, not a removal, and inventing one is out of scope.
+ * A locked profile changes its password from the Contraseña row above, which
+ * writes the same column the lock reads.
+ *
+ * The rescue key lives only in this component's state, never in a store: the
+ * backend keeps only its hash, so this is the single chance to copy it.
+ */
+function LocalLockSection() {
+  const status = useLocalProfileStatus();
+  const lock = useLocalProfileLock();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [rescueKey, setRescueKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // The key is revealed once: replace the form and keep it on screen until the
+  // analyst has copied it (nothing here persists it).
+  if (rescueKey !== null) {
+    return (
+      <section style={cardStyle}>
+        <h2 style={sectionTitleStyle}>Guarda tu clave de rescate</h2>
+        <p style={{ ...rowSublabelStyle, marginTop: 0 }}>
+          Esta clave se muestra una sola vez. Si olvidas la contraseña, es la
+          única forma de volver a entrar.
+        </p>
+        <pre
+          style={{
+            fontFamily: typography.fontMono,
+            background: "#f5f5f5",
+            padding: 12,
+            borderRadius: 6,
+            overflowWrap: "anywhere",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <code>{rescueKey}</code>
+        </pre>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (navigator.clipboard) {
+                void navigator.clipboard.writeText(rescueKey);
+              }
+              setCopied(true);
+            }}
+            style={secondaryButtonStyle}
+          >
+            {copied ? "Copiada" : "Copiar"}
+          </button>
+          <span role="alert" style={{ color: "#b26a00", fontSize: "0.9em" }}>
+            Guárdala en un lugar seguro. No se vuelve a mostrar.
+          </span>
+        </div>
+      </section>
+    );
+  }
+
+  if (status.isLoading) return null;
+
+  if (status.data?.locked) {
+    return (
+      <section style={cardStyle}>
+        <h2 style={sectionTitleStyle}>Bloqueo del perfil</h2>
+        <p style={{ margin: 0 }}>Tu perfil está bloqueado con una contraseña.</p>
+        <p style={{ ...rowSublabelStyle, marginBottom: 0 }}>
+          Para cambiar la contraseña, usa la sección Contraseña de arriba.
+        </p>
+      </section>
+    );
+  }
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    if (password.length < LOCAL_PASSWORD_MIN_LENGTH) {
+      setError(
+        `La contraseña debe tener al menos ${LOCAL_PASSWORD_MIN_LENGTH} caracteres.`,
+      );
+      return;
+    }
+    if (password !== confirm) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+    lock.mutate(
+      { password },
+      {
+        onSuccess: (data) => setRescueKey(data.rescue_key),
+        onError: () =>
+          setError("No se pudo activar el bloqueo. Vuelve a intentarlo."),
+      },
+    );
+  };
+
+  return (
+    <section style={cardStyle}>
+      <h2 style={sectionTitleStyle}>Bloqueo del perfil</h2>
+      <p style={{ ...rowSublabelStyle, marginTop: 0 }}>
+        Protege tu perfil con una contraseña. Cada vez que abras Datara en este
+        equipo, te la vamos a pedir.
+      </p>
+      <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+        <div style={{ marginBottom: 12 }}>
+          <label
+            htmlFor="local-lock-password"
+            style={{ display: "block", marginBottom: 4 }}
+          >
+            Contraseña
+          </label>
+          <input
+            id="local-lock-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label
+            htmlFor="local-lock-confirm"
+            style={{ display: "block", marginBottom: 4 }}
+          >
+            Repite la contraseña
+          </label>
+          <input
+            id="local-lock-confirm"
+            type="password"
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+            style={inputStyle}
+          />
+        </div>
+        {error && (
+          <p role="alert" style={{ color: "#c62828", margin: "0 0 12px" }}>
+            {error}
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={lock.isPending}
+          style={{ ...secondaryButtonStyle, padding: "8px 14px" }}
+        >
+          {lock.isPending ? "Activando..." : "Activar bloqueo"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 /**
  * The Perfil screen: account data (read-only), password change and the current
  * session's logout.
@@ -67,6 +241,7 @@ const secondaryButtonStyle = {
 export default function ProfileView() {
   const navigate = useNavigate();
   const { data: user, isLoading } = useMe();
+  const config = useAppConfig();
   const logout = useLogout();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [nameDialogOpen, setNameDialogOpen] = useState(false);
@@ -213,6 +388,9 @@ export default function ProfileView() {
           </button>
         </div>
       </section>
+
+      {/* The local lock exists only where there is no email (F1 / T4, D4). */}
+      {config.data?.mode === "local" && <LocalLockSection />}
 
       <section style={{ ...cardStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
         <div>

@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
+/** Shortest lock password the backend accepts (F1 / T4, D4), mirrored so the
+ * forms stop the user before the request leaks a 422. */
+export const LOCAL_PASSWORD_MIN_LENGTH = 8;
+
 export interface User {
   id: number;
   email: string;
@@ -46,6 +50,9 @@ export function useMe() {
 export interface LocalProfileStatus {
   exists: boolean;
   hosted_accounts: boolean;
+  /** The optional lock (T4/D4) is on: the profile has a password and must not
+   * be opened silently. */
+  locked: boolean;
 }
 
 export function useLocalProfileStatus() {
@@ -53,6 +60,69 @@ export function useLocalProfileStatus() {
     queryKey: ["auth", "local-profile"],
     queryFn: () => api.get<LocalProfileStatus>("/api/auth/local-profile"),
     retry: false,
+  });
+}
+
+/**
+ * The one-time payload the lock and rescue routes answer (T4/D4).
+ *
+ * The raw key is shown exactly once and never stored in the app: only the
+ * backend keeps its hash, and the key itself cannot be read back.
+ */
+export interface LocalRescueKey {
+  rescue_key: string;
+}
+
+/**
+ * Protect the local profile with a password (F1 / T4, D4).
+ *
+ * Requires a session — turning the lock on is an act on a profile the caller is
+ * already inside. On success it answers the rescue key ONCE; that key is the
+ * only way back if the password is forgotten, so the caller must show it and
+ * keep it nowhere in the app.
+ */
+export function useLocalProfileLock() {
+  return useMutation({
+    mutationFn: (data: { password: string }) =>
+      api.post<LocalRescueKey>("/api/auth/local-profile/lock", data),
+  });
+}
+
+/**
+ * Open a locked local profile with its password (F1 / T4, D4).
+ *
+ * The way back in once the 8h session expired, so it is unauthenticated. The
+ * server answers the user and mints the session cookie, so the payload is
+ * cached exactly like login does.
+ */
+export function useLocalProfileOpen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { password: string }) =>
+      api.post<User>("/api/auth/local-profile/open", data),
+    onSuccess: (user) => {
+      qc.setQueryData(["auth", "me"], user);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
+/**
+ * Recover a locked local profile with its one-time rescue key (F1 / T4, D4).
+ *
+ * Unauthenticated like open. On success the key is ROTATED, so the response
+ * carries the NEW raw key and the caller must show it once. The server opens a
+ * session but returns only the key, not the user: the `me` cache is refetched
+ * so the app can see the new session when it lands.
+ */
+export function useLocalProfileRescue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { rescue_key: string; new_password: string }) =>
+      api.post<LocalRescueKey>("/api/auth/local-profile/rescue", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
+    },
   });
 }
 
