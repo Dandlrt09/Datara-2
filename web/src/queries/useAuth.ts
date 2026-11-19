@@ -33,6 +33,41 @@ export function useMe() {
   });
 }
 
+/**
+ * Whether this machine already has a local profile (F1 / T2b / T2c).
+ *
+ * Unauthenticated on purpose: the first-run screen needs it before it holds a
+ * session, to choose between showing the creation form and opening the
+ * existing profile silently (L10).
+ */
+export function useLocalProfileStatus() {
+  return useQuery({
+    queryKey: ["auth", "local-profile"],
+    queryFn: () => api.get<{ exists: boolean }>("/api/auth/local-profile"),
+    retry: false,
+  });
+}
+
+/**
+ * Create the local profile, or open it when it already exists (F1 / T2b / T2c).
+ *
+ * Get-or-create (L10): with a name the server creates the profile (201); with
+ * no name it opens the existing one (200) and ignores the body. Either way it
+ * starts the session, so the user payload is written into the `me` cache the
+ * same way login does.
+ */
+export function useLocalProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name?: string }) =>
+      api.post<User>("/api/auth/local-profile", data),
+    onSuccess: (user) => {
+      qc.setQueryData(["auth", "me"], user);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
