@@ -1470,8 +1470,10 @@ async def request_account_deletion(
     verified first (401 on mismatch), and only then is the ``ELIMINAR``
     confirmation word validated (422). On success the purge deadline is written
     seven days out (D1), every session of the user is closed (D3), and the
-    session cookie is cleared — the caller lands back on ``/login`` (S5). The
-    account and its data are left untouched until the deadline passes (S3).
+    session cookie is cleared (S5). The account and its data are left untouched
+    until the deadline passes (S3). Where the caller lands is a frontend
+    decision: ``/login`` with the cancellation notice when the email flows
+    exist, ``/first-run`` in local mode, which has no email login (F1/T4).
     """
     if not verify_password(body.current_password, user["password_hash"]):
         raise HTTPException(

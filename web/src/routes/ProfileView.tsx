@@ -298,9 +298,18 @@ export default function ProfileView() {
   };
 
   const handleDeletionScheduled = () => {
-    // Requesting deletion closes every session server-side (S5): land on the
-    // login screen with the notice, where the user can sign in again to cancel.
     setDeleteDialogOpen(false);
+    // Requesting deletion closes every session server-side (S5), so the app
+    // leaves the authenticated shell. Local mode has no email login (F1/T4):
+    // it returns to the local landing, and the pending-deletion screen repeats
+    // the deadline as soon as the profile is unlocked. Hosted keeps the login
+    // screen with the notice, where the user signs in again to cancel. An
+    // unreadable or still-loading mode falls back to the login, the same rule
+    // `handleLogout` follows.
+    if (config.data?.mode === "local") {
+      navigate("/first-run", { replace: true });
+      return;
+    }
     navigate("/login", {
       replace: true,
       state: { notice: DELETION_SCHEDULED_NOTICE },
