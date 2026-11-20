@@ -21,6 +21,7 @@ import { useFilesGlobal } from "../queries/useFiles";
 import { useChatStore } from "../stores/useChatStore";
 import { RouteErrorBoundary } from "../components/ErrorCard";
 import { WizardOverlay } from "../components/WizardOverlay";
+import { GuidedTour, useGuidedTourStore } from "../components/GuidedTour";
 import { useWizardStore } from "../stores/useWizardStore";
 import { useSessionEvents, type SessionEvent } from "../lib/useSessionEvents";
 import { PreferencesProvider, usePreferences } from "../lib/preferences";
@@ -262,12 +263,20 @@ function AppShellContent({ user }: { user: User }) {
     && !isStreaming && !wizard.dismissed
     && !sessionCreating;
 
-  // Auto-open effect: when triggerHolds becomes true and wizard isn't already open
-  useEffect(() => {
-    if (triggerHolds && !wizard.open) {
-      wizard.openWizard();
-    }
-  }, [triggerHolds, wizard.open, wizard]);
+  // Auto-open effect REMOVED (F4/S5, T5): the wizard no longer opens by itself.
+  // Its entry point on /app now belongs to the guided tour below, and the chat
+  // empty state offers "Ver el recorrido guiado" where the wizard's button used
+  // to be. The component, its store and its manual open path are untouched, so
+  // bringing this back is literally the one effect that used to live here:
+  //
+  //     useEffect(() => {
+  //       if (triggerHolds && !wizard.open) wizard.openWizard();
+  //     }, [triggerHolds, wizard.open, wizard]);
+  //
+  // `triggerHolds` is still derived above because the un-engaged auto-close
+  // effect below reads it, and the store still exposes openWizard(true) for a
+  // manual open. Do NOT delete WizardOverlay: the maintainer evaluates the tour
+  // first and decides afterwards whether the wizard returns or goes for good.
 
   // Un-engaged auto-close effect: when wizard is open but not engaged/manual, and trigger flips false
   useEffect(() => {
@@ -275,6 +284,23 @@ function AppShellContent({ user }: { user: User }) {
       wizard.closeWizard();
     }
   }, [triggerHolds, wizard.open, wizard.engaged, wizard.manual, wizard]);
+
+  // Guided first-boot tour (F4/T4, S2, S3, D5). Mounted HERE, inside the signed-in
+  // shell, so it can only ever appear after `LockStepGate` resolved: the
+  // mandatory lock step and the tour never fight over the same first entry.
+  // `user.tutorial_seen` is the server-side flag (T1): EXPLICITLY false means
+  // this profile has not seen it yet (`undefined` -- an older payload shape --
+  // never starts a tour). The offer happens once per app session:
+  // `firstEntryClosed` keeps it down after a skip, a finish or a refused mark
+  // without pretending the flag was written. `openTour()` reopens it by hand
+  // (D5), which is also the only way to evaluate it on an existing profile.
+  const tour = useGuidedTourStore();
+  // The offer does NOT wait for a configured provider (S2): the first step is
+  // exactly the one that explains Ajustes and sends the analyst there, so
+  // gating it on the provider contradicted the tour itself. Its anchors are the
+  // sidebar entries, which exist on every route.
+  const tourVisible =
+    tour.open || (!tour.firstEntryClosed && user.tutorial_seen === false);
 
   // SSE event handling
   const onEvent = useCallback(
@@ -386,8 +412,10 @@ function AppShellContent({ user }: { user: User }) {
   return (
     <>
       <div style={{ display: "flex", height: "100vh" }}>
-        {/* Sidebar */}
+        {/* Sidebar. Every nav entry below carries its own `data-tour` anchor
+            for the guided tour (F4/T4); they are inert markup, not behaviour. */}
         <nav
+          data-tour="sidebar"
           style={{
             width: 220,
             background: "#f8f9fa",
@@ -397,21 +425,30 @@ function AppShellContent({ user }: { user: User }) {
           }}
         >
           <h2 style={{ margin: "0 0 16px" }}>Datara</h2>
-          <Link to="/app/chat" style={{ marginBottom: 8 }}>
+          <Link to="/app/chat" data-tour="nav-chat" style={{ marginBottom: 8 }}>
             Chat
           </Link>
-          <Link to="/app/files" style={{ marginBottom: 8 }}>
+          <Link to="/app/files" data-tour="nav-files" style={{ marginBottom: 8 }}>
             Files
           </Link>
-          <Link to="/app/archives" style={{ marginBottom: 8 }}>
+          <Link
+            to="/app/archives"
+            data-tour="nav-archives"
+            style={{ marginBottom: 8 }}
+          >
             Archives
           </Link>
-          <Link to="/app/settings" style={{ marginBottom: 8 }}>
+          <Link
+            to="/app/settings"
+            data-tour="nav-settings"
+            style={{ marginBottom: 8 }}
+          >
             Settings
           </Link>
           <div style={{ marginTop: "auto" }}>
             <Link
               to="/app/profile"
+              data-tour="nav-profile"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -507,8 +544,16 @@ function AppShellContent({ user }: { user: User }) {
           </PreferencesProvider>
         </main>
 
-        {/* Wizard overlay - mounted inside root flex div after main */}
+        {/* Wizard overlay - mounted inside root flex div after main.
+            Hidden, not deleted (F4/S5): the guided tour below owns the first
+            entry to /app now. `wizard.openWizard(true)` still opens this one on
+            demand, which is the one line that brings it back. */}
         {wizardOpen && <WizardOverlay />}
+
+        {/* Guided first-boot tour - spotlight layer over the real UI. */}
+        {tourVisible && (
+          <GuidedTour onClose={tour.closeTour} onGoTo={navigate} />
+        )}
       </div>
     </>
   );

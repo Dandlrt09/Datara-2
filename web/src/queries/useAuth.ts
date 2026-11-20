@@ -13,6 +13,11 @@ export interface User {
   name: string | null;
   /** Scheduled purge deadline in the grace period, or null (S3). */
   pending_deletion_at: string | null;
+  /** Whether this profile already went through the guided first-boot tour
+   * (F4/T1, S3). Per profile and stored on the server, so it survives shutting
+   * the app down, locking and unlocking; a profile created today -- hosted or
+   * local -- starts at false and sees the tour once. */
+  tutorial_seen: boolean;
 }
 
 /** One open auth session as returned by `GET /api/auth/sessions` (T2.4). */
@@ -290,6 +295,30 @@ export function useUpdateName() {
       api.patch<User>("/api/auth/me", data),
     onSuccess: (user) => {
       qc.setQueryData(["auth", "me"], user);
+    },
+  });
+}
+
+/**
+ * Mark this profile as having seen the guided first-boot tour (F4 / T4, S3).
+ *
+ * Called when the tour is skipped, finished or dismissed: the flag lives in the
+ * profile, per account, so the tour does not come back after shutting the app
+ * down, locking or unlocking (S3). The `me` query is invalidated so the shell
+ * stops offering it on the same tick and a later `GET /me` still agrees with
+ * the stored row.
+ *
+ * A refused request is deliberately NOT handled here: the tour closes for the
+ * session anyway and the flag stays false, which is exactly what makes it come
+ * back on a later launch. Handing the flag into the cache here would fake a
+ * persistence the server refused (D5).
+ */
+export function useMarkTutorialSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<undefined>("/api/auth/tutorial-seen"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
     },
   });
 }

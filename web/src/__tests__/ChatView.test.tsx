@@ -100,12 +100,15 @@ const { useSessionsMock, useMessagesMock, useCreateSessionMock, useDeleteSession
     useRenameSessionMock: vi.fn(),
   }));
 
-const { useWizardStoreMock } = vi.hoisted(() => ({
-  useWizardStoreMock: vi.fn(),
+const { openTourMock } = vi.hoisted(() => ({
+  openTourMock: vi.fn(),
 }));
 
-vi.mock("../stores/useWizardStore", () => ({
-  useWizardStore: () => useWizardStoreMock(),
+// The empty state's reopen control talks to the guided first-boot tour's store
+// (F4/T4, D5). The tour overlay itself is mounted by AppShell and is covered in
+// GuidedTour.test.tsx; here only the control's wiring matters.
+vi.mock("../components/GuidedTour", () => ({
+  useGuidedTourStore: () => ({ openTour: openTourMock }),
 }));
 
 vi.mock("../queries/useSessions", () => ({
@@ -223,11 +226,6 @@ describe("ChatView component", () => {
     useCreateArchiveMock.mockReturnValue({
       mutateAsync: vi.fn().mockResolvedValue({ id: 1, name: "análisis" }),
       isPending: false,
-    });
-    
-    // Wizard store mock
-    useWizardStoreMock.mockReturnValue({
-      openWizard: vi.fn(),
     });
   });
 
@@ -510,24 +508,22 @@ describe("ChatView component", () => {
     await waitFor(() => expect(refetchMessages).toHaveBeenCalledTimes(1));
   });
 
-  it("empty state shows 'Start first-run wizard' button when no session is selected", () => {
+  it("empty state no longer offers the first-run wizard button", () => {
     renderWithProviders(<ChatView />, { route: "/app/chat" });
-    
+
     expect(screen.getByText("Select a chat or create a new one")).toBeTruthy();
-    expect(screen.getByText("Start first-run wizard")).toBeTruthy();
+    // The wizard is hidden, not deleted (F4/S5): its button is gone from here.
+    expect(screen.queryByText("Start first-run wizard")).toBeNull();
+    // The slot it used now reopens the guided tour (F4/D5).
+    expect(screen.getByText("Ver el recorrido guiado")).toBeTruthy();
   });
 
-  it("clicking 'Start first-run wizard' button calls wizardStore.openWizard(true)", () => {
-    const openWizardMock = vi.fn();
-    useWizardStoreMock.mockReturnValue({
-      openWizard: openWizardMock,
-    });
-    
+  it("clicking the guided-tour control opens the tour", () => {
     renderWithProviders(<ChatView />, { route: "/app/chat" });
-    
-    fireEvent.click(screen.getByText("Start first-run wizard"));
-    
-    expect(openWizardMock).toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByText("Ver el recorrido guiado"));
+
+    expect(openTourMock).toHaveBeenCalledTimes(1);
   });
 
   it("re-applies each suggested question from location.state across navigations", () => {
