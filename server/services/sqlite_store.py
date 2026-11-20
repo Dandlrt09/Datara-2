@@ -142,6 +142,47 @@ class SqliteStore:
         except aiosqlite.IntegrityError:
             raise DuplicateError(f"email already exists: {email}")
 
+    async def create_local_user(self, name: str) -> dict[str, Any]:
+        """Insert the single local profile and return the full row (F1/T2b).
+
+        A local profile has no email and no password (D1/D5): the name is the
+        whole identity, already normalized by the caller. Only one may exist
+        per database, and that ceiling is a partial unique index in migration
+        0015 rather than a check here, so two simultaneous first-boot requests
+        cannot both win. Raises ``DuplicateError`` when a local profile is
+        already present.
+        """
+        try:
+            cursor = await self.conn.execute(
+                "INSERT INTO users (kind, name) VALUES ('local', ?)",
+                (name,),
+            )
+            await self.conn.commit()
+            row_id = cursor.lastrowid
+            rows = await self.conn.execute_fetchall(
+                "SELECT id, email, name, password_hash, created_at, "
+                "pending_deletion_at, email_verified_at FROM users WHERE id = ?",
+                (row_id,),
+            )
+            return dict(rows[0])
+        except aiosqlite.IntegrityError:
+            raise DuplicateError("a local profile already exists")
+
+    async def get_local_user(self) -> dict[str, Any] | None:
+        """Return the machine's single local profile, or None (F1/T2b, L10).
+
+        There is at most one local row (S1; the partial unique index in
+        migration 0015 enforces it), so ``ORDER BY id LIMIT 1`` makes the
+        oldest row win: the first-created profile stays the one the app opens
+        even if a future write path ever loosened that index.
+        """
+        rows = await self.conn.execute_fetchall(
+            "SELECT id, email, name, password_hash, created_at, "
+            "pending_deletion_at, email_verified_at FROM users "
+            "WHERE kind = 'local' ORDER BY id LIMIT 1",
+        )
+        return dict(rows[0]) if rows else None
+
     async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Look up a user by email, case- and space-insensitively (S4/S5).
 

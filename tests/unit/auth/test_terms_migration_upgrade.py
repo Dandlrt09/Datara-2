@@ -63,9 +63,20 @@ def test_0011_upgrade_is_additive_and_legacy_rows_carry_no_acceptance(legacy_db)
     # Every column that existed before is still there, unchanged, in order.
     # Filtered by the pre-upgrade set (not by this migration's own columns),
     # so a later migration does not fail this probe on an unrelated line.
+    #
+    # 0014 (F1 / T2a) is the one intended exception: it relaxes users.email and
+    # users.password_hash to nullable so a local profile can exist without them,
+    # while the row-level CHECK still demands both from a 'hosted' account. That
+    # intent is recorded here instead of loosening the guard, which keeps pinning
+    # the type, the default and the column order.
+    intended_changes = {
+        "email": ("email", "TEXT", 0, None),
+        "password_hash": ("password_hash", "TEXT", 0, None),
+    }
+    expected = [intended_changes.get(column[0], column) for column in before]
     new_names = {"terms_version", "terms_accepted_at"}
     pre_existing = {column[0] for column in before}
-    assert [column for column in after if column[0] in pre_existing] == before
+    assert [column for column in after if column[0] in pre_existing] == expected
     # ("terms_version", "TEXT", notnull=0, default=None) and the same for the
     # date: nullable and with no default, so an old row reads as "never
     # accepted" instead of being assigned a version it never agreed to (D4).

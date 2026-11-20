@@ -11,6 +11,14 @@ const { useLoginMock, useResendVerificationMock } = vi.hoisted(() => ({
   useResendVerificationMock: vi.fn(),
 }));
 
+// The register / recovery links wait for the deployment mode (F1 / T1).
+vi.mock("../queries/useAppConfig", async () => ({
+  ...(await vi.importActual<typeof import("../queries/useAppConfig")>(
+    "../queries/useAppConfig",
+  )),
+  useAppConfig: () => ({ data: { mode: "hosted" }, isError: false }),
+}));
+
 vi.mock("../queries/useAuth", () => ({
   useLogin: () => useLoginMock(),
   useResendVerification: () => useResendVerificationMock(),

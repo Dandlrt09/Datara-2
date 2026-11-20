@@ -19,6 +19,7 @@ import pytest
 
 from server import desktop
 from server import sandbox_runner
+from server.app_mode import get_mode
 from server.services.mailer import resolve_app_url
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -150,6 +151,36 @@ class TestMailedLinksUseTheRealPort:
 
         desktop.run_desktop(open_window=fake_window)
         assert seen["mailed"] == "https://datara.app"
+
+
+class TestDeploymentMode:
+    """The packaged app IS the local deployment (F1 / T2b, D2).
+
+    ``run_desktop`` is the one place that opts in to ``DATARA_MODE=local``, and
+    it must never talk a hosting operator out of an explicit value.
+    """
+
+    def test_a_default_run_serves_in_local_mode(self, isolated_env, monkeypatch):
+        isolated_env()
+        monkeypatch.delenv("DATARA_MODE", raising=False)
+        seen: dict[str, str] = {}
+
+        def fake_window(url: str) -> None:
+            seen["mode"] = get_mode()
+
+        desktop.run_desktop(open_window=fake_window)
+        assert seen["mode"] == "local"
+
+    def test_an_explicit_mode_is_not_overwritten(self, isolated_env, monkeypatch):
+        isolated_env()
+        monkeypatch.setenv("DATARA_MODE", "hosted")
+        seen: dict[str, str] = {}
+
+        def fake_window(url: str) -> None:
+            seen["mode"] = get_mode()
+
+        desktop.run_desktop(open_window=fake_window)
+        assert seen["mode"] == "hosted"
 
 
 class TestArgumentDispatch:

@@ -2,6 +2,7 @@ import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useLogin, useResendVerification } from "../queries/useAuth";
 import { ApiError } from "../lib/api";
+import { emailFlowsEnabled, useAppConfig } from "../queries/useAppConfig";
 
 interface LoginForm {
   email: string;
@@ -34,6 +35,8 @@ export default function LoginScreen() {
   const location = useLocation();
   const login = useLogin();
   const resend = useResendVerification();
+  // Register / recovery links only exist where the email flows do (F1 / T1).
+  const showEmailLinks = emailFlowsEnabled(useAppConfig());
   const {
     register,
     handleSubmit,
@@ -123,12 +126,16 @@ export default function LoginScreen() {
           {login.isPending ? "Logging in..." : "Log in"}
         </button>
       </form>
-      <p style={{ marginTop: 16 }}>
-        <Link to="/forgot-password">Forgot your password?</Link>
-      </p>
-      <p style={{ marginTop: 16 }}>
-        Don't have an account? <Link to="/register">Register</Link>
-      </p>
+      {showEmailLinks && (
+        <>
+          <p style={{ marginTop: 16 }}>
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+          <p style={{ marginTop: 16 }}>
+            Don't have an account? <Link to="/register">Register</Link>
+          </p>
+        </>
+      )}
     </div>
   );
 }

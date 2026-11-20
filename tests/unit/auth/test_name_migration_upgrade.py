@@ -62,8 +62,19 @@ def test_0009_upgrade_is_additive_and_legacy_rows_stay_null(legacy_db):
     # The filter is the set seen *before* the upgrade, not the columns this
     # migration adds: a later migration introducing its own column (0011 did)
     # must not make this probe fail on an unrelated line.
+    #
+    # 0014 (F1 / T2a) is the one intended exception: it relaxes users.email and
+    # users.password_hash to nullable so a local profile can exist without them,
+    # while the row-level CHECK still demands both from a 'hosted' account. That
+    # intent is recorded here instead of loosening the guard, which keeps pinning
+    # the type, the default and the column order.
+    intended_changes = {
+        "email": ("email", "TEXT", 0, None),
+        "password_hash": ("password_hash", "TEXT", 0, None),
+    }
+    expected = [intended_changes.get(column[0], column) for column in before]
     pre_existing = {column[0] for column in before}
-    assert [column for column in after if column[0] in pre_existing] == before
+    assert [column for column in after if column[0] in pre_existing] == expected
     # ("name", "TEXT", notnull=0, default=None) -> nullable, no default (D1).
     assert [column for column in after if column[0] == "name"] == [
         ("name", "TEXT", 0, None)
