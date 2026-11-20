@@ -8,6 +8,7 @@ the only honest way to check it is to watch the port afterwards.
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
@@ -28,13 +29,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def isolated_env(monkeypatch, tmp_path):
     """Keep the server away from the developer's real database and uploads."""
+    before_mode = os.environ.get("DATARA_MODE")
 
     def _apply():
         monkeypatch.setenv("DATARA_DB_PATH", str(tmp_path / "datara.db"))
         monkeypatch.setenv("DATARA_UPLOADS_DIR", str(tmp_path / "uploads"))
         return tmp_path
 
-    return _apply
+    yield _apply
+
+    # ``run_desktop`` writes DATARA_MODE to the process environment, which is
+    # right for the real app (it lives as long as the process) and wrong here: a
+    # leaked value would decide the mode for every test that runs afterwards, and
+    # every mail route is refused outside hosted mode. monkeypatch cannot undo a
+    # variable that was absent when the test started, hence this snapshot.
+    if before_mode is None:
+        os.environ.pop("DATARA_MODE", None)
+    else:
+        os.environ["DATARA_MODE"] = before_mode
 
 
 def _port_is_free(port: int) -> bool:

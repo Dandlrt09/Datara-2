@@ -33,6 +33,49 @@ export function useMe() {
   });
 }
 
+/**
+ * The machine's identity state before any session (F1 / T2b / T2c / T3).
+ *
+ * Unauthenticated on purpose: the first-run screen needs it before it holds a
+ * session, to choose between showing the creation form, opening the existing
+ * profile silently (L10), or keeping the email login. `hosted_accounts` is
+ * true when the database already holds email accounts: the local profile is
+ * only OFFERED on an empty database (D3), so an existing install is sent to
+ * `/login` instead of the creation form.
+ */
+export interface LocalProfileStatus {
+  exists: boolean;
+  hosted_accounts: boolean;
+}
+
+export function useLocalProfileStatus() {
+  return useQuery({
+    queryKey: ["auth", "local-profile"],
+    queryFn: () => api.get<LocalProfileStatus>("/api/auth/local-profile"),
+    retry: false,
+  });
+}
+
+/**
+ * Create the local profile, or open it when it already exists (F1 / T2b / T2c).
+ *
+ * Get-or-create (L10): with a name the server creates the profile (201); with
+ * no name it opens the existing one (200) and ignores the body. Either way it
+ * starts the session, so the user payload is written into the `me` cache the
+ * same way login does.
+ */
+export function useLocalProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name?: string }) =>
+      api.post<User>("/api/auth/local-profile", data),
+    onSuccess: (user) => {
+      qc.setQueryData(["auth", "me"], user);
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}
+
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({

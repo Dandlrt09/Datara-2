@@ -91,13 +91,22 @@ class LocalProfileRequest(BaseModel):
 
 
 class LocalProfileStatus(BaseModel):
-    """Body of ``GET /api/auth/local-profile`` (F1/T2b, L10).
+    """Body of ``GET /api/auth/local-profile`` (F1/T2b, L10; T3, D3).
 
-    ``exists`` lets the first boot tell "create the profile" (false) from
-    "open the profile" (true) before it holds any session.
+    The identity state the first-boot landing needs. ``exists`` lets the first
+    boot tell "create the profile" (false) from "open the profile" (true)
+    before it holds any session. ``hosted_accounts`` reports whether the
+    database already holds email accounts: when it does, the local profile is
+    only OFFERED on an empty database (D3), so the visitor keeps the email
+    login instead of seeing the creation form.
+
+    This signal lives on the auth surface, not in ``/api/app-config``: the mode
+    there is a deployment property (D2), while "is there a local profile / are
+    there email accounts" is data.
     """
 
     exists: bool
+    hosted_accounts: bool
 
 
 class VerifyEmailRequest(BaseModel):
@@ -190,6 +199,28 @@ class ActiveSessionsResponse(BaseModel):
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
+
+
+def _require_hosted_mode() -> None:
+    """Refuse every email flow outside hosted mode (F1/T2, S2, D2).
+
+    The desktop build runs with ``DATARA_MODE=local`` and has no mailbox, so
+    register, verification and recovery cannot work there: hiding the screens
+    in the frontend is the UX, not the enforcement. Serving them anyway would
+    let a hosted account exist in a local install, which flips
+    ``hosted_accounts`` and sends every later boot to the login screen with no
+    path back to the local profile (S2). In hosted mode this is a no-op.
+
+    Attached as a router dependency rather than checked inside each body, so it
+    runs before the request body is validated: a refused call must not spend an
+    attempt brake, hash a password, create a row, or mail anything, and the
+    answer must not depend on how well formed the payload was.
+    """
+    if get_mode() != "hosted":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email flows are only available in hosted mode",
+        )
 
 
 def _cookie_secure() -> bool:
@@ -462,7 +493,11 @@ async def _enforce_attempt_limit(
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 
-@router.post("/register", status_code=200)
+@router.post(
+    "/register",
+    status_code=200,
+    dependencies=[Depends(_require_hosted_mode)],
+)
 async def register(
     body: RegisterRequest,
     request: Request,
@@ -480,6 +515,9 @@ async def register(
     On duplicate email: returns 409 Conflict.
     On invalid data: returns 422, including a missing or stale terms of use
     acceptance.
+    Outside hosted mode: returns 403 with "Email flows are only available in
+    hosted mode", before any of the above -- local mode has no mail, and the
+    frontend hiding the signup screen is the UX, not the enforcement (D2/S2).
     """
     if len(body.password) < 8:
         raise HTTPException(
@@ -699,14 +737,16 @@ async def create_local_profile(
 async def get_local_profile_status(
     store: SqliteStore = Depends(get_store),
 ) -> LocalProfileStatus:
-    """Report whether the machine already has a local profile (F1/T2b, L10).
+    """Report the machine's identity state before any session (F1/T2b, L10; T3).
 
-    Only reachable in local mode (D2): outside it the route is the same 403
-    backstop as the POST. Unauthenticated on purpose -- the frontend needs this
-    BEFORE it holds any session, to choose between showing the first-boot
-    screen and opening the existing profile silently. The mode is a deployment
-    property, so this signal lives on the auth surface, not in
-    ``/api/app-config``.
+    Answers whether a local profile exists and whether the database already
+    holds email accounts. Only reachable in local mode (D2): outside it the
+    route is the same 403 backstop as the POST. Unauthenticated on purpose --
+    the frontend needs this BEFORE it holds any session, to choose between
+    showing the first-boot screen, opening the existing profile silently, and
+    sending an install that already has accounts to its email login (D3). The
+    mode is a deployment property, so this signal lives on the auth surface,
+    not in ``/api/app-config``.
     """
     if get_mode() != "local":
         raise HTTPException(
@@ -714,10 +754,17 @@ async def get_local_profile_status(
             detail="Local profile is only available in local mode",
         )
 
-    return LocalProfileStatus(exists=await store.get_local_user() is not None)
+    return LocalProfileStatus(
+        exists=await store.get_local_user() is not None,
+        hosted_accounts=await store.has_hosted_accounts(),
+    )
 
 
-@router.post("/verify-email", status_code=204)
+@router.post(
+    "/verify-email",
+    status_code=204,
+    dependencies=[Depends(_require_hosted_mode)],
+)
 async def verify_email(
     body: VerifyEmailRequest,
     request: Request,
@@ -735,6 +782,10 @@ async def verify_email(
 
     The brake runs first (F9/S5), keyed on the source address: a flood of bad
     tokens is refused before it costs a database lookup.
+
+    Outside hosted mode the mode guard answers 403 before any of that: local
+    mode has no mailed links to redeem, and the frontend hiding the screen is
+    the UX, not the enforcement (D2/S2).
     """
     brake_key = _ip_attempt_key("verify", request)
     limiter = PersistentAttemptLimiter(store)
@@ -762,7 +813,11 @@ async def verify_email(
     return None
 
 
-@router.post("/resend-verification", status_code=202)
+@router.post(
+    "/resend-verification",
+    status_code=202,
+    dependencies=[Depends(_require_hosted_mode)],
+)
 async def resend_verification(
     body: ResendVerificationRequest,
     request: Request,
@@ -776,6 +831,12 @@ async def resend_verification(
     enumeration oracle. Only a real, unverified account gets a new token and a
     mail. Every attempt is counted against the IP and the email (S2) so the
     endpoint cannot be used to bomb a mailbox.
+
+    Outside hosted mode the mode guard answers 403 before any brake is spent or
+    any mail is sent: this route exists to mail a link, and local mode has no
+    mailbox. The frontend hiding the link is the UX, not the enforcement
+    (D2/S2) -- which is why this resend is guarded along with the four flows
+    the finding named.
     """
     email = normalize_email(body.email)
     keys = _attempt_keys("resend", request, email)
@@ -790,7 +851,11 @@ async def resend_verification(
     return None
 
 
-@router.post("/forgot-password", status_code=202)
+@router.post(
+    "/forgot-password",
+    status_code=202,
+    dependencies=[Depends(_require_hosted_mode)],
+)
 async def forgot_password(
     body: ForgotPasswordRequest,
     request: Request,
@@ -806,6 +871,11 @@ async def forgot_password(
     no use for the address beyond looking it up. Only a real account gets a
     token and a mail. Every attempt is counted against the IP and the email
     (S2) so the endpoint cannot be used to bomb a mailbox.
+
+    Outside hosted mode the mode guard answers 403 before any brake is spent or
+    any mail is sent: recovery depends on a mailbox, which a local install does
+    not have. The frontend hiding the link is the UX, not the enforcement
+    (D2/S2).
     """
     email = normalize_email(body.email)
     keys = _attempt_keys("forgot", request, email)
@@ -820,7 +890,11 @@ async def forgot_password(
     return None
 
 
-@router.post("/reset-password", status_code=204)
+@router.post(
+    "/reset-password",
+    status_code=204,
+    dependencies=[Depends(_require_hosted_mode)],
+)
 async def reset_password(
     body: ResetPasswordRequest,
     request: Request,
@@ -841,6 +915,11 @@ async def reset_password(
     the same thing as the verification link), every session of the user is
     closed (D8 -- a reset is the "my account was stolen" act, so no session may
     survive it), and any sibling reset token is dropped.
+
+    Outside hosted mode the mode guard answers 403 before the brake and before
+    the body is looked at: a reset link can only be redeemed here, so local mode
+    -- which has no mail and therefore no link -- refuses the call. The frontend
+    hiding the screen is the UX, not the enforcement (D2/S2).
     """
     brake_key = _ip_attempt_key("reset", request)
     limiter = PersistentAttemptLimiter(store)
