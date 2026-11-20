@@ -357,6 +357,7 @@ class TestLocalProfileStatus:
             "exists": False,
             "hosted_accounts": False,
             "locked": False,
+            "lock_step_pending": False,
         }
 
         created = client.post("/api/auth/local-profile", json={"name": "Ana"})
@@ -368,6 +369,7 @@ class TestLocalProfileStatus:
             "exists": True,
             "hosted_accounts": False,
             "locked": False,
+            "lock_step_pending": True,
         }
 
     def test_hosted_accounts_is_true_after_a_hosted_account_is_registered(
@@ -385,6 +387,7 @@ class TestLocalProfileStatus:
             "exists": False,
             "hosted_accounts": True,
             "locked": False,
+            "lock_step_pending": False,
         }
 
     def test_hosted_accounts_counts_a_row_scheduled_for_deletion(
@@ -409,6 +412,7 @@ class TestLocalProfileStatus:
             "exists": False,
             "hosted_accounts": True,
             "locked": False,
+            "lock_step_pending": False,
         }
 
     def test_a_local_profile_and_hosted_accounts_are_reported_together(
@@ -427,6 +431,7 @@ class TestLocalProfileStatus:
             "exists": True,
             "hosted_accounts": True,
             "locked": False,
+            "lock_step_pending": True,
         }
 
     def test_hosted_mode_refuses_the_status(self, client, store, monkeypatch):

@@ -1,7 +1,19 @@
-import { lazy, Suspense, useEffect, useCallback } from "react";
-import { Routes, Route, useNavigate, Link, Navigate } from "react-router-dom";
+import { lazy, Suspense, useEffect, useCallback, useRef, useState } from "react";
+import {
+  Routes,
+  Route,
+  useNavigate,
+  Link,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import { useQueryClient, useIsMutating } from "@tanstack/react-query";
-import { useMe, type User } from "../queries/useAuth";
+import {
+  useLocalProfileStatus,
+  useMe,
+  type User,
+} from "../queries/useAuth";
+import { emailFlowsEnabled, useAppConfig } from "../queries/useAppConfig";
 import { useSettings } from "../queries/useSettings";
 import { isProviderConfigured } from "./settings/configured";
 import { useSessions } from "../queries/useSessions";
@@ -22,6 +34,7 @@ const FilesView = lazy(() => import("./FilesView"));
 const SettingsView = lazy(() => import("./SettingsView"));
 const ArchiveList = lazy(() => import("./ArchiveList"));
 const ProfileView = lazy(() => import("./ProfileView"));
+const LockStepScreen = lazy(() => import("./LockStepScreen"));
 
 function Loading() {
   return <div>Loading...</div>;
@@ -81,13 +94,22 @@ function sortSessionsNewestFirst(sessions: ChatSession[]): ChatSession[] {
 
 export default function AppShell() {
   const navigate = useNavigate();
-  const { data: user, isLoading, error } = useMe();
+  const { data: user, isLoading } = useMe();
+  const config = useAppConfig();
 
+  // Signing out (or losing the session) lands on the mode's front door (F1/T1,
+  // S1): local mode has no email login, so it goes to the local landing -- the
+  // password screen when the profile is locked, otherwise whatever /first-run
+  // does. Hosted mode keeps going to /login. The mode is read first: an
+  // unreadable mode falls back to /login, the same fail-open rule the rest of
+  // the app uses.
   useEffect(() => {
-    if (!isLoading && (error || !user)) {
-      navigate("/login", { replace: true });
-    }
-  }, [user, isLoading, error, navigate]);
+    if (isLoading || user) return;
+    if (!config.data && !config.isError) return;
+    navigate(emailFlowsEnabled(config) ? "/login" : "/first-run", {
+      replace: true,
+    });
+  }, [user, isLoading, config, navigate]);
 
   if (isLoading) return <div>Checking auth...</div>;
   if (!user) return null;
@@ -103,7 +125,110 @@ export default function AppShell() {
     );
   }
 
+  return <LockStepGate user={user} />;
+}
+
+/**
+ * The lock-step gate (F1 / T3, S3, D1).
+ *
+ * The optional lock is mandatory on the path: a signed-in local analyst whose
+ * step is still pending is sent to /app/lock-step and cannot reach the rest of
+ * the app until they answer. The step stays optional (D4): answering means
+ * turning the lock on or declining explicitly.
+ *
+ * The gate is split in two so a hosted account never queries the local-only
+ * status: a local profile has no email, so the already-known user payload is
+ * enough to tell them apart. The inner gate owns the status query and the two
+ * latches that keep the screen honest.
+ */
+function LockStepGate({ user }: { user: User }) {
+  if (user.email !== null) return <AppShellContent user={user} />;
+  return <LocalLockStepGate user={user} />;
+}
+
+function LocalLockStepGate({ user }: { user: User }) {
+  const status = useLocalProfileStatus();
+  const location = useLocation();
+  // The step was seen pending in this mount. It keeps the screen on the path
+  // even if a refetch stops reporting it, so the rescue key cannot disappear
+  // between the lock being turned on and the analyst keeping it. The latch is
+  // written in an effect, never during render: a render-phase write can be
+  // thrown away with the render that carried it (concurrent rendering), and
+  // then the latch would never have flipped.
+  const stepWasPending = useRef(false);
+  useEffect(() => {
+    if (status.data?.lock_step_pending) stepWasPending.current = true;
+  }, [status.data]);
+  // The step was answered in this mount. It releases the gate without waiting
+  // for the status query to refetch, so an answered step cannot loop.
+  const [answered, setAnswered] = useState(false);
+
+  if (status.isLoading) return <Loading />;
+
+  // The effect that latches the ref runs after the first commit, so the data
+  // itself is read here too: this is what keeps the very first render from
+  // leaking the app before the latch flips.
+  const knownPending =
+    status.data?.lock_step_pending === true || stepWasPending.current;
+
+  // Unlike `DataFolderGate`, which fails open because the folder picker is a
+  // first-run convenience, this gate fails CLOSED: the lock step is mandatory
+  // on the path (D1), so a status read that failed must not release the app.
+  // The panel has no route into the app and only offers a retry; once the
+  // retry succeeds the gate resolves normally, so a later refetch can never
+  // yank the analyst out of a task they were never allowed to start.
+  if (status.isError && !knownPending) {
+    return <LockStepStatusError onRetry={() => void status.refetch()} />;
+  }
+
+  const showStep = knownPending && !answered;
+  if (showStep) {
+    if (location.pathname !== "/app/lock-step") {
+      return <Navigate to="/app/lock-step" replace />;
+    }
+    return (
+      <Suspense fallback={<Loading />}>
+        <LockStepScreen onAnswered={() => setAnswered(true)} />
+      </Suspense>
+    );
+  }
+
+  // A reload after answering lands on the same URL; send it back into the app
+  // instead of showing a 404.
+  if (location.pathname === "/app/lock-step") {
+    return <Navigate to="/app" replace />;
+  }
+
   return <AppShellContent user={user} />;
+}
+
+/**
+ * Shown when the local-profile status cannot be read (F1 / T6, D1).
+ *
+ * The lock step is mandatory on the path, so a failed status read cannot
+ * release the app the way `DataFolderGate` releases on a failed folder probe:
+ * that gate guards a first-run convenience, this one guards a step the
+ * maintainer required. The panel offers only a retry -- no route into the app
+ * -- so a later successful refetch resolves the gate instead of pulling the
+ * analyst out of a task.
+ */
+function LockStepStatusError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{ maxWidth: 440, margin: "80px auto", padding: 24 }}
+    >
+      <h1>No pudimos comprobar el paso de bloqueo</h1>
+      <p style={{ color: "#666" }}>
+        Datara no pudo verificar si ya configuraste el bloqueo de tu perfil.
+        Por seguridad, no vamos a abrir la app hasta confirmarlo. Vuelve a
+        intentarlo.
+      </p>
+      <button type="button" onClick={onRetry} style={{ padding: "6px 16px" }}>
+        Reintentar
+      </button>
+    </div>
+  );
 }
 
 /** The signed-in app shell. Split from `AppShell` so the pending-deletion gate
@@ -365,6 +490,8 @@ function AppShellContent({ user }: { user: User }) {
                 {/* The guided flow lives inside Ajustes as one of its two modes;
                     the old standalone URL keeps working for bookmarks. */}
                 <Route path="/setup" element={<Navigate to="/app/settings" replace />} />
+                {/* A stale bookmark or reload after the step was answered. */}
+                <Route path="/lock-step" element={<Navigate to="/app" replace />} />
                 <Route
                   path="/archives"
                   element={withErrorBoundary("Archives", ArchiveList)}

@@ -101,17 +101,22 @@ class LocalProfileStatus(BaseModel):
     only OFFERED on an empty database (D3), so the visitor keeps the email
     login instead of seeing the creation form. ``locked`` reports whether the
     optional local lock is ON (D4), so the frontend knows to ask for the
-    password instead of opening silently.
+    password instead of opening silently. ``lock_step_pending`` reports whether
+    the optional lock step on the onboarding path (T3/D1) still needs an
+    answer: true for an unlocked profile that neither turned the lock on nor
+    declined, false once either answer was persisted.
 
     This signal lives on the auth surface, not in ``/api/app-config``: the mode
     there is a deployment property (D2), while "is there a local profile / are
-    there email accounts / is it locked" is data. The rescue key is deliberately
-    NOT here: it is shown once at lock time and never read back.
+    there email accounts / is it locked / is the step answered" is data. The
+    rescue key is deliberately NOT here: it is shown once at lock time and
+    never read back.
     """
 
     exists: bool
     hosted_accounts: bool
     locked: bool
+    lock_step_pending: bool
 
 
 class LocalLockRequest(BaseModel):
@@ -807,10 +812,16 @@ async def get_local_profile_status(
         )
 
     local = await store.get_local_user()
+    locked = local is not None and local["password_hash"] is not None
     return LocalProfileStatus(
         exists=local is not None,
         hosted_accounts=await store.has_hosted_accounts(),
-        locked=local is not None and local["password_hash"] is not None,
+        locked=locked,
+        # A locked profile has answered the step by definition (the lock IS the
+        # answer), including a pre-migration row whose flag kept the default.
+        lock_step_pending=(
+            local is not None and not locked and not local["lock_step_answered"]
+        ),
     )
 
 
@@ -875,6 +886,49 @@ async def lock_local_profile(
         local["id"], hash_password(body.password), hash_token(rescue_key)
     )
     return LocalRescueKeyResponse(rescue_key=rescue_key)
+
+
+@router.post("/local-profile/lock-step/decline", status_code=204)
+async def decline_local_lock_step(
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Record that the analyst declined the optional lock step (F1/T3, D1).
+
+    The step is mandatory on the onboarding path but the lock itself stays
+    optional (D4): the screen offers it, and whoever does not want it must say
+    "not now" explicitly. Declining is an answer, so this route persists the
+    flag and the step does not come back. It does NOT touch the password: the
+    profile stays without a lock, exactly as D4 allows.
+
+    Requires the caller's own session (``current_user``), like the lock route:
+    answering the step is an act on the profile the caller is already inside.
+    Only the machine's local profile can be answered -- a hosted session behind
+    this route answers 404, the same as an id that is not there. The route is
+    idempotent: answering "not now" twice leaves the same persisted answer.
+
+    Turning the lock on is the other answer and is handled by
+    ``POST /local-profile/lock``; both routes write the same flag.
+
+    Outside local mode the mode gate answers 403 before any row is touched.
+    """
+    if get_mode() != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local profile is only available in local mode",
+        )
+
+    local = await store.get_local_user()
+    if local is None or local["id"] != user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local profile not found",
+        )
+
+    await store.mark_local_lock_step_answered(local["id"])
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return None
 
 
 @router.post("/local-profile/open", status_code=200)

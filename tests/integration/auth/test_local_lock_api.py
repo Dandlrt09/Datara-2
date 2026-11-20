@@ -216,6 +216,7 @@ class TestStatus:
             "exists": True,
             "hosted_accounts": False,
             "locked": False,
+            "lock_step_pending": True,
         }
         assert "rescue_key" not in before.json()
 
@@ -227,6 +228,7 @@ class TestStatus:
             "exists": True,
             "hosted_accounts": False,
             "locked": True,
+            "lock_step_pending": False,
         }
         assert "rescue_key" not in after.json()
 
