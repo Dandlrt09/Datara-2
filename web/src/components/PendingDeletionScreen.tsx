@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useCancelAccountDeletion, useLogout } from "../queries/useAuth";
+import { useAppConfig } from "../queries/useAppConfig";
 import { formatTimestamp, usePreferences } from "../lib/preferences";
 import { colors } from "../design/tokens";
 
@@ -24,6 +25,7 @@ export interface PendingDeletionScreenProps {
  */
 export function PendingDeletionScreen({ deadline }: PendingDeletionScreenProps) {
   const navigate = useNavigate();
+  const config = useAppConfig();
   const { dateFormat } = usePreferences();
   const cancel = useCancelAccountDeletion();
   const logout = useLogout();
@@ -31,7 +33,12 @@ export function PendingDeletionScreen({ deadline }: PendingDeletionScreenProps) 
 
   const handleLogout = async () => {
     await logout.mutateAsync();
-    navigate("/login", { replace: true });
+    // Local mode has no email login (F1/T4): signing out returns to the local
+    // landing, which asks for the password because a profile with a scheduled
+    // deletion is always locked. An unreadable or still-loading mode falls
+    // back to the login, like the other mode-aware landings.
+    const landing = config.data?.mode === "local" ? "/first-run" : "/login";
+    navigate(landing, { replace: true });
   };
 
   return (

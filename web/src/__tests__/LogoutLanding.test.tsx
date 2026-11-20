@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
+import { DELETION_SCHEDULED_NOTICE } from "../components/DeleteAccountDialog";
 
 /* F1 / T1 (S1): local mode has no email login, so signing out must return to
  * the local landing -- the password screen when the profile is locked,
@@ -11,12 +12,14 @@ const {
   statusMock,
   logoutMock,
   navigateMock,
+  deleteMutateMock,
 } = vi.hoisted(() => ({
   useMeMock: vi.fn(),
   configMock: vi.fn(),
   statusMock: vi.fn(),
   logoutMock: vi.fn(),
   navigateMock: vi.fn(),
+  deleteMutateMock: vi.fn(),
 }));
 
 vi.mock("../queries/useAuth", () => ({
@@ -25,7 +28,7 @@ vi.mock("../queries/useAuth", () => ({
   useChangePassword: () => ({ mutate: vi.fn(), isPending: false, reset: vi.fn() }),
   useUpdateName: () => ({ mutate: vi.fn(), isPending: false }),
   useRequestAccountDeletion: () => ({
-    mutate: vi.fn(),
+    mutate: deleteMutateMock,
     isPending: false,
     reset: vi.fn(),
   }),
@@ -72,6 +75,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
 
 import ProfileView from "../routes/ProfileView";
 import AppShell from "../routes/AppShell";
+import { PendingDeletionScreen } from "../components/PendingDeletionScreen";
 
 function localUser() {
   return {
@@ -182,6 +186,93 @@ describe("ProfileView one password story (F1 / T2)", () => {
     renderWithProviders(<ProfileView />);
 
     expect(screen.getByRole("button", { name: "Cambiar" })).toBeTruthy();
+  });
+});
+
+/* F1 / T4: scheduling the deletion closes every session server-side, so the
+ * app leaves the authenticated shell. Hosted explains how to cancel on the
+ * email login; local mode has no email login, so it must return to the local
+ * landing -- the pending-deletion screen repeats the deadline as soon as the
+ * profile is unlocked. */
+function openAndConfirmDeletion() {
+  fireEvent.click(screen.getByRole("button", { name: "Eliminar mi cuenta" }));
+  const dialog = screen.getByRole("dialog", { name: "Eliminar cuenta" });
+  fireEvent.change(
+    within(dialog).getByLabelText("Escribe ELIMINAR para confirmar"),
+    { target: { value: "ELIMINAR" } },
+  );
+  fireEvent.change(within(dialog).getByLabelText("Contraseña actual"), {
+    target: { value: "una-clave-larga" },
+  });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Eliminar mi cuenta" }),
+  );
+}
+
+describe("ProfileView deletion landing (F1 / T4)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    statusMock.mockReturnValue(unlockedStatus());
+    // The hook reports success the way react-query does: through the options
+    // the dialog passes to mutate.
+    deleteMutateMock.mockImplementation(
+      (_vars: unknown, options?: { onSuccess?: () => void }) =>
+        options?.onSuccess?.(),
+    );
+  });
+
+  it("lands on the local landing in local mode, never the email login", () => {
+    configMock.mockReturnValue(localConfig());
+    useMeMock.mockReturnValue(localUser());
+
+    renderWithProviders(<ProfileView />);
+    openAndConfirmDeletion();
+
+    expect(navigateMock).toHaveBeenCalledWith("/first-run", { replace: true });
+    expect(navigateMock).not.toHaveBeenCalledWith(
+      "/login",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the login notice in hosted mode", () => {
+    configMock.mockReturnValue(hostedConfig());
+    useMeMock.mockReturnValue(hostedUser());
+
+    renderWithProviders(<ProfileView />);
+    openAndConfirmDeletion();
+
+    expect(navigateMock).toHaveBeenCalledWith("/login", {
+      replace: true,
+      state: { notice: DELETION_SCHEDULED_NOTICE },
+    });
+  });
+});
+
+describe("PendingDeletionScreen logout landing (F1 / T4)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logoutMock.mockResolvedValue(undefined);
+  });
+
+  it("lands on the local landing in local mode", async () => {
+    configMock.mockReturnValue(localConfig());
+
+    renderWithProviders(<PendingDeletionScreen deadline="2099-01-01 00:00:00" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+
+    await waitFor(() => expect(logoutMock).toHaveBeenCalledTimes(1));
+    expect(navigateMock).toHaveBeenCalledWith("/first-run", { replace: true });
+  });
+
+  it("keeps landing on /login in hosted mode", async () => {
+    configMock.mockReturnValue(hostedConfig());
+
+    renderWithProviders(<PendingDeletionScreen deadline="2099-01-01 00:00:00" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+
+    await waitFor(() => expect(logoutMock).toHaveBeenCalledTimes(1));
+    expect(navigateMock).toHaveBeenCalledWith("/login", { replace: true });
   });
 });
 
