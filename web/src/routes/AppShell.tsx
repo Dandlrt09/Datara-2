@@ -151,17 +151,37 @@ function LocalLockStepGate({ user }: { user: User }) {
   const location = useLocation();
   // The step was seen pending in this mount. It keeps the screen on the path
   // even if a refetch stops reporting it, so the rescue key cannot disappear
-  // between the lock being turned on and the analyst keeping it.
+  // between the lock being turned on and the analyst keeping it. The latch is
+  // written in an effect, never during render: a render-phase write can be
+  // thrown away with the render that carried it (concurrent rendering), and
+  // then the latch would never have flipped.
   const stepWasPending = useRef(false);
+  useEffect(() => {
+    if (status.data?.lock_step_pending) stepWasPending.current = true;
+  }, [status.data]);
   // The step was answered in this mount. It releases the gate without waiting
   // for the status query to refetch, so an answered step cannot loop.
   const [answered, setAnswered] = useState(false);
 
-  if (status.data?.lock_step_pending) stepWasPending.current = true;
-
   if (status.isLoading) return <Loading />;
 
-  const showStep = stepWasPending.current && !answered;
+  // The effect that latches the ref runs after the first commit, so the data
+  // itself is read here too: this is what keeps the very first render from
+  // leaking the app before the latch flips.
+  const knownPending =
+    status.data?.lock_step_pending === true || stepWasPending.current;
+
+  // Unlike `DataFolderGate`, which fails open because the folder picker is a
+  // first-run convenience, this gate fails CLOSED: the lock step is mandatory
+  // on the path (D1), so a status read that failed must not release the app.
+  // The panel has no route into the app and only offers a retry; once the
+  // retry succeeds the gate resolves normally, so a later refetch can never
+  // yank the analyst out of a task they were never allowed to start.
+  if (status.isError && !knownPending) {
+    return <LockStepStatusError onRetry={() => void status.refetch()} />;
+  }
+
+  const showStep = knownPending && !answered;
   if (showStep) {
     if (location.pathname !== "/app/lock-step") {
       return <Navigate to="/app/lock-step" replace />;
@@ -180,6 +200,35 @@ function LocalLockStepGate({ user }: { user: User }) {
   }
 
   return <AppShellContent user={user} />;
+}
+
+/**
+ * Shown when the local-profile status cannot be read (F1 / T6, D1).
+ *
+ * The lock step is mandatory on the path, so a failed status read cannot
+ * release the app the way `DataFolderGate` releases on a failed folder probe:
+ * that gate guards a first-run convenience, this one guards a step the
+ * maintainer required. The panel offers only a retry -- no route into the app
+ * -- so a later successful refetch resolves the gate instead of pulling the
+ * analyst out of a task.
+ */
+function LockStepStatusError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{ maxWidth: 440, margin: "80px auto", padding: 24 }}
+    >
+      <h1>No pudimos comprobar el paso de bloqueo</h1>
+      <p style={{ color: "#666" }}>
+        Datara no pudo verificar si ya configuraste el bloqueo de tu perfil.
+        Por seguridad, no vamos a abrir la app hasta confirmarlo. Vuelve a
+        intentarlo.
+      </p>
+      <button type="button" onClick={onRetry} style={{ padding: "6px 16px" }}>
+        Reintentar
+      </button>
+    </div>
+  );
 }
 
 /** The signed-in app shell. Split from `AppShell` so the pending-deletion gate

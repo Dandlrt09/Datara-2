@@ -52,6 +52,18 @@ function pendingStatus() {
   };
 }
 
+/** A status read that failed at mount: no data, an error, and a retry hook.
+ * This is what a single 500 used to turn into a released app. */
+function errorStatus(refetch: () => void = () => {}) {
+  return {
+    data: undefined,
+    isLoading: false,
+    error: new Error("status unavailable"),
+    isError: true,
+    refetch,
+  };
+}
+
 describe("LockStepScreen (F1 / T3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,5 +184,48 @@ describe("LockStep gate (F1 / T3)", () => {
     expect(
       screen.queryByRole("heading", { name: "Protege tu perfil" }),
     ).toBeNull();
+  });
+
+  it("keeps the app unreachable when the status query fails at mount", async () => {
+    useMeMock.mockReturnValue(localUser());
+    statusMock.mockReturnValue(errorStatus());
+
+    renderWithProviders(<AppShell />, { route: "/app/chat", path: "/app/*" });
+
+    // A failed status read must not release the mandatory step: the panel
+    // explains the failure and offers a retry, and the app stays out of reach.
+    expect(
+      await screen.findByText(/no pudimos comprobar/i),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeTruthy();
+    expect(screen.queryByText("Datara")).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Protege tu perfil" }),
+    ).toBeNull();
+  });
+
+  it("resolves the gate after the failed status read is retried", async () => {
+    useMeMock.mockReturnValue(localUser());
+    const refetch = vi.fn(() => {
+      statusMock.mockReturnValue(pendingStatus());
+    });
+    statusMock.mockReturnValue(errorStatus(refetch));
+
+    const { rerender } = renderWithProviders(<AppShell />, {
+      route: "/app/chat",
+      path: "/app/*",
+    });
+    await screen.findByRole("button", { name: "Reintentar" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    // The refetch succeeded: the status now reports the step pending, so the
+    // gate resolves to the step screen instead of the app.
+    rerender(<AppShell />);
+    expect(
+      await screen.findByRole("heading", { name: "Protege tu perfil" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Datara")).toBeNull();
   });
 });
