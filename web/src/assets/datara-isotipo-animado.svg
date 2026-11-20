@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="154 149 940 940" width="940" height="940" role="img" aria-label="Datara">
+  <title>Datara</title>
+  <style>
+    /* Nodos: aparecen con un pequeño "pop" */
+    .node { transform-box: fill-box; transform-origin: center; animation: pop .55s cubic-bezier(.34,1.56,.64,1) both; }
+    @keyframes pop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+    /* Líneas: se dibujan de afuera hacia el centro */
+    .line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .5s ease-in-out both; }
+    @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+
+    /* Barras: crecen desde la base */
+    .bar { transform-box: fill-box; transform-origin: 50% 100%; animation: grow .6s cubic-bezier(.34,1.3,.64,1) both; }
+    @keyframes grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+    /* La D se traza alrededor de todo, como una burbuja de chat */
+    #reveal { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s cubic-bezier(.65,0,.35,1) 1.7s both; }
+
+    /* Cierre: pequeño "respiro" del logo completo */
+    #logo { transform-box: fill-box; transform-origin: center; animation: breathe .7s ease-in-out 2.75s both; }
+    @keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+      .line, #reveal { stroke-dashoffset: 0; }
+    }
+  </style>
+
+  <defs>
+    <!-- Degradados en coordenadas absolutas para que cada pieza tome el color que le toca -->
+    <linearGradient id="gD" gradientUnits="userSpaceOnUse" x1="0" y1="229" x2="0" y2="1009">
+      <stop offset="0" stop-color="#00A2FE"/>
+      <stop offset=".30" stop-color="#0287FE"/>
+      <stop offset=".50" stop-color="#106EFE"/>
+      <stop offset=".80" stop-color="#3230FC"/>
+      <stop offset=".89" stop-color="#3C20FC"/>
+      <stop offset="1" stop-color="#5005FD"/>
+    </linearGradient>
+    <linearGradient id="gN" gradientUnits="userSpaceOnUse" x1="0" y1="288" x2="0" y2="842">
+      <stop offset="0" stop-color="#00D2FF"/>
+      <stop offset=".079" stop-color="#00C1FD"/>
+      <stop offset=".264" stop-color="#0293FD"/>
+      <stop offset=".471" stop-color="#116EFD"/>
+      <stop offset=".699" stop-color="#2742FD"/>
+      <stop offset=".921" stop-color="#530BFD"/>
+      <stop offset="1" stop-color="#5802FE"/>
+    </linearGradient>
+    <linearGradient id="gB" gradientUnits="userSpaceOnUse" x1="0" y1="463" x2="0" y2="772">
+      <stop offset="0" stop-color="#008CFE"/>
+      <stop offset=".12" stop-color="#0580FE"/>
+      <stop offset=".44" stop-color="#1169FD"/>
+      <stop offset=".64" stop-color="#1B53FC"/>
+      <stop offset=".91" stop-color="#2D36FC"/>
+      <stop offset="1" stop-color="#3030FC"/>
+    </linearGradient>
+
+    <!-- Máscara que "dibuja" la D siguiendo su línea central -->
+    <mask id="dMask" maskUnits="userSpaceOnUse" x="380" y="190" width="720" height="850">
+      <path id="reveal" d="M 430,269 H 710 A 284,302 0 0 1 710,873 H 500 V 1015" pathLength="1" fill="none" stroke="#fff" stroke-width="150"/>
+    </mask>
+  </defs>
+
+  <g id="logo">
+    <!-- Líneas (detrás de los nodos) -->
+    <g fill="none" stroke="url(#gN)" stroke-width="13" stroke-linejoin="round">
+      <path id="l1" class="line" pathLength="1" style="animation-delay:.55s" d="M 366,364 L 433,424 H 482"/>
+      <path id="l2" class="line" pathLength="1" style="animation-delay:.65s" d="M 300,550 H 360"/>
+      <path id="l6" class="line" pathLength="1" style="animation-delay:.75s" d="M 366,772 L 442,688 H 482"/>
+      <path id="l3" class="line" pathLength="1" style="animation-delay:.85s" d="M 358,548 L 480,444"/>
+      <path id="l4" class="line" pathLength="1" style="animation-delay:.9s" d="M 358,551 L 480,664"/>
+      <path id="l5" class="line" pathLength="1" style="animation-delay:.95s" d="M 519,470 V 640"/>
+    </g>
+
+    <!-- Nodos -->
+    <g fill="url(#gN)">
+      <rect id="n-tl" class="node" style="animation-delay:.05s" x="290" y="288" width="85" height="88" rx="22"/>
+      <rect id="n-l"  class="node" style="animation-delay:.15s" x="215" y="504" width="89" height="90" rx="22"/>
+      <rect id="n-b"  class="node" style="animation-delay:.25s" x="288" y="754" width="85" height="88" rx="22"/>
+      <rect id="n-tr" class="node" style="animation-delay:.35s" x="475" y="390" width="89" height="88" rx="22"/>
+      <rect id="n-lr" class="node" style="animation-delay:.45s" x="475" y="631" width="89" height="88" rx="22"/>
+      <circle id="n-junction" class="node" style="animation-delay:.7s" cx="358" cy="550" r="8"/>
+    </g>
+
+    <!-- Barras -->
+    <g fill="url(#gB)">
+      <rect id="bar1" class="bar" style="animation-delay:1.2s" x="599" y="633" width="67" height="139" rx="16"/>
+      <rect id="bar2" class="bar" style="animation-delay:1.32s" x="695" y="555" width="68" height="217" rx="16"/>
+      <path id="bar3" class="bar" style="animation-delay:1.44s" d="M 812,463 H 852 A 14,14 0 0 1 866,477 V 685 C 866,696 860,703 852,712 C 838,729 822,743 807,753 C 801,757 798,753 798,747 V 477 A 14,14 0 0 1 812,463 Z"/>
+    </g>
+
+    <!-- La D con cola de burbuja de chat -->
+    <path id="d" fill="url(#gD)" mask="url(#dMask)" d="M 485,229 H 710 A 322,341.5 0 0 1 710,912 H 575 L 461,1006 Q 455,1011 455,1003 V 835 H 523 V 868 L 570,834 H 710 A 246,262.5 0 0 0 710,309 H 485 Q 471,309 471,295 V 243 Q 471,229 485,229 Z"/>
+  </g>
+</svg>
