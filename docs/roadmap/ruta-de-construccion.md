@@ -107,8 +107,9 @@ advisory informativa); los dos cortes web salieron **not-due** (medium).
 que ningún test veía: el **tooltip del recorrido quedaba fuera de la pantalla** con
 un ancla de altura completa (arreglado: abajo → arriba → **al costado**, siempre
 dentro del viewport) y el **recorrido se rediseñó para recorrer las pestañas**
-(pedido textual del maintainer). Hallazgo de entorno anotado como follow-up: el
-`index.html` se sirve **sin `Cache-Control`**, así que un deploy exige recarga dura.
+(pedido textual del maintainer). El `index.html` se servía **sin `Cache-Control`**
+(un deploy exigía recarga dura): **arreglado** en `5d849ee` (PR #45), con la
+política declarada en el montaje del SPA y sus 4 tests.
 Ficha: `odd/tasks/first-boot-tutorial.md`.
 **CERRADO 20/11/2026**: los cuatro PRs mergeados **en orden** con commit de merge
 (`main` @ `fa68769`), y en cada uno el árbol de `main` quedó **idéntico** al de la
@@ -941,10 +942,11 @@ Transversal:
 ✗ R8 (deferido): server apagado → errores claros
 ✗ Triage de ~749 archivos sueltos en server/uploads/
 ✗ Explicaciones aún más al grano (número principal primero)
-✗ index.html sin Cache-Control → tabs SPA corren bundles
-  viejos sin re-resolver chunks (causó el falso bug de
-  paginación del 15/09: "no aparece el botón" era la tab con
-  el bundle anterior). Fix estándar: no-cache en index.html
+✓ index.html sin Cache-Control — CERRADO 20/11/2026 (`5d849ee`, PR #45): el
+  montaje del SPA declara la política (`assets/*` con `immutable`, el resto
+  `no-cache` + ETag → 304 sin cuerpo), con 4 tests. Fue la causa del falso bug
+  de paginación del 15/09: "no aparece el botón" era una pestaña corriendo el
+  bundle viejo
 ✗ Inventario de inconsistencias de diseño (16/09, tarea 7 —
   insumo del rediseño): dos azules de acento (#007bff chat vs
   #007acc wizard/setup), cuatro grises mute (#888/#999/#666/
