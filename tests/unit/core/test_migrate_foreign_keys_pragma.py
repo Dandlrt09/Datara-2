@@ -30,6 +30,13 @@ INSERT INTO no_such_table (id) VALUES (1);
 
 PLAIN_SQL = "CREATE TABLE plain (id INTEGER PRIMARY KEY);"
 
+# A marker-bearing migration whose first fallible step is the runner's own
+# pre-rebuild backup, which the test makes abort: enforcement must come back.
+MARKED_SQL = """\
+-- migrate: foreign_keys=off
+CREATE TABLE throwaway (id INTEGER PRIMARY KEY);
+"""
+
 PRAGMA_VALUES = [pytest.param("OFF", 0, id="opened-off"), pytest.param("ON", 1, id="opened-on")]
 
 
@@ -99,6 +106,39 @@ def test_a_failing_marker_migration_still_restores_the_previous_value(
 
         assert migrate.get_applied_versions(conn) == set()
         assert _pragma(conn) == expected
+    finally:
+        conn.close()
+
+
+def test_a_failure_before_the_switch_still_restores_an_enabled_pragma(
+    tmp_path, monkeypatch
+):
+    """R4-001: a failure before the switch-off must not turn enforcement off.
+
+    The runner samples the caller's pragma before anything that can fail. Here
+    the pre-rebuild backup -- the first fallible step on an existing install --
+    aborts while enforcement was ON, so the ``finally`` must restore ON. The
+    previous sampling point sat right before the switch-off, which the abort
+    never reached, and the ``False`` default left enforcement OFF behind a
+    caller that had it deliberately ON.
+    """
+    conn = _open_at_0013(tmp_path / "app.db", "ON")
+    _throwaway_migrations(
+        tmp_path, monkeypatch, "0014_backup_fails.sql", MARKED_SQL
+    )
+
+    def _backup_aborts(_conn, _version):
+        raise sqlite3.OperationalError("backup aborted")
+
+    monkeypatch.setattr(migrate, "_backup_before", _backup_aborts)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            migrate.run_pending_migrations(conn)
+
+        assert migrate.get_applied_versions(conn) == set(
+            range(1, LAST_BEFORE_KIND + 1)
+        )
+        assert _pragma(conn) == 1
     finally:
         conn.close()
 

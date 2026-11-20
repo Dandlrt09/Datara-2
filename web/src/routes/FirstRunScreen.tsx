@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../lib/api";
 import {
+  LOCAL_PASSWORD_MIN_LENGTH,
   useLocalProfile,
+  useLocalProfileOpen,
+  useLocalProfileRescue,
   useLocalProfileStatus,
   useMe,
 } from "../queries/useAuth";
@@ -39,6 +42,37 @@ function localProfileErrorMessage(error: unknown): string {
   return "No se pudo crear tu perfil. Vuelve a intentarlo.";
 }
 
+/** Turn a failed unlock into the line the analyst reads (T4/D4). A wrong
+ * password and an unset lock are deliberately the same 401 server-side, so the
+ * copy cannot be more specific than the server already is. */
+function openErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) {
+      return "Datara no está en modo local. Abre la app en modo local y vuelve a intentarlo.";
+    }
+    if (error.status === 401) return "La contraseña no es correcta.";
+    if (error.status === 404) {
+      return "Todavía no hay un perfil local en esta instalación.";
+    }
+  }
+  return "No se pudo abrir tu perfil. Vuelve a intentarlo.";
+}
+
+/** Turn a failed rescue into the line the analyst reads (T4/D4). The 422 is the
+ * new password being shorter than the backend allows. */
+function rescueErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "La clave de rescate no es correcta.";
+    if (error.status === 422) {
+      return `La contraseña nueva debe tener al menos ${LOCAL_PASSWORD_MIN_LENGTH} caracteres.`;
+    }
+    if (error.status === 404) {
+      return "Todavía no hay un perfil local en esta instalación.";
+    }
+  }
+  return "No se pudo usar la clave de rescate. Vuelve a intentarlo.";
+}
+
 function Loading() {
   return <div>Loading...</div>;
 }
@@ -57,23 +91,38 @@ export default function FirstRunScreen() {
   const me = useMe();
   const status = useLocalProfileStatus();
   const profile = useLocalProfile();
+  const open = useLocalProfileOpen();
+  const rescue = useLocalProfileRescue();
   const [name, setName] = useState("");
+  // The locked branch (T4/D4): the password form, its rescue path, and the new
+  // key the rescue reveals once. The key lives only in this state, never in a
+  // store, and the screen waits for the analyst to keep it before leaving.
+  const [password, setPassword] = useState("");
+  const [showRescue, setShowRescue] = useState(false);
+  const [rescueKeyInput, setRescueKeyInput] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRescueKey, setNewRescueKey] = useState<string | null>(null);
   // The auto-open must fire once per mount, even if the mutation re-renders
   // the screen or StrictMode double-invokes the effect.
   const autoOpened = useRef(false);
 
   const goToApp = () => navigate("/app", { replace: true });
 
-  // Already signed in: straight into the app, no form and no auto-open.
+  // Already signed in: straight into the app, no form and no auto-open. While a
+  // fresh rescue key is on screen this must WAIT: the rescue already opened a
+  // session, and navigating would hide the key before the analyst can keep it.
   useEffect(() => {
-    if (me.data) goToApp();
+    if (me.data && newRescueKey === null) goToApp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me.data]);
+  }, [me.data, newRescueKey]);
 
-  // An existing profile opens itself (L10): no click and no confirmation.
+  // An existing profile opens itself (L10): no click and no confirmation. A
+  // LOCKED profile never auto-opens (T4/D4): it must ask for the password, so
+  // the effect stands down and the locked branch below renders the form.
   useEffect(() => {
     if (me.isLoading || me.data) return;
     if (!status.isSuccess || !status.data?.exists) return;
+    if (status.data.locked) return;
     if (autoOpened.current) return;
     autoOpened.current = true;
     profile.mutate({}, { onSuccess: goToApp });
@@ -91,9 +140,165 @@ export default function FirstRunScreen() {
     navigate("/login", { replace: true });
   }, [me.isLoading, me.data, status.isSuccess, status.data, navigate]);
 
+  // The one-time rescue key (T4/D4) outranks every other state: the rescue
+  // already opened a session, but the key must be readable before we leave.
+  if (newRescueKey !== null) {
+    return (
+      <div style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}>
+        <h1>Guarda tu clave nueva</h1>
+        <p role="alert" style={{ color: "#b26a00" }}>
+          Guarda esta clave nueva: no se vuelve a mostrar.
+        </p>
+        <pre
+          style={{
+            fontFamily: "monospace",
+            background: "#f5f5f5",
+            padding: 12,
+            borderRadius: 6,
+            overflowWrap: "anywhere",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <code>{newRescueKey}</code>
+        </pre>
+        <button
+          type="button"
+          onClick={() => {
+            void (async () => {
+              setNewRescueKey(null);
+              // The rescue answers only the rotated key; the session itself is
+              // already open, so re-read who we are before AppShell gates us.
+              await me.refetch();
+              goToApp();
+            })();
+          }}
+          style={{ width: "100%", padding: 10 }}
+        >
+          Continuar
+        </button>
+      </div>
+    );
+  }
+
   if (me.isLoading || me.data) return <Loading />;
   // Do not render an empty shell while the profile probe is in flight.
   if (status.isLoading) return <Loading />;
+
+  // Locked profile (T4/D4): ask for the password instead of opening it, and
+  // offer the rescue key as the way back in. There is no other path: losing
+  // both the password and the key means starting over (stated below).
+  if (status.data?.exists && status.data.locked) {
+    return (
+      <div style={{ maxWidth: 400, margin: "80px auto", padding: 24 }}>
+        <h1>Abre tu perfil</h1>
+        <p>Este perfil está protegido con una contraseña.</p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            open.mutate({ password }, { onSuccess: goToApp });
+          }}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <label
+              htmlFor="local-open-password"
+              style={{ display: "block", marginBottom: 4 }}
+            >
+              Contraseña
+            </label>
+            <input
+              id="local-open-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </div>
+          {open.error != null && (
+            <p role="alert" style={{ color: "red" }}>
+              {openErrorMessage(open.error)}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={open.isPending}
+            style={{ width: "100%", padding: 10 }}
+          >
+            {open.isPending ? "Abriendo..." : "Abrir"}
+          </button>
+        </form>
+
+        {!showRescue && (
+          <button
+            type="button"
+            onClick={() => setShowRescue(true)}
+            style={{ marginTop: 12, background: "none", border: "none", padding: 0, color: "#0066cc", cursor: "pointer" }}
+          >
+            Usar la clave de rescate
+          </button>
+        )}
+
+        {showRescue && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              rescue.mutate(
+                { rescue_key: rescueKeyInput, new_password: newPassword },
+                { onSuccess: (data) => setNewRescueKey(data.rescue_key) },
+              );
+            }}
+            style={{ marginTop: 16, borderTop: "1px solid #e0e0e0", paddingTop: 16 }}
+          >
+            <div style={{ marginBottom: 12 }}>
+              <label
+                htmlFor="local-rescue-key"
+                style={{ display: "block", marginBottom: 4 }}
+              >
+                Clave de rescate
+              </label>
+              <input
+                id="local-rescue-key"
+                value={rescueKeyInput}
+                onChange={(event) => setRescueKeyInput(event.target.value)}
+                style={{ width: "100%", padding: 8 }}
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label
+                htmlFor="local-rescue-password"
+                style={{ display: "block", marginBottom: 4 }}
+              >
+                Contraseña nueva
+              </label>
+              <input
+                id="local-rescue-password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                style={{ width: "100%", padding: 8 }}
+              />
+            </div>
+            {rescue.error != null && (
+              <p role="alert" style={{ color: "red" }}>
+                {rescueErrorMessage(rescue.error)}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={rescue.isPending}
+              style={{ width: "100%", padding: 10 }}
+            >
+              {rescue.isPending ? "Guardando..." : "Usar clave de rescate"}
+            </button>
+          </form>
+        )}
+
+        <p style={{ color: "#888", fontSize: "0.9em", marginTop: 20 }}>
+          Si olvidas la contraseña y pierdes la clave de rescate, la única salida
+          es empezar de cero.
+        </p>
+      </div>
+    );
+  }
 
   if (status.data?.exists) {
     if (profile.isError) {

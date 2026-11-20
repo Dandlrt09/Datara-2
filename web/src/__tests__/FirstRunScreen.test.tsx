@@ -36,11 +36,13 @@ vi.mock("react-router-dom", async (importOriginal) => {
 
 /** Network the mocked wrapper answers: the session check and the local-profile
  * probe. `user` null means "no session" (the check rejects with 401).
- * `hosted` is the `hosted_accounts` flag the probe reports. */
-const net: { user: unknown; exists: boolean; hosted: boolean } = {
+ * `hosted` is the `hosted_accounts` flag the probe reports and `locked` the
+ * `locked` flag (F1 / T4). */
+const net: { user: unknown; exists: boolean; hosted: boolean; locked: boolean } = {
   user: null,
   exists: false,
   hosted: false,
+  locked: false,
 };
 
 beforeEach(() => {
@@ -48,6 +50,7 @@ beforeEach(() => {
   net.user = null;
   net.exists = false;
   net.hosted = false;
+  net.locked = false;
   navigateMock.mockReset();
   getMock.mockImplementation((url: string) => {
     if (url === "/api/auth/me") {
@@ -56,7 +59,11 @@ beforeEach(() => {
         : Promise.reject(new ApiError(401, {}));
     }
     if (url === "/api/auth/local-profile") {
-      return Promise.resolve({ exists: net.exists, hosted_accounts: net.hosted });
+      return Promise.resolve({
+        exists: net.exists,
+        hosted_accounts: net.hosted,
+        locked: net.locked,
+      });
     }
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
@@ -190,5 +197,118 @@ describe("FirstRunScreen (F1 / T2c)", () => {
     );
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("asks for the password instead of opening a locked profile", async () => {
+    net.exists = true;
+    net.locked = true;
+
+    renderWithProviders(<FirstRunScreen />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Abre tu perfil" }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText("Contraseña")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Abrir" })).toBeTruthy();
+    // The dead end is stated plainly (D4): losing both secrets means starting over.
+    expect(
+      screen.getByText(
+        /Si olvidas la contraseña y pierdes la clave de rescate/i,
+      ),
+    ).toBeTruthy();
+    // The lock must never be bypassed by the silent auto-open (D4).
+    expect(postMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the inline error when the password is wrong", async () => {
+    net.exists = true;
+    net.locked = true;
+    postMock.mockRejectedValueOnce(new ApiError(401, { detail: "Invalid password" }));
+
+    renderWithProviders(<FirstRunScreen />);
+    fireEvent.change(await screen.findByLabelText("Contraseña"), {
+      target: { value: "mala" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/auth/local-profile/open", {
+        password: "mala",
+      }),
+    );
+    expect(await screen.findByText("La contraseña no es correcta.")).toBeTruthy();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the locked profile with the right password and lands on /app", async () => {
+    net.exists = true;
+    net.locked = true;
+
+    renderWithProviders(<FirstRunScreen />);
+    fireEvent.change(await screen.findByLabelText("Contraseña"), {
+      target: { value: "secreto123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/auth/local-profile/open", {
+        password: "secreto123",
+      }),
+    );
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/app", { replace: true }),
+    );
+  });
+
+  it("rescues a locked profile, shows the new key once and lands on /app", async () => {
+    net.exists = true;
+    net.locked = true;
+    // A successful rescue opens a session and rotates the key: the server
+    // returns only the NEW key, so the session check must answer now.
+    postMock.mockImplementation((url: string) => {
+      if (url === "/api/auth/local-profile/rescue") {
+        net.user = { id: 1, email: null, name: "Ana", pending_deletion_at: null };
+        return Promise.resolve({ rescue_key: "CLAVE-NUEVA" });
+      }
+      return Promise.resolve({
+        id: 1,
+        email: null,
+        name: "Ana",
+        pending_deletion_at: null,
+      });
+    });
+
+    renderWithProviders(<FirstRunScreen />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Usar la clave de rescate" }),
+    );
+    fireEvent.change(screen.getByLabelText("Clave de rescate"), {
+      target: { value: "CLAVE-VIEJA" },
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña nueva"), {
+      target: { value: "otra-clave-123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Usar clave de rescate" }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/auth/local-profile/rescue", {
+        rescue_key: "CLAVE-VIEJA",
+        new_password: "otra-clave-123",
+      }),
+    );
+    // The new key is revealed once and the screen waits for the analyst to keep it.
+    expect(await screen.findByText("CLAVE-NUEVA")).toBeTruthy();
+    expect(
+      screen.getByText("Guarda esta clave nueva: no se vuelve a mostrar."),
+    ).toBeTruthy();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith("/app", { replace: true }),
+    );
   });
 });
