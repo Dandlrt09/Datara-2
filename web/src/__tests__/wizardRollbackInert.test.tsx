@@ -11,9 +11,14 @@ vi.mock("../routes/FilesView", () => ({ default: () => <div>Files</div> }));
 vi.mock("../routes/SettingsView", () => ({ default: () => <div>Settings</div> }));
 vi.mock("../routes/ArchiveList", () => ({ default: () => <div>Archives</div> }));
 
+// `tutorial_seen: true` keeps the guided tour (F4/T4) out of this file: the tour
+// is the other overlay that shares the first entry to /app, and this file pins
+// what a leftover `datara.wizard` payload does to the shell.
 vi.mock("../queries/useAuth", () => ({
-  useMe: () => ({ data: { id: 1, email: "test@test.com" }, isLoading: false, error: null }),
+  useMe: () => ({ data: { id: 1, email: "test@test.com", tutorial_seen: true }, isLoading: false, error: null }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // Present so the module mock keeps AppShell importable; never called here.
+  useMarkTutorialSeen: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 // One existing session keeps the wizard trigger inert, isolating the app shell so

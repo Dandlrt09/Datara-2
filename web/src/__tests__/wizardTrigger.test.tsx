@@ -13,9 +13,13 @@ vi.mock("../routes/FilesView", () => ({ default: () => <div>Files</div> }));
 vi.mock("../routes/SettingsView", () => ({ default: () => <div>Settings</div> }));
 vi.mock("../routes/ArchiveList", () => ({ default: () => <div>Archives</div> }));
 
+// `tutorial_seen: true` keeps the guided tour (F4/T4) out of this file: both
+// overlays share the first entry to /app, and this one pins the wizard.
 vi.mock("../queries/useAuth", () => ({
-  useMe: () => ({ data: { id: 1, email: "test@test.com" }, isLoading: false, error: null }),
+  useMe: () => ({ data: { id: 1, email: "test@test.com", tutorial_seen: true }, isLoading: false, error: null }),
   useLogout: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // Present so the module mock keeps AppShell importable; never called here.
+  useMarkTutorialSeen: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 const { useSessionsMock, useFilesGlobalMock } = vi.hoisted(() => ({
@@ -72,7 +76,7 @@ function startPendingCreateSession(queryClient: QueryClient) {
   return { settle };
 }
 
-describe("AppShell wizard trigger", () => {
+describe("AppShell first-run wizard (hidden since F4/T5)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearWizardFlags();
@@ -98,36 +102,36 @@ describe("AppShell wizard trigger", () => {
     await waitFor(() => expect(screen[query]("dialog", { name: /first-run wizard/i }))[expectation]());
   };
 
-  it("auto-opens for fresh user", async () => {
+  it("does not auto-open for a fresh user", async () => {
     renderAppShell();
-    await expectWizardVisible(true);
+    await expectWizardVisible(false);
   });
 
-  it("hides with 1+ sessions", async () => {
+  it("does not auto-open with 1+ sessions", async () => {
     useSessionsMock.mockReturnValue({ data: [{ id: "ses-1", title: "Test" }], isLoading: false, isSuccess: true });
     renderAppShell();
     await expectWizardVisible(false);
   });
 
-  it("hides with 1+ files", async () => {
+  it("does not auto-open with 1+ files", async () => {
     useFilesGlobalMock.mockReturnValue({ data: [{ id: 1, filename: "test.csv", format: "csv", size_bytes: 1024 }], isLoading: false, isSuccess: true, hasMore: false, loadMore: vi.fn(), isLoadingMore: false });
     renderAppShell();
     await expectWizardVisible(false);
   });
 
-  it("hides while sessions loading", () => {
+  it("does not auto-open while sessions loading", () => {
     useSessionsMock.mockReturnValue({ data: undefined, isLoading: true, isSuccess: false });
     renderAppShell();
     expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
   });
 
-  it("hides while files loading", () => {
+  it("does not auto-open while files loading", () => {
     useFilesGlobalMock.mockReturnValue({ data: undefined, isLoading: true, isSuccess: false, hasMore: false, loadMore: vi.fn(), isLoadingMore: false });
     renderAppShell();
     expect(screen.queryByRole("dialog", { name: /first-run wizard/i })).toBeNull();
   });
 
-  it("hides while streaming", async () => {
+  it("does not auto-open while streaming", async () => {
     useChatStore.setState({ isStreaming: true });
     renderAppShell();
     await expectWizardVisible(false);
@@ -169,24 +173,23 @@ describe("AppShell wizard trigger", () => {
     await expectWizardVisible(false);
   });
 
-  it("auto-closes when sessions appear un-engaged", async () => {
-    renderAppShell();
-    await expectWizardVisible(true);
-    cleanup();
-    
-    useSessionsMock.mockReturnValue({ data: [{ id: "ses-1", title: "New" }], isLoading: false, isSuccess: true });
+  it("opens only through the manual path: the store call, never by itself", async () => {
     renderAppShell();
     await expectWizardVisible(false);
+
+    // The same manual entry the chat empty state used to offer.
+    act(() => {
+      useWizardStore.getState().openWizard(true);
+    });
+    await expectWizardVisible(true);
   });
 
-  it("stays open when engaged despite sessions", async () => {
-    renderAppShell();
-    await expectWizardVisible(true);
-    
-    useWizardStore.setState({ engaged: true });
+  it("does not auto-close an engaged wizard when sessions appear", async () => {
+    // `engaged` is set by the wizard's own steps; with no auto-open left, the
+    // only way in is the store, exactly as a restored entry point would do it.
+    useWizardStore.setState({ open: true, engaged: true });
     useSessionsMock.mockReturnValue({ data: [{ id: "ses-1", title: "New" }], isLoading: false, isSuccess: true });
-    
-    cleanup();
+
     renderAppShell();
     await expectWizardVisible(true);
   });
@@ -199,13 +202,23 @@ describe("AppShell wizard trigger", () => {
     await expectWizardVisible(true);
   });
 
-  it("persists skipped state", async () => {
+  it("persists skipped state and refuses to reopen by itself", async () => {
     renderAppShell();
+    act(() => {
+      useWizardStore.getState().openWizard(true);
+    });
     await expectWizardVisible(true);
-    
+
     fireEvent.click(screen.getByText("Skip"));
     await expectWizardVisible(false);
-    
+
+    // An automatic open (no `manual` flag) is still latched off by the stored
+    // skip, which is what keeps the wizard down on the next boot.
+    act(() => {
+      useWizardStore.getState().openWizard();
+    });
+    await expectWizardVisible(false);
+
     cleanup();
     renderAppShell();
     await expectWizardVisible(false);
@@ -213,13 +226,18 @@ describe("AppShell wizard trigger", () => {
 
   it("reopens manually after skip (spec: reopen regardless of persisted flags)", async () => {
     renderAppShell();
+    act(() => {
+      useWizardStore.getState().openWizard(true);
+    });
     await expectWizardVisible(true);
 
     fireEvent.click(screen.getByText("Skip"));
     await expectWizardVisible(false);
 
-    // The ChatView empty-state reopen control calls openWizard(true)
-    useWizardStore.getState().openWizard(true);
+    // The manual reopen path is intact, so a restored entry point still works.
+    act(() => {
+      useWizardStore.getState().openWizard(true);
+    });
     await expectWizardVisible(true);
   });
 

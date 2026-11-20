@@ -21,6 +21,9 @@ vi.mock("../routes/ProfileView", () => ({
 }));
 const { useSettingsMock } = vi.hoisted(() => ({ useSettingsMock: vi.fn() }));
 
+// The shell still reads `useSettings` for the first-use landing (AppLanding),
+// but every spec below renders a route where that landing does not run, except
+// the Ajustes specs, which set their own payload.
 vi.mock("../queries/useSettings", () => ({
   useSettings: () => useSettingsMock(),
   useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),

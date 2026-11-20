@@ -24,9 +24,14 @@ export const useWizardStore = create<WizardUiState>((set) => {
     
     openWizard: (_manual = false) => {
       set((state) => {
-        // Manual reopens (ChatView empty state) bypass the dismissed latch:
-        // the spec requires reopen-after-skip regardless of persisted flags.
-        // Auto-opens stay latched so the wizard never reappears after skip/finish.
+        // Manual reopens bypass the dismissed latch: the spec requires
+        // reopen-after-skip regardless of persisted flags. Auto-opens stay
+        // latched so the wizard never reappears after skip/finish.
+        //
+        // Nothing opens this store on its own any more (F4/S5): the auto-open on
+        // /app and the button in the empty chat state are gone, and the guided
+        // tour took both entry points. This manual path is kept intact so the
+        // wizard can be restored with one line.
         if (state.dismissed && !_manual) {
           return state;
         }

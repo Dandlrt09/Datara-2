@@ -6,7 +6,9 @@ import { useUploadFile, UploadError } from "../queries/useFiles";
 import { useCreateArchive } from "../queries/useArchives";
 import { ApiError } from "../lib/api";
 import { useChatStore } from "../stores/useChatStore";
-import { useWizardStore } from "../stores/useWizardStore";
+// The guided first-boot tour's store: the empty chat state reopens the tour from
+// the slot the old wizard button used (F4/T4, D5).
+import { useGuidedTourStore } from "../components/GuidedTour";
 import { streamChat } from "../lib/sse";
 import { isKnownErrorCode, resolveErrorPresentation } from "../lib/errorCodes";
 // Composer attach control: accepted formats come from the shared client source
@@ -66,7 +68,7 @@ export default function ChatView() {
   const [renameTitle, setRenameTitle] = useState("");
 
   const store = useChatStore();
-  const wizardStore = useWizardStore();
+  const tourStore = useGuidedTourStore();
   const [question, setQuestion] = useState("");
   const [chatError, setChatError] = useState<{
     type: string;
@@ -540,7 +542,7 @@ export default function ChatView() {
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
-      {/* Sessions sidebar */}
+      {/* Sessions sidebar. */}
       <div
         style={{
           width: 260,
@@ -686,20 +688,34 @@ export default function ChatView() {
           {!sessionId && (
             <div style={{ textAlign: "center", marginTop: 80, color: "#999" }}>
               <p>Select a chat or create a new one</p>
+              {/* This slot used to hold the old first-run wizard's button.
+                  The wizard is HIDDEN, not deleted (F4/S5, T5): the guided tour
+                  took the slot, because reopening it is how the maintainer
+                  evaluates it (D5). To bring the wizard button back, replace
+                  this control with the old one and re-import the store:
+
+                    const wizardStore = useWizardStore();
+                    ...
+                    <button onClick={() => wizardStore.openWizard(true)}>
+                      Start first-run wizard
+                    </button>
+
+                  Nothing else in ChatView knows about the wizard. */}
               <button
-                onClick={() => wizardStore.openWizard(true)}
+                type="button"
+                onClick={() => tourStore.openTour()}
                 style={{
                   marginTop: "16px",
-                  padding: "10px 20px",
-                  backgroundColor: "#007bff",
-                  color: "white",
-                  border: "none",
+                  padding: "6px 14px",
+                  fontSize: "0.9em",
+                  backgroundColor: "#f1f3f5",
+                  color: "#333",
+                  border: "1px solid #ccc",
                   borderRadius: "4px",
                   cursor: "pointer",
-                  fontSize: "1em",
                 }}
               >
-                Start first-run wizard
+                Ver el recorrido guiado
               </button>
             </div>
           )}
@@ -866,6 +882,7 @@ export default function ChatView() {
             </p>
           </div>
         )}
+        {/* Composer. */}
         <div
           style={{
             borderTop: "1px solid #ddd",

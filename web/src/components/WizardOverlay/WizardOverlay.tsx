@@ -8,6 +8,14 @@ import { UploadStep } from './UploadStep';
 import { QuestionStep } from './QuestionStep';
 import { FinishStep } from './FinishStep';
 
+/**
+ * The old first-run wizard (hidden since F4/S5, T5).
+ *
+ * Kept whole on purpose: the maintainer evaluates the guided first-boot tour
+ * (`components/GuidedTour.tsx`) before deciding whether the wizard comes back or
+ * goes for good. Nothing opens it automatically any more; `useWizardStore`'s
+ * `openWizard(true)` still does, which is the one line that brings it back.
+ */
 export function WizardOverlay() {
   const navigate = useNavigate();
   const closeWizard = useWizardStore((state) => state.closeWizard);
