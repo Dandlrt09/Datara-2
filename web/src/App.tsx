@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDataFolder } from "./queries/useDataFolder";
 import { emailFlowsEnabled, useAppConfig } from "./queries/useAppConfig";
+import { BootSplash } from "./components/BootSplash";
 
 const DataFolderScreen = lazy(() => import("./routes/DataFolderScreen"));
 const FirstRunScreen = lazy(() => import("./routes/FirstRunScreen"));
@@ -116,62 +117,69 @@ function UnauthenticatedLanding() {
 
 export default function App() {
   return (
-    <Suspense fallback={<Loading />}>
-      <DataFolderGate>
-        <Routes>
-          {/* Local-mode identity (F1 / T2c): outside `HostedOnly` (it would
-              bounce to /login) and outside /app (AppShell's guard would too),
-              but inside the F3b data-folder gate, which runs first. */}
-          <Route path="/first-run" element={<FirstRunScreen />} />
-          <Route path="/login" element={<LoginScreen />} />
-          <Route
-            path="/register"
-            element={
-              <HostedOnly>
-                <RegisterScreen />
-              </HostedOnly>
-            }
-          />
-          {/* Email verification and password recovery (S3/S4). Both link
-              targets are frontend routes, never the API: a mail prefetcher
-              must not be able to consume a one-shot token (D9). */}
-          <Route
-            path="/check-email"
-            element={
-              <HostedOnly>
-                <CheckEmailScreen />
-              </HostedOnly>
-            }
-          />
-          <Route
-            path="/verify-email"
-            element={
-              <HostedOnly>
-                <VerifyEmailScreen />
-              </HostedOnly>
-            }
-          />
-          <Route
-            path="/forgot-password"
-            element={
-              <HostedOnly>
-                <ForgotPasswordScreen />
-              </HostedOnly>
-            }
-          />
-          <Route
-            path="/reset-password"
-            element={
-              <HostedOnly>
-                <ResetPasswordScreen />
-              </HostedOnly>
-            }
-          />
-          <Route path="/terminos" element={<TermsScreen />} />
-          <Route path="/app/*" element={<AppShell />} />
-          <Route path="*" element={<UnauthenticatedLanding />} />
-        </Routes>
-      </DataFolderGate>
-    </Suspense>
+    <>
+      {/* F4 / T3 (S1): the boot splash sits above the router, not inside it, so
+          it covers the very first load of every screen, for any user and in
+          any mode. It is decorative -- `aria-hidden`, no role, no focusable
+          content -- and dismisses itself, so it never gates the app. */}
+      <BootSplash />
+      <Suspense fallback={<Loading />}>
+        <DataFolderGate>
+          <Routes>
+            {/* Local-mode identity (F1 / T2c): outside `HostedOnly` (it would
+                bounce to /login) and outside /app (AppShell's guard would too),
+                but inside the F3b data-folder gate, which runs first. */}
+            <Route path="/first-run" element={<FirstRunScreen />} />
+            <Route path="/login" element={<LoginScreen />} />
+            <Route
+              path="/register"
+              element={
+                <HostedOnly>
+                  <RegisterScreen />
+                </HostedOnly>
+              }
+            />
+            {/* Email verification and password recovery (S3/S4). Both link
+                targets are frontend routes, never the API: a mail prefetcher
+                must not be able to consume a one-shot token (D9). */}
+            <Route
+              path="/check-email"
+              element={
+                <HostedOnly>
+                  <CheckEmailScreen />
+                </HostedOnly>
+              }
+            />
+            <Route
+              path="/verify-email"
+              element={
+                <HostedOnly>
+                  <VerifyEmailScreen />
+                </HostedOnly>
+              }
+            />
+            <Route
+              path="/forgot-password"
+              element={
+                <HostedOnly>
+                  <ForgotPasswordScreen />
+                </HostedOnly>
+              }
+            />
+            <Route
+              path="/reset-password"
+              element={
+                <HostedOnly>
+                  <ResetPasswordScreen />
+                </HostedOnly>
+              }
+            />
+            <Route path="/terminos" element={<TermsScreen />} />
+            <Route path="/app/*" element={<AppShell />} />
+            <Route path="*" element={<UnauthenticatedLanding />} />
+          </Routes>
+        </DataFolderGate>
+      </Suspense>
+    </>
   );
 }

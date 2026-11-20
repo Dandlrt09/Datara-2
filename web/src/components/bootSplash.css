@@ -1,0 +1,36 @@
+/* F4 / T3: the boot splash is the first stylesheet in the project. The app
+ * styles inline (`style={{}}`); a stylesheet entry exists only because an
+ * entry animation needs `@keyframes`, which inline styles cannot declare. */
+
+/* The overlay's whole life: a quick fade in, then hold while the isotipo draws
+ * and settles, then fade out. The component removes it when BOOT_SPLASH_MS
+ * elapses, so the last frame and the unmount line up. 3600ms is a hair past the
+ * artwork's own last beat (2.75s + 0.7s): the SVG animates itself, so the
+ * wrapper only owns the fade -- a scale here would fight the drawing. */
+@keyframes boot-splash-life {
+  0% {
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.boot-splash {
+  animation: boot-splash-life 3600ms ease-out both;
+}
+
+/* Respect the OS setting: no motion, but the splash still shows and leaves on
+ * the same timer (the animation is garnish, not the dismissal). The SVG carries
+ * its own reduced-motion rule, which freezes the drawing at its final frame. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-splash {
+    animation: none;
+  }
+}
