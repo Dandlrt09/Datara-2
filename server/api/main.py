@@ -254,25 +254,55 @@ app.include_router(export.router)
 static_dir = resource_path("web", "dist")
 
 
+# The cache policy the frontend is served with. Vite writes every build
+# artifact under ``assets/`` with a content hash in its name, so those may be
+# cached forever: if the content changes, the name changes, and a stale entry
+# can never be served. Every other answer -- ``index.html`` above all, and every
+# client route that falls back to it -- is name-stable and must be revalidated.
+# ``no-cache`` does NOT mean "do not store": it means "ask before reusing",
+# which the ETag already in place answers with a bodyless 304.
+_HASHED_ASSETS = "assets/"
+_INDEX_HTML = "index.html"
+_IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+_REVALIDATE_CACHE = "no-cache"
+
+
 class SPAStaticFiles(StaticFiles):
-    """StaticFiles with an SPA fallback.
+    """StaticFiles with an SPA fallback and an explicit cache policy.
 
     Client-side routes (/login, /app/files, ...) don't exist on disk, so a
     full reload or deep link would 404. Any unknown NON-API path is answered
     with index.html so the SPA boots and the router takes over. Unknown API
     paths still return their normal 404.
+
+    The cache policy has to be STATED, because silence is not neutral: with
+    only ``last-modified``/``etag`` the browser applies its own heuristic and
+    can keep an old ``index.html`` -- the file that names the hashed bundles --
+    so a deploy stays invisible until the analyst forces a hard reload (found
+    during F4's live validation).
     """
 
     async def get_response(self, path: str, scope):
+        # What actually gets served: the requested path, or the shell after a
+        # fallback. The cache header follows THIS, not what was asked for, so a
+        # missing ``assets/...`` path answers with a shell that stays
+        # revalidated instead of freezing a copy of it under an asset URL.
+        served = path
         try:
             response = await super().get_response(path, scope)
         except HTTPException as exc:
             # StaticFiles RAISES HTTPException(404) when the file is missing.
             if exc.status_code == 404 and not path.startswith("api/"):
-                return await super().get_response("index.html", scope)
-            raise
+                served = _INDEX_HTML
+                response = await super().get_response(served, scope)
+            else:
+                raise
         if response.status_code == 404 and not path.startswith("api/"):
-            response = await super().get_response("index.html", scope)
+            served = _INDEX_HTML
+            response = await super().get_response(served, scope)
+        response.headers["cache-control"] = (
+            _IMMUTABLE_CACHE if served.startswith(_HASHED_ASSETS) else _REVALIDATE_CACHE
+        )
         return response
 
 
