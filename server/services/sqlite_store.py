@@ -179,7 +179,7 @@ class SqliteStore:
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, local_rescue_hash, "
             "lock_step_answered, created_at, pending_deletion_at, "
-            "email_verified_at FROM users "
+            "email_verified_at, tutorial_seen FROM users "
             "WHERE kind = 'local' ORDER BY id LIMIT 1",
         )
         return dict(rows[0]) if rows else None
@@ -208,7 +208,7 @@ class SqliteStore:
         """
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, created_at, "
-            "pending_deletion_at, email_verified_at FROM users "
+            "pending_deletion_at, email_verified_at, tutorial_seen FROM users "
             "WHERE email = ? COLLATE NOCASE",
             (normalize_email(email),),
         )
@@ -217,10 +217,33 @@ class SqliteStore:
     async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
         rows = await self.conn.execute_fetchall(
             "SELECT id, email, name, password_hash, created_at, "
-            "pending_deletion_at, email_verified_at FROM users WHERE id = ?",
+            "pending_deletion_at, email_verified_at, tutorial_seen "
+            "FROM users WHERE id = ?",
             (user_id,),
         )
         return dict(rows[0]) if rows else None
+
+    async def mark_tutorial_seen(self, user_id: int) -> bool:
+        """Record that the profile already went through the guided tour (F4/T1).
+
+        The tour is for a NEW account (S3/D9), so the flag is read on entering
+        ``/app`` and written by the one route that marks it as seen. It is
+        deliberately NOT scoped to ``kind = 'local'``, unlike the lock-step
+        helpers: this flag belongs to every profile, and a freshly created
+        hosted account is a new account too.
+
+        Idempotent: the ``tutorial_seen = 0`` predicate makes a second call a
+        no-op instead of rewriting the row, so the return value really means
+        "the flag went from unseen to seen in this call". Returns True if a row
+        changed, False if the user does not exist or was already marked.
+        """
+        cursor = await self.conn.execute(
+            "UPDATE users SET tutorial_seen = 1 "
+            "WHERE id = ? AND tutorial_seen = 0",
+            (user_id,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
 
     async def update_user_name(self, user_id: int, name: str | None) -> bool:
         """Write the user-chosen display name (T1/D3).

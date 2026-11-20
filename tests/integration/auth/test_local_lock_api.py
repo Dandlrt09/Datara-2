@@ -255,6 +255,7 @@ class TestStatus:
             "email",
             "name",
             "pending_deletion_at",
+            "tutorial_seen",
         }
 
 

@@ -179,7 +179,13 @@ class TestEditableName:
         """Pin the response contract shared by register, login and /me (D2)."""
         cookie = _register(client, "name-keys@example.com")
         payload = client.get("/api/auth/me", headers={"Cookie": cookie}).json()
-        assert set(payload) == {"id", "email", "name", "pending_deletion_at"}
+        assert set(payload) == {
+            "id",
+            "email",
+            "name",
+            "pending_deletion_at",
+            "tutorial_seen",
+        }
 
     def test_update_name_persists_and_is_returned_by_me(self, client):
         cookie = _register(client, "name-set@example.com")

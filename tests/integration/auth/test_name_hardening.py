@@ -53,6 +53,7 @@ class TestNameHardening:
             "email",
             "name",
             "pending_deletion_at",
+            "tutorial_seen",
         }
         assert register.json()["name"] is None
 
@@ -71,6 +72,7 @@ class TestNameHardening:
             "email",
             "name",
             "pending_deletion_at",
+            "tutorial_seen",
         }
         assert login.json()["name"] is None
 

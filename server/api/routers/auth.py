@@ -223,6 +223,15 @@ class UserResponse(BaseModel):
     # Scheduled purge deadline, or None. Exposed so login and /me can render the
     # grace-period interstitial (S7) without a second request.
     pending_deletion_at: str | None = None
+    # Whether this profile already went through the guided first-boot tour
+    # (F4/T1, S3). It is per profile and read on entering /app, so the tour does
+    # not come back -- and it is NOT local-only: a freshly created hosted account
+    # is a new account too. Every payload that carries a user row reports the
+    # stored value, so login and the "open existing profile" path agree with
+    # ``GET /me`` instead of contradicting it. The creation paths keep the
+    # documented default: a profile created by that very request has never seen
+    # the tour.
+    tutorial_seen: bool = False
 
 
 class AuthSessionResponse(BaseModel):
@@ -698,6 +707,7 @@ async def login(
         email=user["email"],
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
+        tutorial_seen=bool(user.get("tutorial_seen")),
     )
 
 
@@ -787,6 +797,9 @@ async def create_local_profile(
         email=user["email"],
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
+        # Truthful here too: an existing local profile keeps the mark, and a
+        # profile just created by this request reads the column default (0).
+        tutorial_seen=bool(user.get("tutorial_seen")),
     )
 
 
@@ -984,6 +997,7 @@ async def open_local_profile(
         email=user["email"],
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
+        tutorial_seen=bool(user.get("tutorial_seen")),
     )
 
 
@@ -1276,7 +1290,39 @@ async def me(
         email=user["email"],
         name=user.get("name"),
         pending_deletion_at=user.get("pending_deletion_at"),
+        tutorial_seen=bool(user.get("tutorial_seen")),
     )
+
+
+@router.post("/tutorial-seen", status_code=204)
+async def mark_tutorial_seen(
+    response: Response,
+    store: SqliteStore = Depends(get_store),
+    user: dict = Depends(current_user),
+):
+    """Mark the caller's own profile as having seen the guided tour (F4/T1, S3).
+
+    The tour is for a NEW account (D9) and the mark lives in the server, per
+    profile: the app reads ``tutorial_seen`` from ``GET /me`` on entering
+    ``/app`` and calls this route once the tour is over -- either because the
+    person walked through it or because they skipped it (S2: it is skippable).
+    Marking it seen means it does not come back, across shutting the app down,
+    locking and unlocking (S3).
+
+    Requires the caller's own session (``current_user``), like the lock routes:
+    the user id always comes from the session, never from the body -- there is
+    no body at all -- so one profile can never mark another seen.
+
+    Deliberately NOT mode gated and NOT scoped to the local profile, unlike the
+    lock-step routes: this flag belongs to every profile (S3), and a hosted
+    account created today is a new account too.
+
+    Idempotent: marking an already-marked profile answers the same 204 and
+    writes nothing, because the store only flips a row that is still at 0.
+    """
+    await store.mark_tutorial_seen(user["id"])
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return None
 
 
 @router.patch("/me", status_code=200)
@@ -1316,6 +1362,7 @@ async def update_me(
         email=user["email"],
         name=name,
         pending_deletion_at=user.get("pending_deletion_at"),
+        tutorial_seen=bool(user.get("tutorial_seen")),
     )
 
 
