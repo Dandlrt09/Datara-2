@@ -1726,6 +1726,97 @@ class SqliteStore:
 
     # ── Profiles ──────────────────────────────────────────────────────────────
 
+    # ── Dataset crossings (F5) ───────────────────────────────────────────────────
+
+    # Read shape shared by the crossing reads: the recipe plus both filenames, so
+    # the frontend labels the pair (and the sandbox prompt names the datasets)
+    # without a second round trip.
+    _CROSSING_SELECT = (
+        "SELECT c.id, c.chat_session, c.left_file_id, c.right_file_id, "
+        "c.left_key, c.right_key, c.how, c.created_at, "
+        "lf.filename AS left_filename, rf.filename AS right_filename "
+        "FROM dataset_crossings c "
+        "JOIN files lf ON lf.id = c.left_file_id "
+        "JOIN files rf ON rf.id = c.right_file_id "
+    )
+
+    async def upsert_crossing(
+        self,
+        *,
+        user_id: int,
+        chat_session: str,
+        left_file_id: int,
+        right_file_id: int,
+        left_key: str,
+        right_key: str,
+        how: str,
+    ) -> dict[str, Any] | None:
+        """Store THE active crossing of *chat_session*, replacing any previous one.
+
+        One crossing stays active per session (S5): the UNIQUE index on
+        ``chat_session`` turns the insert into an in-place update of the same
+        row, so a second confirmation can never leave two active recipes.
+
+        Returns the stored recipe with both filenames, or ``None`` when the
+        session vanished between the route's check and this write.
+        """
+        try:
+            await self.conn.execute(
+                "INSERT INTO dataset_crossings (user_id, chat_session, "
+                "left_file_id, right_file_id, left_key, right_key, how) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(chat_session) DO UPDATE SET "
+                "  left_file_id = excluded.left_file_id,"
+                "  right_file_id = excluded.right_file_id,"
+                "  left_key = excluded.left_key,"
+                "  right_key = excluded.right_key,"
+                "  how = excluded.how,"
+                "  created_at = datetime('now')",
+                (
+                    user_id,
+                    chat_session,
+                    left_file_id,
+                    right_file_id,
+                    left_key,
+                    right_key,
+                    how,
+                ),
+            )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
+        return await self.get_crossing(user_id, chat_session)
+
+    async def get_crossing(
+        self,
+        user_id: int,
+        chat_session: str,
+    ) -> dict[str, Any] | None:
+        """Get the active crossing of *chat_session*, enforcing ownership."""
+        rows = await self.conn.execute_fetchall(
+            f"{self._CROSSING_SELECT} WHERE c.chat_session = ? AND c.user_id = ?",
+            (chat_session, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def delete_crossing(
+        self,
+        user_id: int,
+        chat_session: str,
+    ) -> int:
+        """Delete the active crossing of *chat_session*.
+
+        Returns the number of deleted rows, so the route can answer 204 either
+        way: a session without a crossing has nothing to remove.
+        """
+        cursor = await self.conn.execute(
+            "DELETE FROM dataset_crossings WHERE chat_session = ? AND user_id = ?",
+            (chat_session, user_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount
+
     async def upsert_profile(
         self,
         file_id: int,

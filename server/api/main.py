@@ -24,6 +24,7 @@ from server.api.routers import (
     archive,
     auth,
     chat,
+    crossings,
     data_folder,
     export,
     files,
@@ -242,6 +243,7 @@ app.include_router(data_folder.router)
 app.include_router(sessions.router)
 app.include_router(settings.router)
 app.include_router(files.router)
+app.include_router(crossings.router)
 app.include_router(chat.router)
 app.include_router(archive.router)
 app.include_router(activity.router)
