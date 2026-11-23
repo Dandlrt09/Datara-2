@@ -84,10 +84,17 @@ export interface CrossingInput {
  * this offers only the first page instead of silently loading more. */
 export const CROSSING_FILES_PAGE_SIZE = 200;
 
-/** The session's files, for the two file pickers. */
+/** The session's files, for the two file pickers.
+ *
+ * The key lives UNDER the `["files"]` prefix on purpose: every file mutation
+ * (upload/delete/rename/sheet switch in useFiles.ts) invalidates that prefix,
+ * and React Query invalidates by key prefix. A distinct key under the family
+ * still lets the panel keep its own one-page shape (`CROSSING_FILES_PAGE_SIZE`).
+ * Without this, a freshly uploaded file would not appear in the pickers until
+ * the panel remounts. */
 export function useCrossingFiles(sessionId: string | null) {
   return useQuery({
-    queryKey: ["crossing-files", sessionId],
+    queryKey: ["files", "crossing", sessionId],
     queryFn: () =>
       api.get<UploadedFile[]>(
         `/api/sessions/${sessionId}/files?limit=${CROSSING_FILES_PAGE_SIZE}`,

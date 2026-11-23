@@ -5,8 +5,8 @@
  * the panel through the DOM. Every user-facing string here is the EXACT neutral
  * Spanish copy S5 requires, so a drift in the component fails loudly.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderWithProviders } from "./test-utils";
 import CrossingPanel from "../components/CrossingPanel";
 import type { ProfileSummary } from "../queries/useFiles";
@@ -28,14 +28,21 @@ const {
   deleteMock: vi.fn(),
 }));
 
-vi.mock("../queries/useCrossings", () => ({
-  useCrossingFiles: (sessionId: string | null) => useCrossingFilesMock(sessionId),
-  useCrossingProfile: (fileId: number | null) => useCrossingProfileMock(fileId),
-  useCrossing: (sessionId: string | null) => useCrossingMock(sessionId),
-  useProposeCrossing: () => ({ mutateAsync: proposeMock, isPending: false }),
-  useConfirmCrossing: () => ({ mutateAsync: confirmMock, isPending: false }),
-  useDeleteCrossing: () => ({ mutateAsync: deleteMock, isPending: false }),
-}));
+vi.mock("../queries/useCrossings", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../queries/useCrossings")>();
+  return {
+    // The invalidation test swaps this for the real hook, so it exercises the
+    // production query key through a real React Query cache.
+    useCrossingFiles: (sessionId: string | null) =>
+      useCrossingFilesMock(sessionId, actual.useCrossingFiles),
+    useCrossingProfile: (fileId: number | null) => useCrossingProfileMock(fileId),
+    useCrossing: (sessionId: string | null) => useCrossingMock(sessionId),
+    useProposeCrossing: () => ({ mutateAsync: proposeMock, isPending: false }),
+    useConfirmCrossing: () => ({ mutateAsync: confirmMock, isPending: false }),
+    useDeleteCrossing: () => ({ mutateAsync: deleteMock, isPending: false }),
+  };
+});
 
 const leftFile = {
   id: 1,
@@ -109,7 +116,16 @@ function pickFiles() {
   });
 }
 
+/** Minimal `fetch` response for the real file read used by the invalidation test. */
+function jsonResponse(body: unknown) {
+  return { ok: true, status: 200, json: async () => body };
+}
+
 describe("CrossingPanel", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     crossingState = null;
@@ -321,5 +337,37 @@ describe("CrossingPanel", () => {
     expect(
       screen.getByRole("button", { name: "Proponer cruce" }),
     ).toBeTruthy();
+  });
+
+  it("reveals the toggle when a file mutation invalidates the files family", async () => {
+    // The network answers "zero files" first and "two files" after the
+    // invalidation every file mutation performs (upload/delete/rename/sheet).
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([leftFile, rightFile]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Drive the panel through the REAL file read, so what gets invalidated is
+    // the production query key and not a string this test hardcodes.
+    useCrossingFilesMock.mockImplementation(
+      (_sessionId: string | null, realHook: (id: string | null) => unknown) =>
+        realHook("ses-1"),
+    );
+
+    const view = renderWithProviders(<CrossingPanel sessionId="ses-1" />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Cruzar archivos")).toBeNull();
+
+    // The real contract the file mutations use (useFiles.ts).
+    await act(async () => {
+      await view.qc.invalidateQueries({ queryKey: ["files"] });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText("Cruzar archivos")).toBeTruthy(),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
