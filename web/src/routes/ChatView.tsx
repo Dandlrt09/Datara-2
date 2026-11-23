@@ -18,6 +18,9 @@ import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { SaveAnalysisDialog } from "../components/SaveAnalysisDialog";
+// F5 (S5): the crossing panel of the open session. It renders nothing until
+// the session holds at least two files, and owns its own reads.
+import CrossingPanel from "../components/CrossingPanel";
 
 /**
  * Maps a failed create-archive request to user-facing neutral Spanish copy.
@@ -882,6 +885,7 @@ export default function ChatView() {
             </p>
           </div>
         )}
+        <CrossingPanel sessionId={sessionId ?? null} />
         {/* Composer. */}
         <div
           style={{
