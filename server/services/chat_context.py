@@ -101,7 +101,8 @@ async def build_chat_context(
         message_window: How many prior messages to include.
 
     Returns:
-        A dict with keys ``profiles`` (list), ``unprofiled_files`` (list)
+        A dict with keys ``profiles`` (list), ``unprofiled_files`` (list),
+        ``crossing`` (the session's confirmed crossing recipe, or ``None``)
         and ``messages`` (list of role/content dicts, oldest first).
     """
     # 1. Profile JSON for files in this session (ownership via JOIN files)
@@ -137,7 +138,12 @@ async def build_chat_context(
                 {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
             )
 
-    # 2. Sliding window of the last N messages (newest first from store)
+    # 2. The session's confirmed crossing (F5 / T3). One stays active per
+    # session, so this is the whole recipe or nothing. A crossing whose files
+    # were deleted is already gone here: both file FKs cascade.
+    crossing = await store.get_crossing(user_id, chat_session)
+
+    # 3. Sliding window of the last N messages (newest first from store)
     recent = await store.list_messages(
         user_id,
         chat_session,
@@ -158,5 +164,6 @@ async def build_chat_context(
     return {
         "profiles": profiles,
         "unprofiled_files": unprofiled_files,
+        "crossing": crossing,
         "messages": messages,
     }

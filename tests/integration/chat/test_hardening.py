@@ -20,6 +20,7 @@ from core.errors import LLMTimeoutError
 from server.api.routers import archive as archive_router
 from server.api.routers import auth as auth_router
 from server.api.routers import chat as chat_router
+from server.api.routers import crossings as crossings_router
 from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
 from server.services.chat_context import build_chat_context, DEFAULT_MESSAGE_WINDOW
@@ -37,6 +38,9 @@ def app(tmp_path, monkeypatch):
     application.include_router(chat_router.router)
     application.include_router(archive_router.router)
     application.include_router(files_router.router)
+    # The crossing recipe is confirmed through its own route (F5), so the
+    # prompt tests below arrange a real crossing instead of seeding a row.
+    application.include_router(crossings_router.router)
 
     # Isolation: uploads must land in a per-test tmp dir, never the real
     # server/uploads/ used by the live server.
@@ -555,6 +559,144 @@ class TestGroundingTableContext:
             f"Grounding context must include exact table values: {grounding_user_content!r}"
         )
         assert "Result table (exact values)" in grounding_user_content
+        # T3: no crossing means no dataset identity line — the grounding
+        # message stays exactly as it was before the crossing feature.
+        assert "The table shown is the result of crossing" not in grounding_user_content
+
+
+# Two profiled datasets of one session, sharing ``customer_id`` (F5).
+_CUSTOMERS_CSV = b"customer_id,name\n1,Ana\n2,Beto\n"
+_ORDERS_CSV = b"order_id,customer_id,total\n10,1,100\n11,2,75\n"
+
+_GROUNDING_CROSSING_FRAGMENT = (
+    "The table shown is the result of crossing 'customers.csv' with "
+    "'orders.csv' on 'customer_id' = 'customer_id' ('inner' join)."
+)
+
+
+def _upload_csv(client, cookie: str, session_id: str, filename: str, content: bytes) -> int:
+    """Attach one CSV to the session and return its file id."""
+    resp = client.post(
+        f"/api/sessions/{session_id}/files",
+        files={"file": (filename, content, "text/csv")},
+        headers={"Cookie": cookie},
+    )
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()["id"]
+
+
+def _confirm_crossing(
+    client, cookie: str, session_id: str, left_id: int, right_id: int, how: str = "inner"
+) -> dict:
+    """Confirm the session's crossing through the public recipe route."""
+    resp = client.post(
+        f"/api/sessions/{session_id}/crossings",
+        json={
+            "left_file_id": left_id,
+            "right_file_id": right_id,
+            "left_key": "customer_id",
+            "right_key": "customer_id",
+            "how": how,
+        },
+        headers={"Cookie": cookie},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+class TestCrossingReachesTheModel:
+    """F5 / T3 (S3, S4): the confirmed recipe travels into the turn.
+
+    A3: the crossing reaches the model as EXACT instructions in the system
+    prompt (paths, keys, join kind, end in df_result), never as code injected
+    into the sandbox, and the second pass is told which table it describes.
+    """
+
+    async def test_context_carries_the_active_crossing(
+        self, client, auth_cookie, session_id, store
+    ):
+        left = _upload_csv(client, auth_cookie, session_id, "customers.csv", _CUSTOMERS_CSV)
+        right = _upload_csv(client, auth_cookie, session_id, "orders.csv", _ORDERS_CSV)
+        _confirm_crossing(client, auth_cookie, session_id, left, right)
+
+        user = await store.get_user_by_email("costguard@example.com")
+        context = await build_chat_context(
+            store, user_id=user["id"], chat_session=session_id
+        )
+        crossing = context["crossing"]
+        assert crossing is not None
+        assert crossing["left_filename"] == "customers.csv"
+        assert crossing["right_filename"] == "orders.csv"
+        assert crossing["left_key"] == "customer_id"
+        assert crossing["right_key"] == "customer_id"
+        assert crossing["how"] == "inner"
+
+    async def test_context_crossing_is_none_without_a_recipe(
+        self, client, auth_cookie, session_id, store
+    ):
+        user = await store.get_user_by_email("costguard@example.com")
+        context = await build_chat_context(
+            store, user_id=user["id"], chat_session=session_id
+        )
+        assert context["crossing"] is None
+
+    async def test_crossing_reaches_the_prompt_and_the_grounding_pass(
+        self, client, auth_cookie, session_id, store
+    ):
+        left = _upload_csv(client, auth_cookie, session_id, "customers.csv", _CUSTOMERS_CSV)
+        right = _upload_csv(client, auth_cookie, session_id, "orders.csv", _ORDERS_CSV)
+        _confirm_crossing(client, auth_cookie, session_id, left, right)
+
+        captured_calls: list[list[dict]] = []
+        call_count = 0
+
+        def _two_phase_fake(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            captured_calls.append(kwargs.get("messages", []))
+            if call_count == 1:
+                return _make_openai_fake(json.dumps({
+                    "code": (
+                        "import pandas as pd\n"
+                        "df_result = pd.DataFrame({'customer_id': [1, 2]})\n"
+                        "print(df_result)"
+                    ),
+                    "explanation": "El cruce confirmado tiene dos clientes.",
+                }))
+            return _make_openai_fake("El cruce entre clientes y pedidos tiene 2 filas.")
+
+        mock_create = AsyncMock(side_effect=_two_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "¿cuántos clientes tienen pedidos?"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert call_count == 2, f"expected main+grounding calls, got {call_count}"
+
+        main_system_prompt = captured_calls[0][0]["content"]
+        assert "IMPORTANT — dataset crossing (confirmed by the user):" in main_system_prompt
+        assert (
+            "- left dataset: 'customers.csv' (read it from its 'path' above), "
+            "key 'customer_id'"
+        ) in main_system_prompt
+        assert (
+            "- right dataset: 'orders.csv' (read it from its 'path' above), "
+            "key 'customer_id'"
+        ) in main_system_prompt
+        assert "- join kind: 'inner'" in main_system_prompt
+        assert "the existing capture rule only publishes df_result" in main_system_prompt
+
+        grounding_user_content = captured_calls[1][-1]["content"]
+        assert _GROUNDING_CROSSING_FRAGMENT in grounding_user_content, (
+            "The grounding pass must know which table it describes: "
+            f"{grounding_user_content!r}"
+        )
 
 
 class TestBuildRepairFeedback:

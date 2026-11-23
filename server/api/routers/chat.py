@@ -303,9 +303,32 @@ def _build_repair_feedback(error: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _crossing_datasets_are_profiled(
+    profiles: list[dict[str, Any]] | None,
+    crossing: dict[str, Any] | None,
+) -> bool:
+    """Whether both sides of *crossing* are datasets this prompt describes.
+
+    The crossing block points the model at "its 'path' above", so rendering it
+    while one side is missing from ``profiles`` would send the model looking for
+    a path the prompt never gave it — a file deleted from disk cannot be
+    re-profiled by the lazy path either. With no profile for that side the
+    no-datasets branch already refuses to write code, and emitting both
+    instructions at once would contradict itself.
+    """
+    if not crossing:
+        return False
+    described = {profile.get("filename") for profile in profiles or []}
+    return {
+        crossing.get("left_filename"),
+        crossing.get("right_filename"),
+    } <= described
+
+
 def build_system_prompt(
     profiles: list[dict[str, Any]] | None = None,
     number_format: str = NUMBER_FORMAT_ES,
+    crossing: dict[str, Any] | None = None,
 ) -> str:
     """Assemble the chat system prompt.
 
@@ -316,6 +339,12 @@ def build_system_prompt(
 
     ``number_format`` is the user's preference ("es" or "intl"); the default
     reproduces the pre-preference Spanish prompt byte-for-byte.
+
+    ``crossing`` is the session's confirmed crossing recipe (F5) or ``None``.
+    Per Decision A3 it travels as EXACT instructions — which files, which keys,
+    which join kind, end in ``df_result`` — never as code injected into the
+    sandbox, so the model still writes the merge itself from one source of
+    truth. With ``crossing=None`` the prompt is byte-identical to before.
     """
     system_prompt = (
         "You are a data analysis assistant. The user's datasets are described below. "
@@ -368,6 +397,28 @@ def build_system_prompt(
             "or JSON) and then ask again. General, non-data questions "
             "(greetings, conceptual questions) may still be answered "
             "normally in text."
+        )
+    if _crossing_datasets_are_profiled(profiles, crossing):
+        # F5 / T3: the analyst confirmed this recipe, so the turn's dataset is
+        # the crossing's RESULT. The instruction ends on the label the sandbox
+        # publishes (df_result), which is the only table the user will see.
+        system_prompt += (
+            "\n\nIMPORTANT — dataset crossing (confirmed by the user):"
+            f"\n- left dataset: '{crossing.get('left_filename', '')}' "
+            "(read it from its 'path' above), "
+            f"key '{crossing.get('left_key', '')}'"
+            f"\n- right dataset: '{crossing.get('right_filename', '')}' "
+            "(read it from its 'path' above), "
+            f"key '{crossing.get('right_key', '')}'"
+            f"\n- join kind: '{crossing.get('how', '')}'"
+            "\nThe user's questions in this session are about the joined "
+            "dataset, not about either file alone. Build the crossed dataset "
+            "with pd.merge(...) using exactly those keys and that join kind, "
+            "and assign the merged frame to a variable named df_result — it "
+            "is the dataset the user's questions are about, and the existing "
+            "capture rule only publishes df_result. Never re-derive the keys, "
+            "never pick a different join kind and never cross any other pair "
+            "of datasets."
         )
     system_prompt += (
         "\n\nIMPORTANT — execution model: every turn runs in a completely "
@@ -637,7 +688,9 @@ async def chat_stream(
             # Build the system prompt with profiles (single source of truth,
             # shared with the regression bench)
             system_prompt = build_system_prompt(
-                context["profiles"], number_format=number_format
+                context["profiles"],
+                number_format=number_format,
+                crossing=context.get("crossing"),
             )
 
             llm_messages = [{"role": "system", "content": system_prompt}]
@@ -951,6 +1004,20 @@ async def chat_stream(
                     ),
                 ]
                 table_context += "\nResult table (exact values):\n" + "\n".join(lines)
+            # F5 / T3: with a crossing active, the table the narrator is
+            # describing IS the crossing's result. Without one this stays
+            # empty, so the grounding message is byte-identical to before.
+            crossing = context.get("crossing")
+            table_identity = ""
+            if crossing:
+                table_identity = (
+                    "\n\nThe table shown is the result of crossing "
+                    f"'{crossing.get('left_filename', '')}' with "
+                    f"'{crossing.get('right_filename', '')}' on "
+                    f"'{crossing.get('left_key', '')}' = "
+                    f"'{crossing.get('right_key', '')}' "
+                    f"('{crossing.get('how', '')}' join)."
+                )
             grounded_narrative = ""
             grounding_usage = None
             if code.strip() and sandbox_result.get("status") == "ok":
@@ -971,7 +1038,7 @@ async def chat_stream(
                                 "Plain text only: no Markdown, no **bold**, no bullet lists. "
                                 "Keep the response concise (under 80 words). Write in natural professional Spanish."
                             )},
-                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}{table_context}"}
+                            {"role": "user", "content": f"Original question: {body.question}\n\nOriginal explanation: {explanation}\n\nExecution output:\n{sandbox_output}{table_identity}{table_context}"}
                         ]
                         grounding_response = await provider.complete(
                             messages=grounding_messages,
