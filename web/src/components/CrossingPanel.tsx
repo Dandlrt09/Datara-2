@@ -36,6 +36,18 @@ const NOT_FOUND =
 const UNAVAILABLE =
   "No se pudo consultar al modelo. Prueba de nuevo o elige las columnas a mano.";
 
+/** S7: the short in-panel guide, one entry per step. Exact product copy
+ * (neutral Spanish, tuteo). */
+const GUIDE_STEPS = [
+  "Elige el archivo izquierdo y el archivo derecho: son los dos que quieres cruzar.",
+  "Pulsa «Proponer cruce» y Datara propone por qué columna cruzarlos. Puedes cambiar la columna cuando quieras.",
+  "Elige el tipo de cruce: «Solo las coincidencias» deja únicamente las filas que existen en los dos archivos, y «Todas las filas…» conserva las de uno o de los dos lados.",
+  "Pulsa «Confirmar cruce»: Datara te dice cuántas filas quedaron en el resultado y cuántas afuera de cada lado. Desde ahí puedes preguntar sobre el cruce.",
+];
+
+const GUIDE_NOTE =
+  "Siempre hay un cruce activo por sesión: puedes cambiarlo o quitarlo cuando quieras.";
+
 /** Column names of a profile payload, defensively read. */
 function columnNames(profile: { schema?: { columns?: { name: string }[] } } | undefined) {
   return (profile?.schema?.columns ?? []).map((column) => column.name);
@@ -52,6 +64,8 @@ export default function CrossingPanel({
   const crossingQuery = useCrossing(sessionId);
 
   const [open, setOpen] = useState(false);
+  // S7: the inline help is closed until the analyst asks for it.
+  const [guideOpen, setGuideOpen] = useState(false);
   const [leftFileId, setLeftFileId] = useState<number | null>(null);
   const [rightFileId, setRightFileId] = useState<number | null>(null);
   const [leftKey, setLeftKey] = useState("");
@@ -154,9 +168,51 @@ export default function CrossingPanel({
       data-testid="crossing-panel"
       style={{ borderTop: "1px solid #ddd", padding: "8px 16px" }}
     >
-      <button type="button" onClick={() => setOpen((value) => !value)}>
-        Cruzar archivos
-      </button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" onClick={() => setOpen((value) => !value)}>
+          Cruzar archivos
+        </button>
+        <button
+          type="button"
+          onClick={() => setGuideOpen((value) => !value)}
+        >
+          ¿Cómo funciona?
+        </button>
+      </div>
+
+      {guideOpen && (
+        <div
+          style={{
+            marginTop: 8,
+            maxWidth: 640,
+            background: "#f8f9fa",
+            border: "1px solid #e0e0e0",
+            borderRadius: 6,
+            padding: "8px 12px",
+          }}
+        >
+          <p style={{ margin: "0 0 8px", fontWeight: 600 }}>
+            Cómo cruzar dos archivos
+          </p>
+          <ol
+            style={{
+              margin: 0,
+              paddingLeft: 20,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            {GUIDE_STEPS.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p style={{ margin: "8px 0", color: "#555" }}>{GUIDE_NOTE}</p>
+          <button type="button" onClick={() => setGuideOpen(false)}>
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {active && (
         <div style={{ marginTop: 8 }}>

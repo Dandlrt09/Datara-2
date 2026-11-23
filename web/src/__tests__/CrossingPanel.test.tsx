@@ -370,4 +370,43 @@ describe("CrossingPanel", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("shows the crossing guide only after the help button is pressed", () => {
+    renderWithProviders(<CrossingPanel sessionId="ses-1" />);
+
+    // Hidden until the analyst asks for it.
+    expect(screen.queryByText("Cómo cruzar dos archivos")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "¿Cómo funciona?" }));
+
+    expect(screen.getByText("Cómo cruzar dos archivos")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Elige el archivo izquierdo y el archivo derecho: son los dos que quieres cruzar.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Pulsa «Proponer cruce» y Datara propone por qué columna cruzarlos. Puedes cambiar la columna cuando quieras.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Elige el tipo de cruce: «Solo las coincidencias» deja únicamente las filas que existen en los dos archivos, y «Todas las filas…» conserva las de uno o de los dos lados.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Pulsa «Confirmar cruce»: Datara te dice cuántas filas quedaron en el resultado y cuántas afuera de cada lado. Desde ahí puedes preguntar sobre el cruce.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Siempre hay un cruce activo por sesión: puedes cambiarlo o quitarlo cuando quieras.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByText("Cómo cruzar dos archivos")).toBeNull();
+  });
 });
