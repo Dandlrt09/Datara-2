@@ -24,6 +24,11 @@ from server.api.routers.chat import build_system_prompt
 # surfacing-results paragraph no longer says "assign every requested result
 # table" (plural); it now states the UI shows ONE result table assigned to
 # df_result, matching the sandbox's single-table capture.
+#
+# Updated for F6 (declared privacy): the file-access paragraph now says the
+# datasets are staged in the sandbox working directory under their 'path'
+# values, because the app stages neutral names instead of shipping absolute
+# upload paths. The bytes change on purpose; the bench shares this prompt.
 _PROFILE = [
     {
         "file_id": 1,
@@ -35,7 +40,7 @@ _PROFILE = [
     }
 ]
 _PROFILES_PROMPT_SHA256 = (
-    "563a2759d570406f0cb32fb13633db7207ebae13b97f8f6048151e91e0641ad4"
+    "bbfa5991be210e9745af84b7d42214306ccb3e3cc6ae352a9a247ea00cede78b"
 )
 
 
