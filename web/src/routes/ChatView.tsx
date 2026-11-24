@@ -18,6 +18,8 @@ import ChatMessage from "../components/ChatMessage";
 import { ErrorCard, QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { SaveAnalysisDialog } from "../components/SaveAnalysisDialog";
+// F6 (T6): session/file privacy controls and the outgoing-payload viewer.
+import { PrivacyPanel } from "../components/PrivacyPanel";
 // F5 (S5): the crossing panel of the open session. It renders nothing until
 // the session holds at least two files, and owns its own reads.
 import CrossingPanel from "../components/CrossingPanel";
@@ -107,6 +109,8 @@ export default function ChatView() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState(false);
+  // F6 privacy dialog. Owns its own reads; closed by default.
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
@@ -132,6 +136,7 @@ export default function ChatView() {
     setSaveDialogOpen(false);
     setSaveError(null);
     setSaveNotice(false);
+    setPrivacyOpen(false);
   }, [sessionId]);
 
   // Populate the composer from a wizard handoff. Keyed on `location.state`:
@@ -939,6 +944,20 @@ export default function ChatView() {
           >
             Guardar análisis
           </button>
+          <button
+            type="button"
+            aria-label="Privacidad"
+            onClick={() => setPrivacyOpen(true)}
+            disabled={!sessionId}
+            title={
+              !sessionId
+                ? "Crea o selecciona una sesión para configurar la privacidad"
+                : "Privacidad de los datos que se envían"
+            }
+            style={{ padding: "8px 12px" }}
+          >
+            Privacidad
+          </button>
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -980,6 +999,12 @@ export default function ChatView() {
           onCancel={handleCancelSave}
           pending={createArchive.isPending}
           error={saveError}
+        />
+
+        <PrivacyPanel
+          sessionId={sessionId ?? null}
+          open={privacyOpen}
+          onClose={() => setPrivacyOpen(false)}
         />
       </div>
     </div>

@@ -358,8 +358,9 @@ def build_system_prompt(
         system_prompt += f"\n\nAvailable datasets:\n{json.dumps(profiles, indent=2)}"
         system_prompt += (
             "\n\nIMPORTANT — file access: the code runs in a FRESH temporary "
-            "working directory, so relative filenames do not exist. Read each "
-            "dataset with EXACTLY its 'path' value above (absolute path), e.g. "
+            "working directory and the datasets are staged there under the "
+            "'path' values above. Read each dataset with EXACTLY its 'path' "
+            "value (a filename in the working directory), e.g. "
             "df = pd.read_csv('<path>'). Never invent paths."
         )
         if any(p.get("sheet_name") for p in profiles):
@@ -752,10 +753,10 @@ async def chat_stream(
 
             # Stage the session's uploads into the sandbox cwd so generated
             # code can read them by filename (empty when the session has no
-            # attached files).
-            session_files = {
-                p["filename"]: p["path"] for p in context["profiles"] if p.get("path")
-            }
+            # attached files). The outgoing profiles carry only the neutral
+            # staged name; the sandbox needs the real storage path to copy
+            # each file into its working directory.
+            session_files = context.get("sandbox_files") or {}
 
             # Deterministic dataset guard: with no usable dataset there is
             # nothing to read, so generated code can only fail or improvise

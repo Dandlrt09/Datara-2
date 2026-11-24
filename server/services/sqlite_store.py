@@ -1591,6 +1591,7 @@ class SqliteStore:
         sql = (
             "SELECT f.id, f.user_id, f.chat_session, f.filename, f.storage_path, "
             "f.size_bytes, f.format, f.encoding, f.sheet_name, f.row_count, f.created_at, "
+            "f.privacy_level, f.column_aliases_json, "
             "(p.file_id IS NOT NULL) AS has_profile "
             "FROM files f LEFT JOIN profiles p ON p.file_id = f.id "
             "WHERE f.user_id = ?"
@@ -1628,6 +1629,7 @@ class SqliteStore:
         sql = (
             "SELECT f.id, f.filename, f.format, f.row_count, "
             "       f.size_bytes, f.created_at, f.chat_session, "
+            "       f.privacy_level, f.column_aliases_json, "
             "       cs.title AS session_title, "
             "       (p.file_id IS NOT NULL) AS has_profile "
             "FROM files f "
@@ -1651,7 +1653,8 @@ class SqliteStore:
         """Get a file by id, enforcing ownership via user_id filter."""
         rows = await self.conn.execute_fetchall(
             "SELECT id, user_id, chat_session, filename, storage_path, "
-            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at, "
+            "privacy_level, column_aliases_json "
             "FROM files WHERE id = ? AND user_id = ?",
             (file_id, user_id),
         )
@@ -1682,7 +1685,8 @@ class SqliteStore:
         """
         rows = await self.conn.execute_fetchall(
             "SELECT id, user_id, chat_session, filename, storage_path, "
-            "size_bytes, format, encoding, sheet_name, row_count, created_at "
+            "size_bytes, format, encoding, sheet_name, row_count, created_at, "
+            "privacy_level, column_aliases_json "
             "FROM files WHERE user_id = ? AND chat_session = ?",
             (user_id, chat_session),
         )
@@ -1723,6 +1727,69 @@ class SqliteStore:
         )
         await self.conn.commit()
         return cursor.rowcount > 0
+
+    # ── Privacy levels (F6) ───────────────────────────────────────────────────
+
+    async def get_session_privacy(
+        self,
+        user_id: int,
+        chat_session: str,
+    ) -> dict[str, Any] | None:
+        """Read the session's privacy level, enforcing ownership."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT privacy_level FROM chat_sessions "
+            "WHERE id = ? AND user_id = ?",
+            (chat_session, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def set_session_privacy(
+        self,
+        user_id: int,
+        chat_session: str,
+        privacy_level: str,
+    ) -> dict[str, Any] | None:
+        """Set the session's privacy level. Returns the stored row or None."""
+        cursor = await self.conn.execute(
+            "UPDATE chat_sessions SET privacy_level = ? "
+            "WHERE id = ? AND user_id = ?",
+            (privacy_level, chat_session, user_id),
+        )
+        await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        return await self.get_session_privacy(user_id, chat_session)
+
+    async def get_file_privacy(
+        self,
+        file_id: int,
+        user_id: int,
+    ) -> dict[str, Any] | None:
+        """Read a file's privacy override, enforcing ownership."""
+        rows = await self.conn.execute_fetchall(
+            "SELECT privacy_level, column_aliases_json FROM files "
+            "WHERE id = ? AND user_id = ?",
+            (file_id, user_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    async def set_file_privacy(
+        self,
+        file_id: int,
+        user_id: int,
+        privacy_level: str | None,
+        column_aliases_json: str | None,
+    ) -> dict[str, Any] | None:
+        """Set a file's privacy override. ``None`` means inherit the session."""
+        cursor = await self.conn.execute(
+            "UPDATE files SET privacy_level = ?, column_aliases_json = ? "
+            "WHERE id = ? AND user_id = ?",
+            (privacy_level, column_aliases_json, file_id, user_id),
+        )
+        await self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        return await self.get_file_privacy(file_id, user_id)
 
     # ── Profiles ──────────────────────────────────────────────────────────────
 

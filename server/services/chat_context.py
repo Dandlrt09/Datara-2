@@ -13,6 +13,13 @@ import logging
 import os
 from typing import Any
 
+from server.services.privacy import (
+    DEFAULT_PRIVACY_LEVEL,
+    PrivacyError,
+    effective_level,
+    redact_profile,
+    stage_dataset_names,
+)
 from server.services.profile_cache import get_profile
 from server.services.sqlite_store import SqliteStore
 
@@ -85,6 +92,87 @@ async def _ensure_profile(
         return None
 
 
+def _parse_aliases(raw: str | None) -> dict[str, str]:
+    """Parse the stored column-alias JSON, tolerating legacy or corrupt rows."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid column_aliases_json")
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(value) for key, value in parsed.items()}
+
+
+async def build_outgoing_datasets(
+    store: SqliteStore,
+    *,
+    user_id: int,
+    chat_session: str,
+) -> dict[str, Any]:
+    """Build the redacted dataset block that leaves the machine.
+
+    Single source of truth shared by the chat prompt and the privacy preview
+    endpoint: both call this function, so the preview cannot drift from what
+    is actually sent. ``profiles`` is the outgoing copy (redacted per the
+    session/file privacy levels, with neutral staged filenames);
+    ``sandbox_files`` maps each staged name to its real storage path.
+    """
+    session = await store.get_session_privacy(user_id, chat_session)
+    session_level = session["privacy_level"] if session else DEFAULT_PRIVACY_LEVEL
+
+    datasets: list[dict[str, Any]] = []
+    unprofiled_files: list[dict[str, Any]] = []
+    files = await store.list_files(user_id, chat_session=chat_session)
+    for f in files:
+        profile = await _ensure_profile(store, f, user_id)
+        if profile is None:
+            unprofiled_files.append(
+                {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
+            )
+            continue
+        level = effective_level(f.get("privacy_level"), session_level)
+        aliases = _parse_aliases(f.get("column_aliases_json"))
+        serialized = _serialize_profile(profile)
+        try:
+            redacted = redact_profile(serialized, level, aliases)
+        except PrivacyError:
+            # A stale alias (the sheet changed, a column vanished) must not
+            # break the chat: fall back to the unaliased redaction.
+            logger.warning("Ignoring stale privacy aliases for file %s", f.get("id"))
+            redacted = redact_profile(serialized, level)
+        datasets.append(
+            {
+                "file_id": f["id"],
+                "filename": f["filename"],
+                "format": f["format"],
+                # The real storage path never leaves this function: the
+                # staged copy below replaces it with a neutral name.
+                "path": f["storage_path"],
+                # Authoritative dataset size, from the files table. The
+                # per-column profile stats (unique_count etc.) describe
+                # single columns and MUST NOT be read as dataset size —
+                # without this field the model once cited a column's
+                # unique_count as the row count.
+                "row_count": f.get("row_count"),
+                # Active sheet for XLSX; ``None`` for CSV/TSV/JSON. The
+                # system prompt uses this to tell the model to read the
+                # workbook with pd.read_excel(..., sheet_name=...).
+                "sheet_name": f.get("sheet_name"),
+                "profile": redacted,
+            }
+        )
+
+    outgoing, sandbox_files = stage_dataset_names(datasets)
+    return {
+        "profiles": outgoing,
+        "sandbox_files": sandbox_files,
+        "unprofiled_files": unprofiled_files,
+    }
+
+
 async def build_chat_context(
     store: SqliteStore,
     *,
@@ -101,42 +189,18 @@ async def build_chat_context(
         message_window: How many prior messages to include.
 
     Returns:
-        A dict with keys ``profiles`` (list), ``unprofiled_files`` (list),
-        ``crossing`` (the session's confirmed crossing recipe, or ``None``)
-        and ``messages`` (list of role/content dicts, oldest first).
+        A dict with keys ``profiles`` (list), ``sandbox_files`` (map),
+        ``unprofiled_files`` (list), ``crossing`` (the session's confirmed
+        crossing recipe, or ``None``) and ``messages`` (list of role/content
+        dicts, oldest first).
     """
-    # 1. Profile JSON for files in this session (ownership via JOIN files)
-    profiles: list[dict[str, Any]] = []
-    unprofiled_files: list[dict[str, Any]] = []
-    files = await store.list_files(user_id, chat_session=chat_session)
-    for f in files:
-        profile = await _ensure_profile(store, f, user_id)
-        if profile is not None:
-            profiles.append(
-                {
-                    "file_id": f["id"],
-                    "filename": f["filename"],
-                    "format": f["format"],
-                    # Absolute server-side path: the sandbox reads uploads
-                    # by exact path (its cwd is a fresh temp dir).
-                    "path": f["storage_path"],
-                    # Authoritative dataset size, from the files table. The
-                    # per-column profile stats (unique_count etc.) describe
-                    # single columns and MUST NOT be read as dataset size —
-                    # without this field the model once cited a column's
-                    # unique_count as the row count.
-                    "row_count": f.get("row_count"),
-                    # Active sheet for XLSX; ``None`` for CSV/TSV/JSON. The
-                    # system prompt uses this to tell the model to read the
-                    # workbook with pd.read_excel(..., sheet_name=...).
-                    "sheet_name": f.get("sheet_name"),
-                    "profile": _serialize_profile(profile),
-                }
-            )
-        else:
-            unprofiled_files.append(
-                {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
-            )
+    # 1. Redacted dataset block for this session (ownership via JOIN files)
+    outgoing = await build_outgoing_datasets(
+        store, user_id=user_id, chat_session=chat_session
+    )
+    profiles = outgoing["profiles"]
+    sandbox_files = outgoing["sandbox_files"]
+    unprofiled_files = outgoing["unprofiled_files"]
 
     # 2. The session's confirmed crossing (F5 / T3). One stays active per
     # session, so this is the whole recipe or nothing. A crossing whose files
@@ -163,6 +227,7 @@ async def build_chat_context(
 
     return {
         "profiles": profiles,
+        "sandbox_files": sandbox_files,
         "unprofiled_files": unprofiled_files,
         "crossing": crossing,
         "messages": messages,

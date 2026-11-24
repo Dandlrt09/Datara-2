@@ -28,6 +28,7 @@ from server.api.routers import (
     data_folder,
     export,
     files,
+    privacy,
     sessions,
     settings,
     usage,
@@ -243,6 +244,7 @@ app.include_router(data_folder.router)
 app.include_router(sessions.router)
 app.include_router(settings.router)
 app.include_router(files.router)
+app.include_router(privacy.router)
 app.include_router(crossings.router)
 app.include_router(chat.router)
 app.include_router(archive.router)

@@ -34,6 +34,18 @@ vi.mock("../queries/useSessions", () => ({
   useCreateSession: () => useCreateSessionMock(),
 }));
 
+// Each row renders the per-file privacy selector, which reads the session
+// privacy query and the file mutation. Stub both so the row renders without a
+// network call; the selector's own behavior is covered in privacy.test.tsx.
+vi.mock("../queries/usePrivacy", () => ({
+  useSessionPrivacy: () => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  }),
+  useUpdateFilePrivacy: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 /** Shape returned by both paged file hooks (`useFiles` / `useFilesGlobal`). */
 function listResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -170,9 +182,11 @@ describe("FilesView", () => {
     renderWithProviders(<FilesView />);
     expect(screen.getByText("sales.csv")).toBeTruthy();
 
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "ses-2" },
-    });
+    // Named query: each row now also renders a privacy combobox.
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Upload to session" }),
+      { target: { value: "ses-2" } },
+    );
 
     expect(screen.getByText("second.csv")).toBeTruthy();
     expect(screen.queryByText("sales.csv")).toBeNull();
