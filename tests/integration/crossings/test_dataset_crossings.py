@@ -215,6 +215,40 @@ class TestCreateCrossing:
             "crossing": None
         }
 
+    def test_a_failed_delete_rolls_back_and_keeps_the_crossing(
+        self, auth_client, session_id, two_files, store, user_id, monkeypatch
+    ):
+        """R4-delete-no-rollback (F5 review): when the delete cannot commit, the
+        crossing must survive. Without the rollback the removal stays pending in
+        the open transaction, so the connection's NEXT commit persists it: a
+        failed "quitar cruce" would silently take effect later.
+
+        The commit is forced to raise, the only way to reach the rollback path;
+        monkeypatching the connection keeps the test at the real transaction
+        boundary instead of mocking the store method.
+        """
+        left, right = two_files
+        created = auth_client.post(
+            f"/api/sessions/{session_id}/crossings", json=_body(left, right)
+        )
+        assert created.status_code == 200
+
+        attempts = {"commit": 0}
+
+        async def flaky_commit():
+            attempts["commit"] += 1
+            raise RuntimeError("forced failure at the delete's commit")
+
+        monkeypatch.setattr(store.conn, "commit", flaky_commit)
+
+        with pytest.raises(RuntimeError, match="forced failure"):
+            asyncio.run(store.delete_crossing(user_id, session_id))
+
+        # The commit was really attempted: the failure hit where intended.
+        assert attempts["commit"] == 1
+        # Rolled back, so the crossing the analyst had is still the active one.
+        assert asyncio.run(store.get_crossing(user_id, session_id)) is not None
+
 
 class TestCreateCrossingRejections:
     def test_a_key_that_is_not_a_column_is_refused(

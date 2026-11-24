@@ -1009,7 +1009,7 @@ async def chat_stream(
             # empty, so the grounding message is byte-identical to before.
             crossing = context.get("crossing")
             table_identity = ""
-            if crossing:
+            if _crossing_datasets_are_profiled(context.get("profiles"), crossing):
                 table_identity = (
                     "\n\nThe table shown is the result of crossing "
                     f"'{crossing.get('left_filename', '')}' with "

@@ -1810,11 +1810,15 @@ class SqliteStore:
         Returns the number of deleted rows, so the route can answer 204 either
         way: a session without a crossing has nothing to remove.
         """
-        cursor = await self.conn.execute(
-            "DELETE FROM dataset_crossings WHERE chat_session = ? AND user_id = ?",
-            (chat_session, user_id),
-        )
-        await self.conn.commit()
+        try:
+            cursor = await self.conn.execute(
+                "DELETE FROM dataset_crossings WHERE chat_session = ? AND user_id = ?",
+                (chat_session, user_id),
+            )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
         return cursor.rowcount
 
     async def upsert_profile(
