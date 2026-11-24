@@ -7,13 +7,18 @@ import { QueryError } from "../components/ErrorCard";
 import { SheetPicker } from "../components/SheetPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProfileTable } from "../components/ProfileTable";
+import { FilePrivacySelect } from "../components/PrivacySelect";
 import { UPLOAD_ACCEPT_MAP } from "../lib/uploadFormats";
 import { usePreferences, formatNumber } from "../lib/preferences";
 
 /** Row shape rendered by the table. `FileListItem` already satisfies it; the
- * per-session endpoint returns `FileResponse` (no `session_title`), so the
- * session view fills that column from the selected session. */
-type FileRowModel = UploadedFile & { session_title: string | null };
+ * per-session endpoint returns `FileResponse` (no `session_title` and no
+ * `chat_session_id`), so the session view fills both from the selected
+ * session. `chat_session_id` scopes the per-row privacy selector. */
+type FileRowModel = UploadedFile & {
+  session_title: string | null;
+  chat_session_id?: string | null;
+};
 
 /** The two mutually exclusive list sources. */
 type FilesViewFilter = "session" | "all";
@@ -103,6 +108,7 @@ export default function FilesView() {
     viewFilter === "session"
       ? (sessionFiles.data ?? []).map((f) => ({
           ...f,
+          chat_session_id: effectiveSessionId,
           session_title: selectedSessionTitle,
         }))
       : globalFiles.data;
@@ -168,6 +174,7 @@ export default function FilesView() {
       <div style={{ marginBottom: 16 }}>
         <label style={{ marginRight: 8 }}>Upload to session:</label>
         <select
+          aria-label="Upload to session"
           value={effectiveSessionId ?? ""}
           onChange={(e) => setSelectedSessionId(e.target.value || null)}
           disabled={!hasSessions}
@@ -367,7 +374,7 @@ function FileRow({
   onDelete,
   deletePending,
 }: {
-  file: { id: number; filename: string; format: string; row_count?: number | null; size_bytes: number; session_title: string | null; has_profile?: boolean };
+  file: { id: number; filename: string; format: string; row_count?: number | null; size_bytes: number; session_title: string | null; chat_session_id?: string | null; has_profile?: boolean };
   onDelete: () => void;
   deletePending: boolean;
 }) {
@@ -497,6 +504,13 @@ function FileRow({
             currentSheet={sheetsQuery.data.default_sheet}
           />
         )}
+        <span style={{ marginRight: 8, whiteSpace: "nowrap" }}>
+          <FilePrivacySelect
+            fileId={file.id}
+            sessionId={file.chat_session_id ?? null}
+            filename={file.filename}
+          />
+        </span>
         <a
           href={`/api/files/${file.id}/download`}
           download={file.filename}
