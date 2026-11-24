@@ -29,7 +29,7 @@ const JOIN_KINDS: { value: JoinKind; label: string }[] = [
 ];
 
 /** One refusal copy for every failed crossing request (S5-6). */
-const SAVE_ERROR = "No se pudo guardar el cruce. Prueba de nuevo.";
+const REQUEST_ERROR = "No se pudo guardar el cruce. Prueba de nuevo.";
 
 const NOT_FOUND =
   "El modelo no encontró una columna para cruzar. Elige las columnas a mano.";
@@ -124,7 +124,7 @@ export default function CrossingPanel({
         setProposalLine(UNAVAILABLE);
       }
     } catch {
-      setError(SAVE_ERROR);
+      setError(REQUEST_ERROR);
     }
   };
 
@@ -150,7 +150,7 @@ export default function CrossingPanel({
           `${formatNumber(d.right_only_rows, numberFormat)} quedaron afuera de «${confirmed.right_filename}».`,
       );
     } catch {
-      setError(SAVE_ERROR);
+      setError(REQUEST_ERROR);
     }
   };
 
@@ -159,7 +159,7 @@ export default function CrossingPanel({
     try {
       await remove.mutateAsync();
     } catch {
-      setError(SAVE_ERROR);
+      setError(REQUEST_ERROR);
     }
   };
 

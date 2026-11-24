@@ -9,6 +9,7 @@ Tests verify:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -695,6 +696,83 @@ class TestCrossingReachesTheModel:
         grounding_user_content = captured_calls[1][-1]["content"]
         assert _GROUNDING_CROSSING_FRAGMENT in grounding_user_content, (
             "The grounding pass must know which table it describes: "
+            f"{grounding_user_content!r}"
+        )
+
+    async def test_crossing_is_omitted_from_the_narrator_when_a_side_is_unprofiled(
+        self, client, auth_cookie, session_id, store
+    ):
+        """D9 / R4-grounding-identity-unguarded: the grounding pass must use
+        the SAME guard as the main prompt.
+
+        With one side of the active crossing not among the profiled datasets
+        the prompt omits the crossing block; the narrator must not announce a
+        crossing the model was never told about.
+        """
+        left = _upload_csv(client, auth_cookie, session_id, "customers.csv", _CUSTOMERS_CSV)
+        right = _upload_csv(client, auth_cookie, session_id, "orders.csv", _ORDERS_CSV)
+        _confirm_crossing(client, auth_cookie, session_id, left, right)
+
+        # Build the unprofiled state AFTER the confirm: the confirm route
+        # reads both datasets, so a file missing on disk is refused with 422
+        # ``crossing_dataset_unreadable``. Dropping the profile row alone is
+        # not enough either — with the row gone but the bytes still present,
+        # the lazy re-profile re-caches it. So: delete the row AND unlink the
+        # file. The files row stays: ``dataset_crossings`` cascades on it, so
+        # deleting it would kill the crossing under test.
+        user = await store.get_user_by_email("costguard@example.com")
+        right_file = await store.get_file(right, user["id"])
+        await store.conn.execute("DELETE FROM profiles WHERE file_id = ?", (right,))
+        await store.conn.commit()
+        os.remove(right_file["storage_path"])
+
+        captured_calls: list[list[dict]] = []
+        call_count = 0
+
+        def _two_phase_fake(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            captured_calls.append(kwargs.get("messages", []))
+            if call_count == 1:
+                return _make_openai_fake(json.dumps({
+                    "code": (
+                        "import pandas as pd\n"
+                        "df_result = pd.DataFrame({'customer_id': [1, 2]})\n"
+                        "print(df_result)"
+                    ),
+                    "explanation": "El cruce confirmado tiene dos clientes.",
+                }))
+            return _make_openai_fake("El cruce entre clientes y pedidos tiene 2 filas.")
+
+        mock_create = AsyncMock(side_effect=_two_phase_fake)
+        with patch("server.services.llm_openai.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={"question": "¿cuántos clientes tienen pedidos?"},
+                headers={"Cookie": auth_cookie},
+            )
+            assert resp.status_code == 200
+
+        assert call_count == 2, f"expected main+grounding calls, got {call_count}"
+
+        # The crossing is still the session's active recipe...
+        context = await build_chat_context(
+            store, user_id=user["id"], chat_session=session_id
+        )
+        assert context["crossing"] is not None
+        # ...but with one side unprofiled the prompt already omits it, so the
+        # grounding pass must omit the identity line too.
+        main_system_prompt = captured_calls[0][0]["content"]
+        assert (
+            "IMPORTANT — dataset crossing (confirmed by the user):"
+            not in main_system_prompt
+        )
+        grounding_user_content = captured_calls[1][-1]["content"]
+        assert _GROUNDING_CROSSING_FRAGMENT not in grounding_user_content, (
+            "The narrator must not announce a crossing the prompt omitted: "
             f"{grounding_user_content!r}"
         )
 
