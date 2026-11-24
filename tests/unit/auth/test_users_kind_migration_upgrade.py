@@ -101,6 +101,21 @@ def _dump(db_path: str, table: str, columns: str = "*") -> list[tuple]:
         conn.close()
 
 
+def _columns(db_path: str, table: str) -> str:
+    """The columns a table had BEFORE the upgrade.
+
+    Later migrations add columns (F6 adds the privacy level to chat_sessions
+    and files). The invariant under test is "every row survives", not "the
+    schema never grows", so the comparison uses the pre-upgrade columns.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        names = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+    finally:
+        conn.close()
+    return ", ".join(names)
+
+
 _USER_COLS = (
     "id, email, password_hash, created_at, pending_deletion_at, "
     "sessions_notice_seen_session_id, name, terms_version, terms_accepted_at, "
@@ -110,7 +125,8 @@ _USER_COLS = (
 
 def test_upgrade_keeps_every_row_of_every_table(tmp_path):
     db = _populated_legacy_db(tmp_path)
-    before = {t: _dump(db, t) for t in CHILD_TABLES}
+    legacy_columns = {t: _columns(db, t) for t in CHILD_TABLES}
+    before = {t: _dump(db, t, legacy_columns[t]) for t in CHILD_TABLES}
     before_users = _dump(db, "users", _USER_COLS)
     assert len(before_users) == 2
     assert all(len(before[t]) >= 0 for t in CHILD_TABLES)
@@ -120,7 +136,9 @@ def test_upgrade_keeps_every_row_of_every_table(tmp_path):
 
     assert _dump(db, "users", _USER_COLS) == before_users
     for table in CHILD_TABLES:
-        assert _dump(db, table) == before[table], f"{table} changed in the upgrade"
+        assert _dump(db, table, legacy_columns[table]) == before[table], (
+            f"{table} changed in the upgrade"
+        )
 
 
 def test_upgrade_leaves_no_orphans_and_keeps_the_foreign_keys(tmp_path):
