@@ -84,20 +84,32 @@ class TestProfilesPresentPathUnchanged:
         assert "assign the single result table to a DataFrame variable named df_result" in prompt
 
 
-# Two profiled datasets of one session: the shape a crossing produces.
+# Two profiled datasets of one session, in the shape the app sends after F6:
+# neutral staged names (S1/D1) plus the real ``file_id`` the crossing recipe
+# matches on. The human filenames never appear here.
 _TWO_PROFILES = [
-    _PROFILE[0],
+    {
+        "file_id": 1,
+        "filename": "dataset_1.csv",
+        "format": "csv",
+        "path": "dataset_1.csv",
+        "row_count": 3,
+        "profile": {"columns": ["a", "b"], "stats": {}, "sample": []},
+    },
     {
         "file_id": 2,
-        "filename": "orders.csv",
+        "filename": "dataset_2.csv",
         "format": "csv",
-        "path": "/tmp/orders.csv",
+        "path": "dataset_2.csv",
         "row_count": 4,
         "profile": {"columns": ["order_id", "a"], "stats": {}, "sample": []},
     },
 ]
 
-# The stored recipe as the store returns it (F5 / S4, T1).
+# The stored recipe as the store returns it (F5 / S4, T1). It carries the REAL
+# filenames (the recipe is user-facing), so matching by filename would miss the
+# staged profiles entirely: the guard must match ``left_file_id`` /
+# ``right_file_id`` instead (F6-advisories S7).
 _CROSSING = {
     "id": 7,
     "chat_session": "session-1",
@@ -131,14 +143,24 @@ class TestCrossingBlock:
     def test_crossing_block_names_both_datasets_their_keys_and_the_join(self):
         prompt = build_system_prompt(_TWO_PROFILES, crossing=_CROSSING)
         assert (
-            "- left dataset: 'data.csv' (read it from its 'path' above), key 'a'"
+            "- left dataset: 'dataset_1.csv' (read it from its 'path' above), key 'a'"
             in prompt
         )
         assert (
-            "- right dataset: 'orders.csv' (read it from its 'path' above), key 'a'"
+            "- right dataset: 'dataset_2.csv' (read it from its 'path' above), key 'a'"
             in prompt
         )
         assert "- join kind: 'left'" in prompt
+
+    def test_crossing_block_never_renders_the_real_filenames(self):
+        """S7: the block renders the staged label, never the human name.
+
+        The recipe still carries the real filenames (it is user-facing); the
+        prompt must match it by ``file_id`` and print the staged ``path``.
+        """
+        prompt = build_system_prompt(_TWO_PROFILES, crossing=_CROSSING)
+        assert "data.csv" not in prompt
+        assert "orders.csv" not in prompt
 
     def test_crossing_block_ends_in_df_result(self):
         prompt = build_system_prompt(_TWO_PROFILES, crossing=_CROSSING)
@@ -164,9 +186,11 @@ class TestCrossingBlock:
         re-profile cannot rebuild it) must lose the block instead of pointing
         at a path that is nowhere in the prompt. The control line proves the
         full profile list does match the recipe, so this test cannot pass
-        merely because no filename ever matches.
+        merely because no file id ever matches.
         """
-        only_the_left_side = [{"filename": "data.csv", "path": "/tmp/data.csv"}]
+        only_the_left_side = [
+            {"file_id": 1, "filename": "dataset_1.csv", "path": "dataset_1.csv"}
+        ]
         prompt = build_system_prompt(only_the_left_side, crossing=_CROSSING)
         assert "dataset crossing" not in prompt
         assert _CROSSING_INSTRUCTION not in prompt

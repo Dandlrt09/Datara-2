@@ -18,7 +18,11 @@ A dataset profile travels in the ``_serialize_profile`` shape::
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 PRIVACY_LEVELS: tuple[str, ...] = ("full", "aggregates", "schema", "masked")
 DEFAULT_PRIVACY_LEVEL = "full"
@@ -58,18 +62,22 @@ def _mask_text(text: str) -> str:
 
 
 def mask_value(value: Any) -> Any:
-    """Mask one cell value while keeping its shape and type marker.
+    """Mask one cell value with a fixed, leak-free placeholder.
 
     ``None`` stays ``None``. Booleans become ``"***"`` because their truth
-    value is content even when the type is not. Numbers are masked through
-    their string form, so the digit count and the sign survive.
+    value is content even when the type is not. Any integer becomes ``"9"``
+    and any float becomes ``"9.9"``: no magnitude, no digit count and no
+    exponent form survives, and the sign is dropped (F6-advisories S2/D2).
+    Text keeps its shape (letters and digits replaced in place).
     """
     if value is None:
         return None
     if isinstance(value, bool):
         return "***"
-    if isinstance(value, (int, float)):
-        return _mask_text(repr(value))
+    if isinstance(value, int):
+        return "9"
+    if isinstance(value, float):
+        return "9.9"
     if isinstance(value, str):
         return _mask_text(value)
     return _mask_text(str(value))
@@ -103,6 +111,27 @@ def validate_aliases(
             raise PrivacyError(f"Duplicate alias {alias!r}.")
         targets.add(alias)
     return dict(aliases)
+
+
+def parse_aliases(raw: str | None) -> dict[str, Any]:
+    """Parse the stored column-alias JSON into an alias map.
+
+    The single parser for the app (F6-advisories S4): ``chat_context`` imports
+    this instead of keeping its own copy. Legacy or corrupt rows are ignored
+    (an empty map). Values are returned exactly as stored -- a JSON ``null``
+    stays ``None`` and is later rejected by :func:`validate_aliases`, never
+    silently coerced into the string ``"None"`` (D4).
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid column_aliases_json")
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return dict(parsed)
 
 
 def redact_profile(
@@ -163,13 +192,13 @@ def redact_profile(
 def stage_dataset_names(
     datasets: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Replace each real storage path with a neutral staged name.
+    """Replace each real filename and storage path with a neutral staged name.
 
     ``datasets`` entries carry ``filename``, ``format`` and ``path`` (the real
-    storage path). Returns ``(outgoing, staged)``: outgoing copies with ``path``
-    set to the staged name, and the ``staged -> storage_path`` map the sandbox
-    needs to materialize the files. The real filename stays in the outgoing
-    copy as the human label; only the directory leaves the picture.
+    storage path). Returns ``(outgoing, staged)``: outgoing copies with both
+    ``path`` and ``filename`` set to the staged name (F6-advisories S1/D1), so
+    no human label reaches the provider, and the ``staged -> storage_path`` map
+    the sandbox needs to materialize the files.
     """
     outgoing: list[dict[str, Any]] = []
     staged: dict[str, str] = {}
@@ -178,6 +207,7 @@ def stage_dataset_names(
         name = f"dataset_{index}.{suffix}"
         copy = dict(dataset)
         copy["path"] = name
+        copy["filename"] = name
         outgoing.append(copy)
         storage_path = dataset.get("path")
         if storage_path:

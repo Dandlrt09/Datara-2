@@ -21,7 +21,9 @@ from server.api.routers import auth as auth_router
 from server.api.routers import crossings as crossings_router
 from server.api.routers import files as files_router
 from server.api.routers import sessions as sessions_router
+from server.api.routers.chat import build_system_prompt
 from server.api.upload_guard import install_upload_guard
+from server.services.chat_context import build_chat_context
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations, register_verified
 
@@ -248,6 +250,38 @@ class TestCreateCrossing:
         assert attempts["commit"] == 1
         # Rolled back, so the crossing the analyst had is still the active one.
         assert asyncio.run(store.get_crossing(user_id, session_id)) is not None
+
+
+class TestCrossingPromptUsesStagedLabels:
+    """S7: the F5 crossing survives the F6 filename neutralization.
+
+    The stored recipe still carries the real filenames (it is user-facing), so
+    the guard matches by ``file_id`` and the prompt prints the staged label
+    ('dataset_N.ext'), never the human name.
+    """
+
+    def test_prompt_renders_the_staged_labels_not_the_real_names(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        left, right = two_files
+        auth_client.post(
+            f"/api/sessions/{session_id}/crossings", json=_body(left, right)
+        )
+        context = asyncio.run(
+            build_chat_context(store, user_id=user_id, chat_session=session_id)
+        )
+        prompt = build_system_prompt(context["profiles"], crossing=context["crossing"])
+        staged = {p["file_id"]: p["path"] for p in context["profiles"]}
+        assert (
+            f"- left dataset: '{staged[left]}' (read it from its 'path' above), "
+            "key 'customer_id'"
+        ) in prompt
+        assert (
+            f"- right dataset: '{staged[right]}' (read it from its 'path' above), "
+            "key 'customer_id'"
+        ) in prompt
+        assert "customers.csv" not in prompt
+        assert "orders.csv" not in prompt
 
 
 class TestCreateCrossingRejections:

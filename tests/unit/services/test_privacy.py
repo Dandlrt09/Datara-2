@@ -6,6 +6,7 @@ from server.services.privacy import (
     PrivacyError,
     effective_level,
     mask_value,
+    parse_aliases,
     redact_profile,
     stage_dataset_names,
     validate_level,
@@ -103,7 +104,9 @@ class TestMaskedLevel:
             "Xxx Xxxxx",
             "Xxxx Xxxxx",
         ]
-        assert redacted["stats"]["monto"]["sample_values"] == ["999.99", "99.9"]
+        # D2/S2: every number collapses to a fixed placeholder, whatever its
+        # magnitude or digit count.
+        assert redacted["stats"]["monto"]["sample_values"] == ["9.9", "9.9"]
 
     def test_masked_drops_disclosing_aggregates(self):
         redacted = redact_profile(_profile(), "masked")
@@ -119,8 +122,8 @@ class TestMaskedLevel:
     def test_masked_rows_are_masked(self):
         redacted = redact_profile(_profile(), "masked")
         assert redacted["sample"] == [
-            {"nombre": "Xxx Xxxxx", "monto": "999.99"},
-            {"nombre": "Xxxx Xxxxx", "monto": "99.9"},
+            {"nombre": "Xxx Xxxxx", "monto": "9.9"},
+            {"nombre": "Xxxx Xxxxx", "monto": "9.9"},
         ]
 
 
@@ -134,11 +137,20 @@ class TestMaskValue:
     def test_letters_keep_their_case(self):
         assert mask_value("Ana Pérez") == "Xxx Xxxxx"
 
-    def test_digits_become_nines(self):
-        assert mask_value(123.45) == "999.99"
+    def test_int_is_a_fixed_nine(self):
+        assert mask_value(42) == "9"
 
-    def test_negative_sign_survives(self):
-        assert mask_value(-42) == "-99"
+    def test_float_is_a_fixed_nine_dot_nine(self):
+        assert mask_value(123.45) == "9.9"
+
+    def test_sign_is_dropped(self):
+        assert mask_value(-42) == "9"
+
+    def test_digit_count_is_not_disclosed(self):
+        assert mask_value(1234567) == "9"
+
+    def test_exponent_form_is_not_disclosed(self):
+        assert mask_value(1e20) == "9.9"
 
 
 class TestAliases:
@@ -166,14 +178,15 @@ class TestAliases:
 
 
 class TestStageDatasetNames:
-    def test_paths_become_neutral_names(self):
+    def test_paths_and_filenames_become_neutral_names(self):
         datasets = [
             {"filename": "clientes.xlsx", "format": "xlsx", "path": "/real/a.xlsx"},
             {"filename": "ventas.csv", "format": "csv", "path": "/real/b.csv"},
         ]
         outgoing, staged = stage_dataset_names(datasets)
         assert [d["path"] for d in outgoing] == ["dataset_1.xlsx", "dataset_2.csv"]
-        assert [d["filename"] for d in outgoing] == ["clientes.xlsx", "ventas.csv"]
+        # S1/D1: the real filename must not reach the provider either.
+        assert [d["filename"] for d in outgoing] == ["dataset_1.xlsx", "dataset_2.csv"]
         assert staged == {
             "dataset_1.xlsx": "/real/a.xlsx",
             "dataset_2.csv": "/real/b.csv",
@@ -184,3 +197,36 @@ class TestStageDatasetNames:
             [{"filename": "a.csv", "format": "csv", "path": "/secret/a.csv"}]
         )
         assert "/secret" not in str(outgoing)
+
+    def test_no_real_filename_survives(self):
+        outgoing, _ = stage_dataset_names(
+            [
+                {
+                    "filename": "clientes-ACME.csv",
+                    "format": "csv",
+                    "path": "/real/clientes.csv",
+                }
+            ]
+        )
+        assert "clientes-ACME" not in str(outgoing)
+        assert outgoing[0]["filename"] == "dataset_1.csv"
+
+
+class TestParseAliases:
+    def test_empty_raw_is_an_empty_map(self):
+        assert parse_aliases(None) == {}
+        assert parse_aliases("") == {}
+
+    def test_invalid_json_is_ignored(self):
+        assert parse_aliases("not json") == {}
+
+    def test_non_dict_json_is_ignored(self):
+        assert parse_aliases("[]") == {}
+
+    def test_a_null_alias_is_not_stringified(self):
+        # S4/D4: never coerce JSON null into the string "None".
+        assert parse_aliases('{"nombre": null}') == {"nombre": None}
+
+    def test_a_null_alias_is_a_validation_error(self):
+        with pytest.raises(PrivacyError):
+            redact_profile(_profile(), "full", aliases=parse_aliases('{"nombre": null}'))

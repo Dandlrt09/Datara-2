@@ -23,6 +23,7 @@ from server.services.privacy import (
     PRIVACY_LEVELS,
     PrivacyError,
     effective_level,
+    parse_aliases,
     validate_aliases,
     validate_level,
 )
@@ -54,16 +55,6 @@ class SessionPrivacyResponse(BaseModel):
     privacy_level: str
     levels: list[str]
     files: list[FilePrivacyEntry]
-
-
-def _parse_aliases(raw: str | None) -> dict[str, str] | None:
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 def _level_error(exc: PrivacyError) -> HTTPException:
@@ -103,7 +94,7 @@ async def get_session_privacy(
             effective_level=effective_level(
                 row.get("privacy_level"), session_level
             ),
-            column_aliases=_parse_aliases(row.get("column_aliases_json")),
+            column_aliases=parse_aliases(row.get("column_aliases_json")) or None,
         )
         for row in files
     ]
@@ -214,7 +205,7 @@ async def update_file_privacy(
         effective_level=effective_level(
             updated.get("privacy_level"), session_level
         ),
-        column_aliases=_parse_aliases(updated.get("column_aliases_json")),
+        column_aliases=parse_aliases(updated.get("column_aliases_json")) or None,
     )
 
 
