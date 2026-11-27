@@ -303,6 +303,22 @@ def _build_repair_feedback(error: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _staged_label_for_file(
+    profiles: list[dict[str, Any]] | None,
+    file_id: Any,
+) -> str | None:
+    """The staged name (``dataset_N.ext``) of the profile for *file_id*.
+
+    Profiles are matched by ``file_id`` (F6-advisories S7): F6 neutralizes the
+    outgoing ``filename``/``path`` to the staged label, so the crossing's real
+    ``left_filename``/``right_filename`` no longer identify a profile.
+    """
+    for profile in profiles or []:
+        if profile.get("file_id") == file_id:
+            return profile.get("path")
+    return None
+
+
 def _crossing_datasets_are_profiled(
     profiles: list[dict[str, Any]] | None,
     crossing: dict[str, Any] | None,
@@ -315,14 +331,16 @@ def _crossing_datasets_are_profiled(
     re-profiled by the lazy path either. With no profile for that side the
     no-datasets branch already refuses to write code, and emitting both
     instructions at once would contradict itself.
+
+    Matching is by ``file_id`` (F6-advisories S7), because F6 sends only staged
+    filenames: the crossing's real filenames must not decide this.
     """
     if not crossing:
         return False
-    described = {profile.get("filename") for profile in profiles or []}
-    return {
-        crossing.get("left_filename"),
-        crossing.get("right_filename"),
-    } <= described
+    return (
+        _staged_label_for_file(profiles, crossing.get("left_file_id")) is not None
+        and _staged_label_for_file(profiles, crossing.get("right_file_id")) is not None
+    )
 
 
 def build_system_prompt(
@@ -403,12 +421,16 @@ def build_system_prompt(
         # F5 / T3: the analyst confirmed this recipe, so the turn's dataset is
         # the crossing's RESULT. The instruction ends on the label the sandbox
         # publishes (df_result), which is the only table the user will see.
+        # S7: each side is named by its staged label (the profile's 'path'),
+        # never the real filename the crossing carries.
+        left_label = _staged_label_for_file(profiles, crossing.get("left_file_id"))
+        right_label = _staged_label_for_file(profiles, crossing.get("right_file_id"))
         system_prompt += (
             "\n\nIMPORTANT — dataset crossing (confirmed by the user):"
-            f"\n- left dataset: '{crossing.get('left_filename', '')}' "
+            f"\n- left dataset: '{left_label}' "
             "(read it from its 'path' above), "
             f"key '{crossing.get('left_key', '')}'"
-            f"\n- right dataset: '{crossing.get('right_filename', '')}' "
+            f"\n- right dataset: '{right_label}' "
             "(read it from its 'path' above), "
             f"key '{crossing.get('right_key', '')}'"
             f"\n- join kind: '{crossing.get('how', '')}'"
@@ -1010,11 +1032,19 @@ async def chat_stream(
             # empty, so the grounding message is byte-identical to before.
             crossing = context.get("crossing")
             table_identity = ""
-            if _crossing_datasets_are_profiled(context.get("profiles"), crossing):
+            crossing_profiles = context.get("profiles")
+            if _crossing_datasets_are_profiled(crossing_profiles, crossing):
+                # S7: the narrator names each side by its staged label too.
+                left_label = _staged_label_for_file(
+                    crossing_profiles, crossing.get("left_file_id")
+                )
+                right_label = _staged_label_for_file(
+                    crossing_profiles, crossing.get("right_file_id")
+                )
                 table_identity = (
                     "\n\nThe table shown is the result of crossing "
-                    f"'{crossing.get('left_filename', '')}' with "
-                    f"'{crossing.get('right_filename', '')}' on "
+                    f"'{left_label}' with "
+                    f"'{right_label}' on "
                     f"'{crossing.get('left_key', '')}' = "
                     f"'{crossing.get('right_key', '')}' "
                     f"('{crossing.get('how', '')}' join)."

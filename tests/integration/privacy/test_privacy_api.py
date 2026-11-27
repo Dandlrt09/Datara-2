@@ -400,6 +400,21 @@ class TestPreview:
             for profile in preview["profiles"]:
                 assert profile["path"].startswith("dataset_")
                 assert "/" not in profile["path"]
+                # S1/D1: the human filename is neutralized too, at every level.
+                assert profile["filename"] == profile["path"]
+
+    def test_no_real_filename_survives_at_any_level(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S1/D1: no human label reaches the provider, only the staged name."""
+        for level in PRIVACY_LEVELS:
+            _set_session_level(auth_client, session_id, level)
+            blob = json.dumps(_preview(auth_client, session_id))
+            for real_name in ("customers.csv", "orders.csv"):
+                assert real_name not in blob
+            for profile in _preview(auth_client, session_id)["profiles"]:
+                assert profile["filename"].startswith("dataset_")
+                assert profile["filename"] == profile["path"]
 
     @pytest.mark.parametrize("level", ["aggregates", "schema", "masked", "full"])
     def test_preview_per_level(
@@ -494,7 +509,11 @@ class TestPreview:
         self, auth_client, session_id, store, user_id
     ):
         """A file row that cannot be profiled is reported to the viewer instead
-        of being silently dropped from the outgoing block."""
+        of being silently dropped from the outgoing block.
+
+        S1 scope: ``unprofiled_files`` never reaches the provider, so its real
+        filename stays (D1).
+        """
         row = asyncio.run(
             store.create_file(
                 user_id=user_id,
@@ -510,6 +529,66 @@ class TestPreview:
         assert preview["unprofiled_files"] == [
             {"file_id": row["id"], "filename": "no-profile.csv", "format": "csv"}
         ]
+
+    def test_a_corrupt_file_level_falls_back_to_the_session_level(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S3/D3: an unknown stored file level must not kill the chat turn; it
+        degrades to the session level."""
+        first, _ = two_files
+        _set_session_level(auth_client, session_id, "schema")
+        asyncio.run(store.set_file_privacy(first, user_id, "nope", None))
+        preview = _preview(auth_client, session_id)
+        target = next(
+            entry for entry in preview["profiles"] if entry["file_id"] == first
+        )
+        assert target["profile"]["stats"] == {}
+        assert target["profile"]["sample"] == []
+
+    def test_a_corrupt_session_level_falls_back_to_full(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S3/D3: when the session level is also invalid, the documented
+        default (``full``) applies and the turn still succeeds."""
+        asyncio.run(store.set_session_privacy(user_id, session_id, "nope"))
+        preview = _preview(auth_client, session_id)
+        assert len(preview["profiles"]) == 2
+        for entry in preview["profiles"]:
+            raw = asyncio.run(get_profile(store, entry["file_id"], user_id))
+            assert entry["profile"]["stats"] == raw["stats"]
+            assert entry["profile"]["sample"] == raw["sample"][:5]
+
+    def test_a_corrupt_file_level_with_a_corrupt_session_level_is_full(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S3/D3: both levels invalid still resolves to ``full``, never a 500."""
+        first, _ = two_files
+        asyncio.run(store.set_session_privacy(user_id, session_id, "nope"))
+        asyncio.run(store.set_file_privacy(first, user_id, "also-nope", None))
+        preview = _preview(auth_client, session_id)
+        raw = asyncio.run(get_profile(store, first, user_id))
+        target = next(
+            entry for entry in preview["profiles"] if entry["file_id"] == first
+        )
+        assert target["profile"]["stats"] == raw["stats"]
+
+    def test_a_null_alias_is_not_stringified(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S4/D4: a stored JSON ``null`` alias value is a validation error, not
+        the string ``"None"``; the real column name survives instead."""
+        first, _ = two_files
+        source = _columns(store, first, user_id)[1]
+        asyncio.run(
+            store.set_file_privacy(first, user_id, None, json.dumps({source: None}))
+        )
+        preview = _preview(auth_client, session_id)
+        target = next(
+            entry for entry in preview["profiles"] if entry["file_id"] == first
+        )
+        names = [column["name"] for column in target["profile"]["columns"]]
+        assert "None" not in names
+        assert source in names
 
     def test_preview_of_another_users_session_is_a_404(self, other_client, session_id):
         resp = other_client.get(f"/api/sessions/{session_id}/privacy/preview")

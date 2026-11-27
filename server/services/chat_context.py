@@ -8,7 +8,6 @@ window of the last N messages.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from typing import Any
@@ -17,6 +16,7 @@ from server.services.privacy import (
     DEFAULT_PRIVACY_LEVEL,
     PrivacyError,
     effective_level,
+    parse_aliases,
     redact_profile,
     stage_dataset_names,
 )
@@ -92,18 +92,22 @@ async def _ensure_profile(
         return None
 
 
-def _parse_aliases(raw: str | None) -> dict[str, str]:
-    """Parse the stored column-alias JSON, tolerating legacy or corrupt rows."""
-    if not raw:
-        return {}
+def _resolve_level(file_level: str | None, session_level: str | None) -> str:
+    """Resolve a stored privacy level without ever raising (F6-advisories D3).
+
+    An unknown file level falls back to the session level; an unknown session
+    level falls back to the documented default. A corrupt ``privacy_level``
+    row must never kill the chat turn.
+    """
     try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        logger.warning("Ignoring invalid column_aliases_json")
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    return {str(key): str(value) for key, value in parsed.items()}
+        return effective_level(file_level, session_level)
+    except PrivacyError:
+        logger.warning("Ignoring invalid file privacy level %r", file_level)
+    try:
+        return effective_level(None, session_level)
+    except PrivacyError:
+        logger.warning("Ignoring invalid session privacy level %r", session_level)
+        return DEFAULT_PRIVACY_LEVEL
 
 
 async def build_outgoing_datasets(
@@ -133,8 +137,8 @@ async def build_outgoing_datasets(
                 {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
             )
             continue
-        level = effective_level(f.get("privacy_level"), session_level)
-        aliases = _parse_aliases(f.get("column_aliases_json"))
+        level = _resolve_level(f.get("privacy_level"), session_level)
+        aliases = parse_aliases(f.get("column_aliases_json"))
         serialized = _serialize_profile(profile)
         try:
             redacted = redact_profile(serialized, level, aliases)

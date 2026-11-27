@@ -569,11 +569,6 @@ class TestGroundingTableContext:
 _CUSTOMERS_CSV = b"customer_id,name\n1,Ana\n2,Beto\n"
 _ORDERS_CSV = b"order_id,customer_id,total\n10,1,100\n11,2,75\n"
 
-_GROUNDING_CROSSING_FRAGMENT = (
-    "The table shown is the result of crossing 'customers.csv' with "
-    "'orders.csv' on 'customer_id' = 'customer_id' ('inner' join)."
-)
-
 
 def _upload_csv(client, cookie: str, session_id: str, filename: str, content: bytes) -> int:
     """Attach one CSV to the session and return its file id."""
@@ -680,21 +675,38 @@ class TestCrossingReachesTheModel:
 
         assert call_count == 2, f"expected main+grounding calls, got {call_count}"
 
+        # S7: the prompt names each side by its staged label ('dataset_N.ext'),
+        # never the real filename the analyst uploaded. The staged name is the
+        # profile's ``path``, resolved here from the live context.
+        user = await store.get_user_by_email("costguard@example.com")
+        context = await build_chat_context(
+            store, user_id=user["id"], chat_session=session_id
+        )
+        staged = {p["file_id"]: p["path"] for p in context["profiles"]}
+        left_label, right_label = staged[left], staged[right]
+
         main_system_prompt = captured_calls[0][0]["content"]
         assert "IMPORTANT — dataset crossing (confirmed by the user):" in main_system_prompt
         assert (
-            "- left dataset: 'customers.csv' (read it from its 'path' above), "
+            f"- left dataset: '{left_label}' (read it from its 'path' above), "
             "key 'customer_id'"
         ) in main_system_prompt
         assert (
-            "- right dataset: 'orders.csv' (read it from its 'path' above), "
+            f"- right dataset: '{right_label}' (read it from its 'path' above), "
             "key 'customer_id'"
         ) in main_system_prompt
         assert "- join kind: 'inner'" in main_system_prompt
         assert "the existing capture rule only publishes df_result" in main_system_prompt
+        # The human filenames must not leak into the prompt either.
+        assert "customers.csv" not in main_system_prompt
+        assert "orders.csv" not in main_system_prompt
 
         grounding_user_content = captured_calls[1][-1]["content"]
-        assert _GROUNDING_CROSSING_FRAGMENT in grounding_user_content, (
+        expected_identity = (
+            f"The table shown is the result of crossing '{left_label}' with "
+            f"'{right_label}' on 'customer_id' = 'customer_id' ('inner' join)."
+        )
+        assert expected_identity in grounding_user_content, (
             "The grounding pass must know which table it describes: "
             f"{grounding_user_content!r}"
         )
@@ -771,7 +783,7 @@ class TestCrossingReachesTheModel:
             not in main_system_prompt
         )
         grounding_user_content = captured_calls[1][-1]["content"]
-        assert _GROUNDING_CROSSING_FRAGMENT not in grounding_user_content, (
+        assert "The table shown is the result of crossing" not in grounding_user_content, (
             "The narrator must not announce a crossing the prompt omitted: "
             f"{grounding_user_content!r}"
         )
