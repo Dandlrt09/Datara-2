@@ -9,6 +9,7 @@ from server.services.privacy import (
     parse_aliases,
     redact_profile,
     stage_dataset_names,
+    validate_aliases,
     validate_level,
 )
 
@@ -223,10 +224,22 @@ class TestParseAliases:
     def test_non_dict_json_is_ignored(self):
         assert parse_aliases("[]") == {}
 
-    def test_a_null_alias_is_not_stringified(self):
+    def test_a_null_alias_entry_is_dropped_not_stringified(self):
         # S4/D4: never coerce JSON null into the string "None".
-        assert parse_aliases('{"nombre": null}') == {"nombre": None}
+        assert parse_aliases('{"nombre": null}') == {}
 
-    def test_a_null_alias_is_a_validation_error(self):
+    def test_a_malformed_entry_does_not_cost_the_valid_aliases(self):
+        # S2: one corrupt entry used to make validate_aliases raise, which
+        # discarded every good alias for that file. Only the bad entry goes.
+        aliases = parse_aliases('{"nombre": "cliente", "monto": 5}')
+        assert aliases == {"nombre": "cliente"}
+        redacted = redact_profile(_profile(), "full", aliases=aliases)
+        names = [column["name"] for column in redacted["columns"]]
+        assert "cliente" in names
+        assert "monto" in names
+
+    def test_validate_aliases_still_rejects_a_null(self):
+        # The write path keeps rejecting malformed values, so they cannot be
+        # stored anew; only rows already stored are tolerated.
         with pytest.raises(PrivacyError):
-            redact_profile(_profile(), "full", aliases=parse_aliases('{"nombre": null}'))
+            validate_aliases({"nombre": None}, ["nombre", "monto"])

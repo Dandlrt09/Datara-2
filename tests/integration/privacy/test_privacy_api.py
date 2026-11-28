@@ -12,8 +12,10 @@ neutral name at every level.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 
+import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -24,7 +26,7 @@ from server.api.routers import privacy as privacy_router
 from server.api.routers import sessions as sessions_router
 from server.api.upload_guard import install_upload_guard
 from server.services.chat_context import build_outgoing_datasets
-from server.services.privacy import PRIVACY_LEVELS
+from server.services.privacy import PRIVACY_LEVELS, redact_profile
 from server.services.profile_cache import get_profile
 from server.services.sqlite_store import SqliteStore
 from tests.test_helpers import apply_all_migrations, register_verified
@@ -115,6 +117,26 @@ def _upload(auth_client, session_id, filename, content):
     return resp.json()["id"]
 
 
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for name, frame in sheets.items():
+            frame.to_excel(writer, sheet_name=name, index=False)
+    return buffer.getvalue()
+
+
+def _upload_xlsx(auth_client, session_id, filename, sheets):
+    resp = auth_client.post(
+        f"/api/sessions/{session_id}/files",
+        files={"file": (filename, _xlsx_bytes(sheets), _XLSX_MIME)},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
 @pytest.fixture
 def two_files(auth_client, session_id):
     """Two profiled CSVs in one session, so "one entry per file" is visible."""
@@ -145,6 +167,20 @@ def _preview(auth_client, session_id):
     resp = auth_client.get(f"/api/sessions/{session_id}/privacy/preview")
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+def _masked(store, file_id, user_id):
+    """The exact payload ``masked`` produces for a file's stored profile."""
+    raw = asyncio.run(get_profile(store, file_id, user_id))
+    assert raw is not None
+    return redact_profile(
+        {
+            "columns": raw["schema_data"]["columns"],
+            "stats": raw["stats"],
+            "sample": raw["sample"][:5],
+        },
+        "masked",
+    )
 
 
 class TestSessionPrivacy:
@@ -263,6 +299,61 @@ class TestFilePrivacy:
         listed = auth_client.get(f"/api/sessions/{session_id}/privacy").json()["files"]
         stored = next(item for item in listed if item["file_id"] == first)
         assert stored["column_aliases"] == {source: "col_renamed"}
+
+    def test_an_empty_alias_map_is_stored_as_no_aliases(
+        self, auth_client, session_id, two_files
+    ):
+        """S3: "no aliases" has exactly one shape (``null``). An empty map
+        clears the aliases instead of storing ``{}``, so no endpoint can
+        answer ``{}`` where another answers ``null``."""
+        first, _ = two_files
+        resp = auth_client.patch(
+            f"/api/files/{first}/privacy", json={"column_aliases": {}}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["column_aliases"] is None
+        listed = auth_client.get(f"/api/sessions/{session_id}/privacy").json()["files"]
+        stored = next(item for item in listed if item["file_id"] == first)
+        assert stored["column_aliases"] is None
+
+    def test_an_empty_alias_map_is_stored_as_null(
+        self, auth_client, session_id, two_files, store
+    ):
+        """S3: "no aliases" has one shape everywhere, storage included. A
+        stored ``'{}'`` would answer ``null`` through the reader but leave a
+        second shape in the DB for the next reader to find."""
+        first, _ = two_files
+        resp = auth_client.patch(
+            f"/api/files/{first}/privacy", json={"column_aliases": {}}
+        )
+        assert resp.status_code == 200, resp.text
+        rows = asyncio.run(
+            store.conn.execute_fetchall(
+                "SELECT column_aliases_json FROM files WHERE id = ?", (first,)
+            )
+        )
+        assert rows[0][0] is None
+
+    def test_one_malformed_stored_alias_keeps_the_valid_ones(
+        self, auth_client, session_id, two_files, store, user_id
+    ):
+        """S2: a legacy row mixing a valid alias with a malformed one keeps
+        the valid alias in the payload the provider sees."""
+        first, _ = two_files
+        source = _columns(store, first, user_id)[0]
+        asyncio.run(
+            store.set_file_privacy(
+                first, user_id, None, json.dumps({source: "renamed", "ghost": None})
+            )
+        )
+        target = next(
+            entry
+            for entry in _preview(auth_client, session_id)["profiles"]
+            if entry["file_id"] == first
+        )
+        names = [column["name"] for column in target["profile"]["columns"]]
+        assert "renamed" in names
+        assert "ghost" not in names
 
     def test_an_alias_source_that_is_not_a_column_is_a_422(
         self, auth_client, session_id, two_files
@@ -545,32 +636,57 @@ class TestPreview:
         assert target["profile"]["stats"] == {}
         assert target["profile"]["sample"] == []
 
-    def test_a_corrupt_session_level_falls_back_to_full(
+    def test_a_corrupt_session_level_falls_back_to_masked(
         self, auth_client, session_id, two_files, store, user_id
     ):
-        """S3/D3: when the session level is also invalid, the documented
-        default (``full``) applies and the turn still succeeds."""
+        """S1: when the session level is also invalid, the fallback is the
+        most restrictive level (``masked``), never the least (``full``).
+
+        Failing open here would send MORE than the session ever declared.
+        """
         asyncio.run(store.set_session_privacy(user_id, session_id, "nope"))
         preview = _preview(auth_client, session_id)
         assert len(preview["profiles"]) == 2
         for entry in preview["profiles"]:
-            raw = asyncio.run(get_profile(store, entry["file_id"], user_id))
-            assert entry["profile"]["stats"] == raw["stats"]
-            assert entry["profile"]["sample"] == raw["sample"][:5]
+            assert entry["profile"] == _masked(store, entry["file_id"], user_id)
 
-    def test_a_corrupt_file_level_with_a_corrupt_session_level_is_full(
+    def test_a_corrupt_file_level_with_a_corrupt_session_level_is_masked(
         self, auth_client, session_id, two_files, store, user_id
     ):
-        """S3/D3: both levels invalid still resolves to ``full``, never a 500."""
+        """S1: both levels invalid still resolves to ``masked``, never a 500."""
         first, _ = two_files
         asyncio.run(store.set_session_privacy(user_id, session_id, "nope"))
         asyncio.run(store.set_file_privacy(first, user_id, "also-nope", None))
         preview = _preview(auth_client, session_id)
-        raw = asyncio.run(get_profile(store, first, user_id))
         target = next(
             entry for entry in preview["profiles"] if entry["file_id"] == first
         )
-        assert target["profile"]["stats"] == raw["stats"]
+        assert target["profile"] == _masked(store, first, user_id)
+
+    def test_the_outgoing_payload_carries_the_sheet_index_not_its_label(
+        self, auth_client, session_id
+    ):
+        """S6: an XLSX dataset ships the selected sheet's POSITION, and the
+        user-typed label appears nowhere in the payload the provider sees."""
+        label = "Clientes ACME 2024"
+        file_id = _upload_xlsx(
+            auth_client,
+            session_id,
+            "ventas.xlsx",
+            {
+                "Resumen": pd.DataFrame({"a": [1, 2]}),
+                label: pd.DataFrame({"b": [3, 4]}),
+            },
+        )
+        resp = auth_client.post(
+            f"/api/files/{file_id}/sheet", json={"sheet_name": label}
+        )
+        assert resp.status_code == 200, resp.text
+        preview = _preview(auth_client, session_id)
+        entry = next(p for p in preview["profiles"] if p["file_id"] == file_id)
+        assert entry["sheet_index"] == 1
+        assert "sheet_name" not in entry
+        assert label not in json.dumps(preview)
 
     def test_a_null_alias_is_not_stringified(
         self, auth_client, session_id, two_files, store, user_id
