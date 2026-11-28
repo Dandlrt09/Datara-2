@@ -76,8 +76,8 @@ def _detect_delimiter(path: str, sample_size: int = 4096) -> str:
     return ","
 
 
-def _list_xlsx_sheets(path: str) -> list[str]:
-    """List sheet names in an XLSX file."""
+def list_xlsx_sheets(path: str) -> list[str]:
+    """List the sheet names of an XLSX file, in workbook order."""
     return pd.ExcelFile(path).sheet_names
 
 
@@ -138,7 +138,7 @@ def parse_upload(path: str, format_hint: str | None = None) -> tuple[pd.DataFram
             sheets=None,
         )
     elif ext == "xlsx":
-        sheets = _list_xlsx_sheets(path)
+        sheets = list_xlsx_sheets(path)
         sheet_name = sheets[0]  # default to first
         df = pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
         meta = ParseMeta(
@@ -185,7 +185,7 @@ def parse_upload_sheet(path: str, sheet_name: str) -> tuple[pd.DataFrame, ParseM
         raise FileNotFoundError(f"File not found: {path}")
 
     df = pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
-    sheets = _list_xlsx_sheets(path)
+    sheets = list_xlsx_sheets(path)
     meta = ParseMeta(
         encoding="utf-8",
         delimiter=None,

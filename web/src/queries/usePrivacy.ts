@@ -29,7 +29,8 @@ export interface OutgoingProfile {
   /** Neutral staged name (the real storage path never leaves the server). */
   path: string;
   row_count: number | null;
-  sheet_name: string | null;
+  /** Ordinal position of the selected sheet; the label never leaves the server. */
+  sheet_index: number | null;
   profile: {
     columns: { name: string; dtype: string }[];
     stats: Record<string, unknown>;

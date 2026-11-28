@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 PRIVACY_LEVELS: tuple[str, ...] = ("full", "aggregates", "schema", "masked")
 DEFAULT_PRIVACY_LEVEL = "full"
 
+# The ladder above runs least- to most-restrictive. A stored level that is not
+# on it must never degrade toward disclosure, so the corrupt-row fallback is
+# the last rung, never the default (F6-advisories-2 S1).
+CORRUPT_LEVEL_FALLBACK = PRIVACY_LEVELS[-1]
+
 
 class PrivacyError(ValueError):
     """An invalid privacy level or column alias map."""
@@ -113,14 +118,16 @@ def validate_aliases(
     return dict(aliases)
 
 
-def parse_aliases(raw: str | None) -> dict[str, Any]:
+def parse_aliases(raw: str | None) -> dict[str, str]:
     """Parse the stored column-alias JSON into an alias map.
 
     The single parser for the app (F6-advisories S4): ``chat_context`` imports
     this instead of keeping its own copy. Legacy or corrupt rows are ignored
-    (an empty map). Values are returned exactly as stored -- a JSON ``null``
-    stays ``None`` and is later rejected by :func:`validate_aliases`, never
-    silently coerced into the string ``"None"`` (D4).
+    (an empty map), and so is any entry that is not a non-empty string key
+    mapped to a non-empty string value (F6-advisories-2 S2). The malformed
+    entry is dropped, never coerced into the string ``"None"`` (D4), so one
+    bad row cannot cost the file its valid aliases. The write path still
+    rejects such a value outright: :func:`validate_aliases`.
     """
     if not raw:
         return {}
@@ -131,7 +138,11 @@ def parse_aliases(raw: str | None) -> dict[str, Any]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return dict(parsed)
+    return {
+        source: alias
+        for source, alias in parsed.items()
+        if source and isinstance(alias, str) and alias.strip()
+    }
 
 
 def redact_profile(

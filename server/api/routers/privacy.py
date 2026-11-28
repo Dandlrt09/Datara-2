@@ -186,7 +186,9 @@ async def update_file_privacy(
                     status_code=422,
                     detail={"code": "invalid_column_alias", "message": str(exc)},
                 ) from exc
-            aliases_raw = json.dumps(body.column_aliases)
+            aliases_raw = (
+                json.dumps(body.column_aliases) if body.column_aliases else None
+            )
 
     updated = await store.set_file_privacy(
         file_id, user["id"], level, aliases_raw

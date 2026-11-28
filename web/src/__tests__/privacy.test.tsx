@@ -64,7 +64,7 @@ const preview = {
       format: "xlsx",
       path: "dataset_1.xlsx",
       row_count: 2,
-      sheet_name: "Data",
+      sheet_index: 0,
       profile: {
         columns: [{ name: "nombre", dtype: "object" }],
         stats: {},

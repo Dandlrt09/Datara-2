@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 from server.services.privacy import (
+    CORRUPT_LEVEL_FALLBACK,
     DEFAULT_PRIVACY_LEVEL,
     PrivacyError,
     effective_level,
@@ -92,22 +93,88 @@ async def _ensure_profile(
         return None
 
 
-def _resolve_level(file_level: str | None, session_level: str | None) -> str:
-    """Resolve a stored privacy level without ever raising (F6-advisories D3).
+def _resolve_level(
+    file_id: Any,
+    file_level: str | None,
+    session_level: str | None,
+) -> str:
+    """Resolve a stored privacy level without ever raising.
 
-    An unknown file level falls back to the session level; an unknown session
-    level falls back to the documented default. A corrupt ``privacy_level``
-    row must never kill the chat turn.
+    An unknown file level falls back to the session level, which is a level the
+    user did declare. When nothing usable is left the most restrictive level
+    applies (F6-advisories-2 S1), so a corrupt row can never send more than the
+    user declared. A corrupt ``privacy_level`` row must never kill the chat turn
+    either (F6-advisories D3). The warnings name the affected file and the
+    fallback that applies (F6-advisories-2 S5).
     """
-    try:
-        return effective_level(file_level, session_level)
-    except PrivacyError:
-        logger.warning("Ignoring invalid file privacy level %r", file_level)
+    if file_level is not None:
+        try:
+            return effective_level(file_level, session_level)
+        except PrivacyError:
+            logger.warning(
+                "Ignoring invalid file privacy level %r for file %s; the "
+                "session level applies, or %r when it is not usable",
+                file_level,
+                file_id,
+                CORRUPT_LEVEL_FALLBACK,
+            )
+            if session_level is None:
+                # A missing session row is not a declaration of the default:
+                # it must not rescue a corrupt file level into disclosure.
+                logger.warning(
+                    "No session privacy level for file %s; falling back to %r",
+                    file_id,
+                    CORRUPT_LEVEL_FALLBACK,
+                )
+                return CORRUPT_LEVEL_FALLBACK
     try:
         return effective_level(None, session_level)
     except PrivacyError:
-        logger.warning("Ignoring invalid session privacy level %r", session_level)
-        return DEFAULT_PRIVACY_LEVEL
+        logger.warning(
+            "Ignoring invalid session privacy level %r for file %s; "
+            "falling back to %r",
+            session_level,
+            file_id,
+            CORRUPT_LEVEL_FALLBACK,
+        )
+        return CORRUPT_LEVEL_FALLBACK
+
+
+async def _sheet_index_for(file_row: dict[str, Any]) -> int | None:
+    """Ordinal index of the file's selected sheet, or ``None``.
+
+    F6-advisories-2 S6: the model receives the sheet's position, never the
+    user-typed label, so the label cannot leak through the outgoing profile or
+    the prompt. The staged copy is the real workbook, so reading by position is
+    equivalent. ``None`` when the file is not a workbook, has no selected
+    sheet, or the label can no longer be resolved in the stored file.
+    """
+    sheet_name = file_row.get("sheet_name")
+    if file_row.get("format") != "xlsx" or not sheet_name:
+        return None
+    # Imported lazily, after the guard: a CSV-only session must not pay for
+    # pandas on every turn just to build the outgoing payload.
+    from core.data.parser import list_xlsx_sheets  # noqa: PLC0415
+
+    try:
+        sheets = await asyncio.to_thread(
+            list_xlsx_sheets, file_row["storage_path"]
+        )
+    except Exception:
+        logger.warning(
+            "Could not list the sheets of file %s", file_row.get("id"), exc_info=True
+        )
+        return None
+    try:
+        return sheets.index(sheet_name)
+    except ValueError:
+        logger.warning(
+            "Sheet %r is no longer in file %s; the model will read the "
+            "workbook's default sheet",
+            sheet_name,
+            file_row.get("id"),
+        )
+        return None
 
 
 async def build_outgoing_datasets(
@@ -137,7 +204,7 @@ async def build_outgoing_datasets(
                 {"file_id": f["id"], "filename": f["filename"], "format": f["format"]}
             )
             continue
-        level = _resolve_level(f.get("privacy_level"), session_level)
+        level = _resolve_level(f["id"], f.get("privacy_level"), session_level)
         aliases = parse_aliases(f.get("column_aliases_json"))
         serialized = _serialize_profile(profile)
         try:
@@ -161,10 +228,11 @@ async def build_outgoing_datasets(
                 # without this field the model once cited a column's
                 # unique_count as the row count.
                 "row_count": f.get("row_count"),
-                # Active sheet for XLSX; ``None`` for CSV/TSV/JSON. The
-                # system prompt uses this to tell the model to read the
-                # workbook with pd.read_excel(..., sheet_name=...).
-                "sheet_name": f.get("sheet_name"),
+                # Position of the selected sheet for XLSX; ``None`` for
+                # CSV/TSV/JSON. The system prompt uses this to tell the model
+                # to read the workbook by position. The user-typed sheet label
+                # never leaves this function (F6-advisories-2 S6).
+                "sheet_index": await _sheet_index_for(f),
                 "profile": redacted,
             }
         )

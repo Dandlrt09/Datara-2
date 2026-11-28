@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
-from server.api.routers.chat import build_system_prompt
+from server.api.routers.chat import _staged_label_for_file, build_system_prompt
 
 # A fixed profile whose serialized form is deterministic (json.dumps keeps
 # dict insertion order), so the SHA-256 pins the exact bytes of the
@@ -42,6 +42,39 @@ _PROFILE = [
 _PROFILES_PROMPT_SHA256 = (
     "bbfa5991be210e9745af84b7d42214306ccb3e3cc6ae352a9a247ea00cede78b"
 )
+
+
+class TestStagedLabelLookup:
+    def test_a_missing_file_id_never_matches_a_profile(self):
+        """S4: a ``None`` lookup must not match a profile whose ``file_id`` is
+        absent or ``None`` -- the equality test used to treat them as equal."""
+        assert (
+            _staged_label_for_file([{"file_id": None, "path": "dataset_1.csv"}], None)
+            is None
+        )
+        assert _staged_label_for_file([{"path": "dataset_1.csv"}], None) is None
+        assert _staged_label_for_file(None, None) is None
+
+    def test_a_real_id_still_resolves_to_its_staged_label(self):
+        profiles = [{"file_id": 7, "path": "dataset_2.csv"}]
+        assert _staged_label_for_file(profiles, 7) == "dataset_2.csv"
+        assert _staged_label_for_file(profiles, 8) is None
+
+
+class TestSelectedSheetGuide:
+    def test_the_sheet_guide_carries_the_index_not_the_label(self):
+        """S6: the workbook is read by the sheet's ordinal position, so the
+        user-typed label never reaches the prompt."""
+        profile = dict(_PROFILE[0], sheet_index=2)
+        prompt = build_system_prompt([profile])
+        assert "sheet_name=<sheet_index>" in prompt
+        assert '"sheet_index": 2' in prompt
+        assert "pass it unquoted" in prompt
+
+    def test_a_null_sheet_index_keeps_the_csv_guidance(self):
+        """S7: CSV/TSV/JSON sessions keep the exact read_csv guidance."""
+        prompt = build_system_prompt([dict(_PROFILE[0], sheet_index=None)])
+        assert "read_excel" not in prompt
 
 
 class TestNoDatasetBranch:

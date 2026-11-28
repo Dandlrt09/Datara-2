@@ -311,8 +311,12 @@ def _staged_label_for_file(
 
     Profiles are matched by ``file_id`` (F6-advisories S7): F6 neutralizes the
     outgoing ``filename``/``path`` to the staged label, so the crossing's real
-    ``left_filename``/``right_filename`` no longer identify a profile.
+    ``left_filename``/``right_filename`` no longer identify a profile. A
+    missing id matches nothing: without this guard a ``None`` lookup would
+    equal a profile that has no ``file_id`` at all (F6-advisories-2 S4).
     """
+    if file_id is None:
+        return None
     for profile in profiles or []:
         if profile.get("file_id") == file_id:
             return profile.get("path")
@@ -381,18 +385,21 @@ def build_system_prompt(
             "value (a filename in the working directory), e.g. "
             "df = pd.read_csv('<path>'). Never invent paths."
         )
-        if any(p.get("sheet_name") for p in profiles):
-            # F3: a selected XLSX sheet must drive the read. Conditional on a
-            # non-null 'sheet_name' so CSV/TSV/JSON sessions keep the exact
-            # read_csv guidance above.
+        if any(p.get("sheet_index") is not None for p in profiles):
+            # F3: a selected XLSX sheet must drive the read. The dataset
+            # carries the sheet's ordinal index, never the user-typed label
+            # (F6-advisories-2 S6), so the label cannot leak into the prompt.
+            # Conditional on a non-null 'sheet_index' so CSV/TSV/JSON sessions
+            # keep the exact read_csv guidance above.
             system_prompt += (
                 "\n\nIMPORTANT — selected Excel sheet: a dataset whose entry "
-                "above has a non-null 'sheet_name' is an Excel workbook and "
-                "MUST be read with that sheet, e.g. "
-                "df = pd.read_excel('<path>', sheet_name='<sheet_name>') — "
-                "replacing the read_csv example for that dataset. Do NOT use "
-                "read_csv for a dataset that has a 'sheet_name'. Datasets "
-                "with a null 'sheet_name' keep the read_csv example above."
+                "above has a non-null 'sheet_index' is an Excel workbook and "
+                "MUST be read from that sheet by position, e.g. "
+                "df = pd.read_excel('<path>', sheet_name=<sheet_index>) — "
+                "the index is an integer: pass it unquoted, not as a string. "
+                "Do NOT use read_csv for a dataset that has a 'sheet_index'. "
+                "Datasets with a null 'sheet_index' keep the read_csv example "
+                "above."
             )
         system_prompt += (
             "\n\nIMPORTANT — dataset facts (citation discipline): each "
